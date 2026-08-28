@@ -2430,6 +2430,46 @@ select,
   color: #000000 !important;
 }
 
+:root[data-theme='dark'] .secondary-button,
+:root[data-theme='dark'] .icon-button,
+:root[data-theme='dark'] .segmented,
+:root[data-theme='dark'] .document-actions button,
+:root[data-theme='dark'] .viewer-controls button,
+:root[data-theme='dark'] .category-doc-actions button {
+  border-color: #d0d5dd;
+  background: #ffffff;
+  color: #101828 !important;
+}
+
+:root[data-theme='dark'] .secondary-button span,
+:root[data-theme='dark'] .secondary-button svg,
+:root[data-theme='dark'] .icon-button span,
+:root[data-theme='dark'] .icon-button svg,
+:root[data-theme='dark'] .segmented span,
+:root[data-theme='dark'] .segmented svg,
+:root[data-theme='dark'] .document-actions button span,
+:root[data-theme='dark'] .document-actions button svg,
+:root[data-theme='dark'] .viewer-controls button span,
+:root[data-theme='dark'] .viewer-controls button svg,
+:root[data-theme='dark'] .category-doc-actions button span,
+:root[data-theme='dark'] .category-doc-actions button svg {
+  color: #101828 !important;
+}
+
+:root[data-theme='dark'] .segmented.is-active,
+:root[data-theme='dark'] .document-actions button.is-active,
+:root[data-theme='dark'] .category-doc-actions button.is-active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1d4ed8 !important;
+}
+
+:root[data-theme='dark'] .segmented.is-active svg,
+:root[data-theme='dark'] .document-actions button.is-active svg,
+:root[data-theme='dark'] .category-doc-actions button.is-active svg {
+  color: #1d4ed8 !important;
+}
+
 :root[data-theme='dark'] .danger-button,
 :root[data-theme='dark'] .document-context-menu button.danger {
   color: #ffffff !important;
