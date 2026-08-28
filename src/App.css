@@ -884,6 +884,13 @@ select,
   padding: 0 10px;
 }
 
+.upload-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .upload-summary {
   display: grid;
   gap: 10px;
@@ -2792,6 +2799,69 @@ select,
 
 :root[data-theme='dark'] .dialog-backdrop {
   background: rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme='dark'] .upload-dialog {
+  border: 1px solid #344054;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+:root[data-theme='dark'] .upload-dialog header,
+:root[data-theme='dark'] .upload-dialog footer {
+  border-color: #334155;
+  background: #0f172a;
+}
+
+:root[data-theme='dark'] .upload-dialog h2,
+:root[data-theme='dark'] .upload-dialog strong,
+:root[data-theme='dark'] .upload-defaults label span,
+:root[data-theme='dark'] .upload-summary strong,
+:root[data-theme='dark'] .upload-item strong {
+  color: #f8fafc !important;
+}
+
+:root[data-theme='dark'] .upload-dialog p,
+:root[data-theme='dark'] .dropzone span,
+:root[data-theme='dark'] .upload-summary span,
+:root[data-theme='dark'] .upload-list-note,
+:root[data-theme='dark'] .upload-item span,
+:root[data-theme='dark'] .upload-item small {
+  color: #cbd5e1 !important;
+}
+
+:root[data-theme='dark'] .upload-defaults select,
+:root[data-theme='dark'] .upload-defaults input,
+:root[data-theme='dark'] .upload-item select,
+:root[data-theme='dark'] .upload-item input {
+  border-color: #475569;
+  background: #020617;
+  color: #f8fafc !important;
+}
+
+:root[data-theme='dark'] .upload-defaults select option,
+:root[data-theme='dark'] .upload-item select option {
+  background: #020617;
+  color: #f8fafc;
+}
+
+:root[data-theme='dark'] .upload-defaults input::placeholder,
+:root[data-theme='dark'] .upload-item input::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+:root[data-theme='dark'] .dropzone,
+:root[data-theme='dark'] .upload-summary,
+:root[data-theme='dark'] .upload-list-note,
+:root[data-theme='dark'] .upload-item {
+  border-color: #334155;
+  background: #111827;
+}
+
+:root[data-theme='dark'] .dropzone.is-dragging {
+  border-color: #60a5fa;
+  background: #172554;
 }
 
 @media (max-width: 900px) {

@@ -73,6 +73,7 @@ interface UploadQueueContextValue {
   retryFailed: () => void
   retryItem: (id: string) => void
   updateItem: (id: string, values: Pick<Partial<UploadItem>, 'category' | 'description'>) => void
+  cancelUploads: () => void
   clearCompleted: () => void
 }
 
@@ -125,6 +126,7 @@ export function UploadQueueProvider({
   const pausedForAuthRef = useRef(false)
   const emitTimerRef = useRef<number | null>(null)
   const folderCacheRef = useRef(new Map<string, ManagedFolderCacheEntry>())
+  const abortControllersRef = useRef(new Map<string, AbortController>())
 
   const [visibleItems, setVisibleItems] = useState<UploadItem[]>([])
   const [stats, setStats] = useState<UploadQueueStats>(emptyStats)
@@ -358,6 +360,7 @@ export function UploadQueueProvider({
     if (!item) return
 
     for (;;) {
+      if (!itemsRef.current.has(id)) return
       const current = itemsRef.current.get(id)
       if (!current) return
       const attempts = (current.attempts ?? 0) + 1
@@ -487,6 +490,23 @@ export function UploadQueueProvider({
     scheduleEmit()
   }, [scheduleEmit, saveQueue])
 
+  const cancelUploads = useCallback(() => {
+    pausedForAuthRef.current = false
+    for (const controller of abortControllersRef.current.values()) {
+      controller.abort()
+    }
+    abortControllersRef.current.clear()
+    orderRef.current = orderRef.current.filter((id) => {
+      const item = itemsRef.current.get(id)
+      if (!item) return false
+      if (item.status === 'COMPLETED') return true
+      itemsRef.current.delete(id)
+      return false
+    })
+    saveQueue()
+    scheduleEmit()
+  }, [saveQueue, scheduleEmit])
+
   const clearCompleted = useCallback(() => {
     orderRef.current = orderRef.current.filter((id) => itemsRef.current.get(id)?.status !== 'COMPLETED')
     for (const [id, item] of itemsRef.current) {
@@ -509,100 +529,117 @@ export function UploadQueueProvider({
       throw new Error('File content is unavailable. Please re-add this file or folder to resume.')
     }
 
-    let uploadFile = item.file
-    let originalSize = item.file.size
-    let compressedSize = item.file.size
-    let savedPercentage = 0
+    const abortController = new AbortController()
+    abortControllersRef.current.set(id, abortController)
 
-    if (!item.driveFileId) {
-      try {
-        const result = await compressFile(item.file, (progress) => setItem(id, { progress: Math.max(5, Math.min(progress, 45)) }))
-        uploadFile = new File([result.blob], item.file.name, { type: result.blob.type || item.file.type })
-        originalSize = result.originalSize
-        compressedSize = result.compressedSize
-        savedPercentage = result.savedPercentage
-      } catch (error) {
-        console.warn('Compression failed, uploading original:', item.relativePath ?? item.file.name, error)
-      }
-    }
+    try {
+      let uploadFile = item.file
+      let originalSize = item.file.size
+      let compressedSize = item.file.size
+      let savedPercentage = 0
 
-    setItem(id, {
-      status: 'UPLOADING',
-      progress: item.driveFileId ? 85 : 50,
-      originalSize,
-      compressedSize,
-      savedPercentage,
-    })
-
-    const destination = await resolveDestination(item, user, accessToken)
-    let driveFileId = item.driveFileId
-    let driveFileName = item.file.name
-    let driveMimeType = item.file.type || 'application/octet-stream'
-    let driveWebViewLink: string | undefined
-    let thumbnailUrl: string | undefined
-
-    if (!driveFileId) {
-      const fileName = getUploadFileName(item)
-      // Check if file already exists in Google Drive (reconcile)
-      try {
-        const existingDriveFile = await findFileInDrive(accessToken, fileName, destination.driveFolderId)
-        if (existingDriveFile && Number(existingDriveFile.size) === uploadFile.size) {
-          console.log(`Reconciled: File "${fileName}" already exists in Google Drive. Skipping upload.`, existingDriveFile)
-          driveFileId = existingDriveFile.id
-          driveFileName = existingDriveFile.name
-          driveMimeType = existingDriveFile.mimeType
-          driveWebViewLink = existingDriveFile.webViewLink
-          thumbnailUrl = existingDriveFile.thumbnailLink
-          setItem(id, {
-            driveFileId,
-            driveFolderId: destination.driveFolderId,
-            progress: 85,
-          })
+      if (!item.driveFileId) {
+        try {
+          const result = await compressFile(item.file, (progress) => setItem(id, { progress: Math.max(5, Math.min(progress, 45)) }))
+          if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+          uploadFile = new File([result.blob], item.file.name, { type: result.blob.type || item.file.type })
+          originalSize = result.originalSize
+          compressedSize = result.compressedSize
+          savedPercentage = result.savedPercentage
+        } catch (error) {
+          if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+          console.warn('Compression failed, uploading original:', item.relativePath ?? item.file.name, error)
         }
-      } catch (err) {
-        if (isDriveAuthorizationError(err)) throw err
-        console.warn('Failed to check if file exists in Drive, proceeding with upload:', err)
       }
-    }
 
-    if (!driveFileId) {
-      const fileName = getUploadFileName(item)
-      const namedFile = uploadFile.name === fileName ? uploadFile : new File([uploadFile], fileName, { type: uploadFile.type })
-      const driveFile = await uploadFileToDrive(accessToken, namedFile, destination.driveFolderId)
-      driveFileId = driveFile.id
-      driveFileName = driveFile.name
-      driveMimeType = driveFile.mimeType
-      driveWebViewLink = driveFile.webViewLink
-      thumbnailUrl = driveFile.thumbnailLink
+      if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+
       setItem(id, {
-        driveFileId,
-        driveFolderId: destination.driveFolderId,
-        progress: 85,
+        status: 'UPLOADING',
+        progress: item.driveFileId ? 85 : 50,
+        originalSize,
+        compressedSize,
+        savedPercentage,
       })
-    }
 
-    if (!itemsRef.current.get(id)?.firestoreSaved) {
-      const fileName = getUploadFileName(item)
-      const metadata: NewDocumentMetadata = {
-        ownerId: user.uid,
-        name: stripExtension(fileName),
-        originalName: fileName || driveFileName,
-        mimeType: item.file.type || driveMimeType,
-        fileType: getDocumentKind(item.file),
-        fileSize: item.file.size,
-        category: item.category,
-        description: item.description,
-        driveFileId,
-        driveFolderId: destination.driveFolderId,
-        parentId: destination.vaultFolderId,
-        folderId: destination.vaultFolderId,
-        folderPath: destination.folderPath,
+      const destination = await resolveDestination(item, user, accessToken)
+      if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+
+      let driveFileId = item.driveFileId
+      let driveFileName = item.file.name
+      let driveMimeType = item.file.type || 'application/octet-stream'
+      let driveWebViewLink: string | undefined
+      let thumbnailUrl: string | undefined
+
+      if (!driveFileId) {
+        const fileName = getUploadFileName(item)
+        // Check if file already exists in Google Drive (reconcile)
+        try {
+          const existingDriveFile = await findFileInDrive(accessToken, fileName, destination.driveFolderId)
+          if (existingDriveFile && Number(existingDriveFile.size) === uploadFile.size) {
+            console.log(`Reconciled: File "${fileName}" already exists in Google Drive. Skipping upload.`, existingDriveFile)
+            driveFileId = existingDriveFile.id
+            driveFileName = existingDriveFile.name
+            driveMimeType = existingDriveFile.mimeType
+            driveWebViewLink = existingDriveFile.webViewLink
+            thumbnailUrl = existingDriveFile.thumbnailLink
+            setItem(id, {
+              driveFileId,
+              driveFolderId: destination.driveFolderId,
+              progress: 85,
+            })
+          }
+        } catch (err) {
+          if (isDriveAuthorizationError(err)) throw err
+          if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+          console.warn('Failed to check if file exists in Drive, proceeding with upload:', err)
+        }
       }
-      if (driveWebViewLink) metadata.driveWebViewLink = driveWebViewLink
-      if (thumbnailUrl) metadata.thumbnailUrl = thumbnailUrl
 
-      const docRef = await createDocumentRecord(metadata)
-      setItem(id, { firestoreDocumentId: docRef.id, firestoreSaved: true, progress: 95 })
+      if (!driveFileId) {
+        const fileName = getUploadFileName(item)
+        const namedFile = uploadFile.name === fileName ? uploadFile : new File([uploadFile], fileName, { type: uploadFile.type })
+        const driveFile = await uploadFileToDrive(accessToken, namedFile, destination.driveFolderId, {
+          signal: abortController.signal,
+        })
+        if ((abortController.signal.aborted || !itemsRef.current.has(id))) return
+        driveFileId = driveFile.id
+        driveFileName = driveFile.name
+        driveMimeType = driveFile.mimeType
+        driveWebViewLink = driveFile.webViewLink
+        thumbnailUrl = driveFile.thumbnailLink
+        setItem(id, {
+          driveFileId,
+          driveFolderId: destination.driveFolderId,
+          progress: 85,
+        })
+      }
+
+      if (!itemsRef.current.get(id)?.firestoreSaved) {
+        const fileName = getUploadFileName(item)
+        const metadata: NewDocumentMetadata = {
+          ownerId: user.uid,
+          name: stripExtension(fileName),
+          originalName: fileName || driveFileName,
+          mimeType: item.file.type || driveMimeType,
+          fileType: getDocumentKind(item.file),
+          fileSize: item.file.size,
+          category: item.category,
+          description: item.description,
+          driveFileId,
+          driveFolderId: destination.driveFolderId,
+          parentId: destination.vaultFolderId,
+          folderId: destination.vaultFolderId,
+          folderPath: destination.folderPath,
+        }
+        if (driveWebViewLink) metadata.driveWebViewLink = driveWebViewLink
+        if (thumbnailUrl) metadata.thumbnailUrl = thumbnailUrl
+
+        const docRef = await createDocumentRecord(metadata)
+        setItem(id, { firestoreDocumentId: docRef.id, firestoreSaved: true, progress: 95 })
+      }
+    } finally {
+      abortControllersRef.current.delete(id)
     }
   }
 
@@ -627,8 +664,8 @@ export function UploadQueueProvider({
   }
 
   const value = useMemo(
-    () => ({ items: visibleItems, stats, enqueueFiles, start, retryFailed, retryItem, updateItem, clearCompleted }),
-    [clearCompleted, enqueueFiles, retryFailed, retryItem, start, stats, updateItem, visibleItems],
+    () => ({ items: visibleItems, stats, enqueueFiles, start, retryFailed, retryItem, updateItem, cancelUploads, clearCompleted }),
+    [cancelUploads, clearCompleted, enqueueFiles, retryFailed, retryItem, start, stats, updateItem, visibleItems],
   )
 
   return <UploadQueueContext.Provider value={value}>{children}</UploadQueueContext.Provider>

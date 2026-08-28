@@ -15,7 +15,7 @@ interface UploadDialogProps {
 }
 
 export function UploadDialog({ open, categories, folderName, destinationFolderId, onClose }: UploadDialogProps) {
-  const { items, stats, enqueueFiles, start, retryFailed, retryItem, updateItem } = useUploadQueue()
+  const { items, stats, enqueueFiles, start, retryFailed, retryItem, updateItem, cancelUploads } = useUploadQueue()
   const [defaultCategory, setDefaultCategory] = useState<DocumentCategory>('Other')
   const [defaultDescription, setDefaultDescription] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -33,6 +33,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
   const failedCount = stats.failed
   const totalCount = stats.total
   const aggregateProgress = stats.progress
+  const allDone = totalCount > 0 && completedCount === totalCount && !stats.running && failedCount === 0
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -50,6 +51,26 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
             <X aria-hidden="true" />
           </button>
         </header>
+
+        <div className="upload-top-actions">
+          <button type="button" className={allDone ? 'primary-button' : 'secondary-button'} onClick={onClose}>
+            {allDone ? 'Done' : 'Close'}
+          </button>
+          {totalCount > completedCount ? (
+            <button type="button" className="secondary-button danger-outline-button" onClick={cancelUploads}>
+              Cancel Upload
+            </button>
+          ) : null}
+          {failedCount > 0 ? (
+            <button type="button" className="secondary-button" onClick={retryFailed}>
+              <RotateCcw aria-hidden="true" />
+              <span>Retry {failedCount} Failed</span>
+            </button>
+          ) : null}
+          <button type="button" className="primary-button" onClick={start} disabled={queuedCount === 0 || stats.running}>
+            {stats.running ? 'Uploading' : `Upload ${queuedCount > 0 ? queuedCount : ''}`}
+          </button>
+        </div>
 
         <div
           className={`dropzone ${isDragging ? 'is-dragging' : ''}`}
@@ -220,20 +241,6 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
           ))}
         </div>
 
-        <footer>
-          <button type="button" className="secondary-button" onClick={onClose}>
-            Close
-          </button>
-          {failedCount > 0 ? (
-            <button type="button" className="secondary-button" onClick={retryFailed}>
-              <RotateCcw aria-hidden="true" />
-              <span>Retry {failedCount} Failed</span>
-            </button>
-          ) : null}
-          <button type="button" className="primary-button" onClick={start} disabled={queuedCount === 0 || stats.running}>
-            {stats.running ? 'Uploading' : `Upload ${queuedCount > 0 ? queuedCount : ''}`}
-          </button>
-        </footer>
       </section>
     </div>
   )

@@ -14,6 +14,10 @@ interface GoogleApiErrorBody {
   }
 }
 
+interface DriveRequestOptions {
+  signal?: AbortSignal
+}
+
 export class GoogleDriveError extends Error {
   status: number
   reason?: string
@@ -171,6 +175,7 @@ export async function uploadFileToDrive(
   accessToken: string,
   file: File,
   folderId: string,
+  options: DriveRequestOptions = {},
 ): Promise<DriveFile> {
   const boundary = `document_vault_${crypto.randomUUID()}`
   const metadata = {
@@ -200,6 +205,7 @@ export async function uploadFileToDrive(
       method: 'POST',
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
       body,
+      signal: options.signal,
     },
   )
 }
