@@ -67,8 +67,17 @@ function escapeDriveQuery(value: string) {
 }
 
 export async function ensureVaultFolder(accessToken: string): Promise<DriveFolder> {
+  return ensureDriveFolder(accessToken, vaultFolderName)
+}
+
+export async function ensureDriveFolder(
+  accessToken: string,
+  folderName: string,
+  parentFolderId?: string,
+): Promise<DriveFolder> {
+  const parentClause = parentFolderId ? ` and '${escapeDriveQuery(parentFolderId)}' in parents` : ''
   const query = encodeURIComponent(
-    `name='${escapeDriveQuery(vaultFolderName)}' and mimeType='${folderMimeType}' and trashed=false`,
+    `name='${escapeDriveQuery(folderName)}' and mimeType='${folderMimeType}' and trashed=false${parentClause}`,
   )
   const result = await driveFetch<{ files: DriveFolder[] }>(
     accessToken,
@@ -82,7 +91,11 @@ export async function ensureVaultFolder(accessToken: string): Promise<DriveFolde
   return driveFetch<DriveFolder>(accessToken, `${driveApi}/files?fields=id,name`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: vaultFolderName, mimeType: folderMimeType }),
+    body: JSON.stringify({
+      name: folderName,
+      mimeType: folderMimeType,
+      ...(parentFolderId ? { parents: [parentFolderId] } : {}),
+    }),
   })
 }
 
@@ -161,17 +174,6 @@ export async function restoreDriveFile(accessToken: string, fileId: string) {
 
 export async function deleteDriveFile(accessToken: string, fileId: string) {
   await driveFetch<void>(accessToken, `${driveApi}/files/${fileId}`, { method: 'DELETE' })
-}
-
-export async function makeFilePubliclyReadable(accessToken: string, fileId: string) {
-  return driveFetch<Record<string, unknown>>(accessToken, `${driveApi}/files/${fileId}/permissions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      role: 'reader',
-      type: 'anyone',
-    }),
-  })
 }
 
 export async function createDriveFolder(

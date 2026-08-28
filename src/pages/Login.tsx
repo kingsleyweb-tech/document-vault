@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Navigate } from 'react-router-dom'
 import { signInWithGoogle } from '../services/auth'
@@ -115,9 +116,29 @@ export function Login() {
 }
 
 function getGoogleSignInErrorMessage(error: unknown) {
+  if (error instanceof FirebaseError) {
+    if (error.code === 'auth/popup-blocked') {
+      return 'The Google popup was blocked. Allow popups for Document Vault and try again.'
+    }
+
+    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+      return 'Google sign-in was cancelled. Try again when you are ready.'
+    }
+
+    if (error.code === 'auth/unauthorized-domain') {
+      return 'This domain is not authorized in Firebase Authentication. Add documents-vault.vercel.app in Firebase Authorized Domains.'
+    }
+
+    if (error.code === 'auth/account-exists-with-different-credential') {
+      return 'This email is already connected with another sign-in method.'
+    }
+
+    return 'Google sign-in failed. Check Firebase Authentication, Google provider setup, and authorized domains.'
+  }
+
   if (error instanceof Error) {
     return error.message
   }
 
-  return 'Google sign-in failed. Check the Google OAuth client ID and authorized JavaScript origins.'
+  return 'Google sign-in failed. Check Firebase Authentication and Google OAuth settings.'
 }

@@ -100,7 +100,7 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
             <p>
               {folderName
                 ? `Files will be stored in folder: ${folderName}`
-                : 'Files are stored in Google Drive. Metadata is saved in this browser.'}
+                : 'Files are stored in Google Drive. Metadata is saved in Firestore.'}
             </p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close upload dialog">
@@ -213,7 +213,7 @@ function getUploadErrorMessage(error: unknown) {
       return 'Google Drive permission was denied. Sign in again and approve Drive access.'
     }
 
-    return `Google Drive upload failed (${error.status}: ${error.reason ?? error.message}).`
+    return 'Google Drive upload failed. Please try again in a moment.'
   }
 
   if (error instanceof Error && error.message.includes('Google Drive authorization')) {

@@ -1,92 +1,26 @@
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { auth } from './firebase'
 import type { VaultUser } from '../types/user'
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        oauth2: {
-          initTokenClient: (config: GoogleTokenClientConfig) => GoogleTokenClient
-        }
-      }
-    }
-  }
-}
-
-interface GoogleTokenClientConfig {
-  client_id: string
-  scope: string
-  prompt?: string
-  callback: (response: GoogleTokenResponse) => void
-  error_callback?: (error: unknown) => void
-}
-
-interface GoogleTokenClient {
-  requestAccessToken: (options?: { prompt?: string }) => void
-}
-
-interface GoogleTokenResponse {
-  access_token?: string
-  error?: string
-  error_description?: string
-}
-
-interface GoogleUserInfo {
-  sub: string
-  name?: string
-  email?: string
-  picture?: string
-}
-
 const driveScope = 'https://www.googleapis.com/auth/drive.file'
-const profileScope = 'openid profile email'
-const googleScriptUrl = 'https://accounts.google.com/gsi/client'
 const tokenStorageKey = 'documentVault.googleDriveAccessToken'
-const userStorageKey = 'documentVault.googleUser'
-const authChangedEvent = 'documentVault.authChanged'
-
-let googleScriptPromise: Promise<void> | null = null
 
 export async function signInWithGoogle() {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
-
-  if (!clientId) {
-    throw new Error('Missing VITE_GOOGLE_CLIENT_ID. Add a Google OAuth web client ID in Vercel and redeploy.')
-  }
-
-  await loadGoogleIdentityServices()
-
-  const tokenResponse = await requestGoogleAccessToken(clientId)
-  const accessToken = tokenResponse.access_token
+  const provider = createGoogleProvider()
+  const result = await signInWithPopup(auth, provider)
+  const credential = GoogleAuthProvider.credentialFromResult(result)
+  const accessToken = credential?.accessToken
 
   if (!accessToken) {
-    throw new Error(tokenResponse.error_description ?? tokenResponse.error ?? 'Google did not return an access token.')
+    throw new Error('Google sign-in succeeded, but Drive authorization was not granted.')
   }
 
   sessionStorage.setItem(tokenStorageKey, accessToken)
-
-  const user = await fetchGoogleUser(accessToken)
-  localStorage.setItem(userStorageKey, JSON.stringify(user))
-  notifyAuthChanged()
-
-  return user
+  return toVaultUser(result.user)
 }
 
 export function observeAuth(callback: (user: VaultUser | null) => void) {
-  const handleAuthChanged = () => callback(getStoredUser())
-  const handleStorageChanged = (event: StorageEvent) => {
-    if (event.key === userStorageKey) {
-      handleAuthChanged()
-    }
-  }
-
-  handleAuthChanged()
-  window.addEventListener(authChangedEvent, handleAuthChanged)
-  window.addEventListener('storage', handleStorageChanged)
-
-  return () => {
-    window.removeEventListener(authChangedEvent, handleAuthChanged)
-    window.removeEventListener('storage', handleStorageChanged)
-  }
+  return onAuthStateChanged(auth, (user) => callback(user ? toVaultUser(user) : null))
 }
 
 export function getDriveAccessToken() {
@@ -104,91 +38,21 @@ export async function reconnectGoogleDrive() {
 
 export async function logout() {
   sessionStorage.removeItem(tokenStorageKey)
-  localStorage.removeItem(userStorageKey)
-  notifyAuthChanged()
+  await signOut(auth)
 }
 
-function requestGoogleAccessToken(clientId: string) {
-  return new Promise<GoogleTokenResponse>((resolve, reject) => {
-    const client = window.google?.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: `${profileScope} ${driveScope}`,
-      prompt: 'consent select_account',
-      callback: resolve,
-      error_callback: reject,
-    })
-
-    if (!client) {
-      reject(new Error('Google login is not available. Refresh the page and try again.'))
-      return
-    }
-
-    client.requestAccessToken()
-  })
+function createGoogleProvider() {
+  const provider = new GoogleAuthProvider()
+  provider.addScope(driveScope)
+  provider.setCustomParameters({ prompt: 'consent select_account' })
+  return provider
 }
 
-function loadGoogleIdentityServices() {
-  if (window.google?.accounts.oauth2) {
-    return Promise.resolve()
-  }
-
-  googleScriptPromise ??= new Promise<void>((resolve, reject) => {
-    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${googleScriptUrl}"]`)
-
-    if (existingScript) {
-      existingScript.addEventListener('load', () => resolve(), { once: true })
-      existingScript.addEventListener('error', () => reject(new Error('Unable to load Google login.')), { once: true })
-      return
-    }
-
-    const script = document.createElement('script')
-    script.src = googleScriptUrl
-    script.async = true
-    script.defer = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Unable to load Google login.'))
-    document.head.appendChild(script)
-  })
-
-  return googleScriptPromise
-}
-
-async function fetchGoogleUser(accessToken: string): Promise<VaultUser> {
-  const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('Google login succeeded, but the profile could not be loaded.')
-  }
-
-  const profile = (await response.json()) as GoogleUserInfo
-
+function toVaultUser(user: { uid: string; displayName: string | null; email: string | null; photoURL: string | null }): VaultUser {
   return {
-    uid: profile.sub,
-    displayName: profile.name ?? 'Vault user',
-    email: profile.email ?? '',
-    photoURL: profile.picture ?? '',
+    uid: user.uid,
+    displayName: user.displayName ?? 'Vault user',
+    email: user.email ?? '',
+    photoURL: user.photoURL ?? '',
   }
-}
-
-function getStoredUser() {
-  const storedUser = localStorage.getItem(userStorageKey)
-
-  if (!storedUser) {
-    return null
-  }
-
-  try {
-    return JSON.parse(storedUser) as VaultUser
-  } catch {
-    localStorage.removeItem(userStorageKey)
-    return null
-  }
-}
-
-function notifyAuthChanged() {
-  window.dispatchEvent(new Event(authChangedEvent))
 }

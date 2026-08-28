@@ -5,13 +5,13 @@ import {
   listenToUserDocuments,
   markDocumentViewed,
   updateDocumentRecord,
-} from '../services/localDocuments'
+} from '../services/firestore'
 import {
   checkFileExists,
   createDriveFolder,
   deleteDriveFile,
+  ensureDriveFolder,
   ensureVaultFolder,
-  makeFilePubliclyReadable,
   renameDriveFile,
   restoreDriveFile,
   trashDriveFile,
@@ -106,16 +106,11 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           targetFolderId = parentFolder.driveFileId
         } else {
           const rootFolder = await ensureVaultFolder(accessToken)
-          targetFolderId = rootFolder.id
+          const categoryFolder = await ensureDriveFolder(accessToken, options.category, rootFolder.id)
+          targetFolderId = categoryFolder.id
         }
 
         const driveFile = await uploadFileToDrive(accessToken, file, targetFolderId)
-        
-        try {
-          await makeFilePubliclyReadable(accessToken, driveFile.id)
-        } catch (permError) {
-          console.warn('Failed to set public read permission on file:', permError)
-        }
 
         const metadata: NewDocumentMetadata = {
           ownerId: user.uid,
@@ -232,13 +227,6 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
       },
       async viewed(documentRecord: VaultDocument) {
         await markDocumentViewed(documentRecord.id)
-        try {
-          if (accessToken) {
-            await makeFilePubliclyReadable(accessToken, documentRecord.driveFileId)
-          }
-        } catch (permError) {
-          console.warn('Failed to ensure file is publicly readable:', permError)
-        }
       },
     }),
     [user, accessToken, documents],

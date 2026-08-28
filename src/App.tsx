@@ -40,7 +40,8 @@ function App() {
 
 function AuthenticatedVault() {
   const { user, driveAccessToken } = useAuth()
-  const [accessToken, setAccessToken] = useState<string | null>(driveAccessToken)
+  const [reauthorizedAccessToken, setReauthorizedAccessToken] = useState<string | null>(null)
+  const accessToken = reauthorizedAccessToken ?? driveAccessToken
   const { documents, loading, error, actions } = useDocuments(user, accessToken)
 
   const [search, setSearch] = useState('')
@@ -158,7 +159,7 @@ function AuthenticatedVault() {
       await task()
     } catch (caughtError) {
       console.error(caughtError)
-      setOperationError('The operation could not be completed. Check your Google Drive connection and try again.')
+      setOperationError(getOperationErrorMessage(caughtError))
     } finally {
       if (label) setOperationLabel(null)
     }
@@ -167,7 +168,7 @@ function AuthenticatedVault() {
   async function ensureAccessToken() {
     if (accessToken) return accessToken
     const token = await reconnectGoogleDrive()
-    setAccessToken(token)
+    setReauthorizedAccessToken(token)
     return token
   }
 
@@ -646,3 +647,17 @@ function AuthenticatedVault() {
 }
 
 export default App
+
+function getOperationErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    if (error.message.includes('reconnect Google Drive')) {
+      return error.message
+    }
+
+    if (error.message.includes('permission') || error.message.includes('authorization')) {
+      return 'Google Drive permission is required to complete this action. Sign in again and approve Drive access.'
+    }
+  }
+
+  return 'The operation could not be completed. Check your connection and try again.'
+}
