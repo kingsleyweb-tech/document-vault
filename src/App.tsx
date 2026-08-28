@@ -5,6 +5,7 @@ import { AppLayout } from './components/layout/AppLayout'
 import { DocumentViewer } from './components/viewer/DocumentViewer'
 import { useAuth } from './hooks/useAuth'
 import { useDocuments, collectDescendantFolderIds } from './hooks/useDocuments'
+import { UploadQueueProvider, useUploadQueue } from './hooks/useUploadQueue'
 import { Categories } from './pages/Categories'
 import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
@@ -13,8 +14,8 @@ import { AllFiles } from './pages/AllFiles'
 import { AllFolders } from './pages/AllFolders'
 import { FolderTreePicker } from './components/documents/FolderTreePicker'
 import { ProtectedRoute } from './routes/ProtectedRoute'
-import { logout, reconnectGoogleDrive } from './services/auth'
-import { downloadDriveFile } from './services/googleDrive'
+import { logout, reconnectGoogleDrive, clearDriveAccessToken } from './services/auth'
+import { downloadDriveFile, isDriveAuthorizationError } from './services/googleDrive'
 import { buildDownloadName } from './services/documentViewer'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
 import './App.css'
@@ -63,6 +64,8 @@ function AuthenticatedVault() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [viewerDocument, setViewerDocument] = useState<VaultDocument | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [showDriveAuthModal, setShowDriveAuthModal] = useState(false)
+  const [dismissedPausedAuthModal, setDismissedPausedAuthModal] = useState(false)
   const [operationLabel, setOperationLabel] = useState<string | null>(null)
 
   const [renameOpen, setRenameOpen] = useState(false)
@@ -77,6 +80,8 @@ function AuthenticatedVault() {
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<VaultDocument | null>(null)
+  const [bulkPermanentDeleteOpen, setBulkPermanentDeleteOpen] = useState(false)
+  const [bulkPermanentDeleteItems, setBulkPermanentDeleteItems] = useState<VaultDocument[]>([])
 
   const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false)
   const [newFolderUploadOpen, setNewFolderUploadOpen] = useState(false)
@@ -107,13 +112,16 @@ function AuthenticatedVault() {
   }, [documents, uploadDestinationFolderId])
 
   const handleUploadClick = () => {
-    if (!accessToken) {
-      setOperationError('Reconnect Google Drive before uploading. Your sign-in session is active, but Drive access needs to be refreshed.')
-      return
-    }
-
     setUploadDestinationFolderId(currentFolderId)
     setUploadChoiceOpen(true)
+  }
+
+  const handleUploadProgressClick = () => {
+    setDismissedPausedAuthModal(false)
+    setUploadChoiceOpen(false)
+    setNewFolderUploadOpen(false)
+    setUploadDestinationFolderId((currentDestination) => currentDestination ?? currentFolderId)
+    setUploadOpen(true)
   }
 
 
@@ -186,6 +194,13 @@ function AuthenticatedVault() {
       await task()
     } catch (caughtError) {
       console.error(caughtError)
+      if (isDriveAuthorizationError(caughtError)) {
+        clearDriveAccessToken()
+        setShowDriveAuthModal(true)
+      } else if (caughtError instanceof Error && (caughtError.message.includes('authorization') || caughtError.message.includes('permission') || caughtError.message.includes('reconnect'))) {
+        clearDriveAccessToken()
+        setShowDriveAuthModal(true)
+      }
       setOperationError(getOperationErrorMessage(caughtError))
     } finally {
       if (label) setOperationLabel(null)
@@ -194,12 +209,14 @@ function AuthenticatedVault() {
 
   async function ensureAccessToken() {
     if (accessToken) return accessToken
-    throw new Error('Google Drive authorization is missing. Sign out, sign back in, and approve Drive access.')
+    setShowDriveAuthModal(true)
+    throw new Error('Google Drive authorization is required.')
   }
 
   async function reconnectDrive() {
     await withFriendlyErrors(async () => {
       await reconnectGoogleDrive()
+      setShowDriveAuthModal(true)
     }, 'Reconnecting Google Drive...')
   }
 
@@ -286,9 +303,54 @@ function AuthenticatedVault() {
     }
   }
 
+  const handleBulkPermanentDelete = (items: VaultDocument[]) => {
+    const uniqueItems = getTopLevelSelection(items, documents)
+    setBulkPermanentDeleteItems(uniqueItems)
+    setBulkPermanentDeleteOpen(true)
+  }
+
+  const permanentlyDeleteSelectedTrash = async () => {
+    const items = bulkPermanentDeleteItems
+    const deleteConcurrency = 5
+    let nextIndex = 0
+    let successCount = 0
+    let failCount = 0
+
+    await withFriendlyErrors(async () => {
+      await ensureAccessToken()
+
+      async function worker() {
+        for (;;) {
+          const item = items[nextIndex++]
+          if (!item) return
+          try {
+            await actions.permanentlyDelete(item)
+            successCount += 1
+          } catch (deleteError) {
+            console.error('Failed permanently deleting trash item:', item.name, deleteError)
+            failCount += 1
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: Math.min(deleteConcurrency, items.length) }, worker))
+
+      if (successCount > 0) {
+        addToast(`Permanently deleted ${successCount} ${successCount === 1 ? 'item' : 'items'}.`, 'success')
+      }
+      if (failCount > 0) {
+        addToast(`Could not delete ${failCount} ${failCount === 1 ? 'item' : 'items'}.`, 'error')
+      }
+    }, `Deleting ${items.length} ${items.length === 1 ? 'item' : 'items'} permanently...`)
+
+    setBulkPermanentDeleteOpen(false)
+    setBulkPermanentDeleteItems([])
+  }
+
   const commonPageProps = {
     loading,
     error: operationError ?? error,
+    accessToken,
     search,
     viewMode,
     sortMode,
@@ -334,21 +396,32 @@ function AuthenticatedVault() {
     onBulkMove: handleBulkMove,
     onBulkFavorite: handleBulkFavorite,
     onBulkDownload: handleBulkDownload,
+    onBulkPermanentDelete: handleBulkPermanentDelete,
   }
 
   return (
-    <AppLayout
-      user={user}
-      search={search}
-      searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search all documents'}
-      onSearchChange={setSearch}
-      onUploadClick={handleUploadClick}
-      driveConnected={Boolean(accessToken)}
-      onReconnectDrive={() => void reconnectDrive()}
-      onLogout={() => void logout()}
-      themeMode={themeMode}
-      onThemeModeChange={setThemeMode}
-    >
+    <UploadQueueProvider user={user} accessToken={accessToken} documents={documents}>
+      <DriveAuthManager
+        driveConnected={Boolean(accessToken)}
+        onReconnectDrive={() => void reconnectDrive()}
+        showDriveAuthModal={showDriveAuthModal}
+        setShowDriveAuthModal={setShowDriveAuthModal}
+        dismissedPausedAuthModal={dismissedPausedAuthModal}
+        setDismissedPausedAuthModal={setDismissedPausedAuthModal}
+      />
+      <AppLayout
+        user={user}
+        search={search}
+        searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search all documents'}
+        onSearchChange={setSearch}
+        onUploadClick={handleUploadClick}
+        onUploadProgressClick={handleUploadProgressClick}
+        driveConnected={Boolean(accessToken)}
+        onReconnectDrive={() => void reconnectDrive()}
+        onLogout={() => void logout()}
+        themeMode={themeMode}
+        onThemeModeChange={setThemeMode}
+      >
       <Routes>
         <Route
           index
@@ -488,21 +561,8 @@ function AuthenticatedVault() {
         open={uploadOpen}
         categories={categories}
         folderName={uploadDestinationFolder?.name || currentFolder?.name}
+        destinationFolderId={uploadDestinationFolderId}
         onClose={() => setUploadOpen(false)}
-        onUpload={async (file, uploadCategory, description, relativePath) => {
-          await ensureAccessToken()
-          if (relativePath && relativePath !== file.name) {
-            await actions.uploadWithRelativePath(
-              file,
-              relativePath,
-              { category: uploadCategory, description },
-              uploadDestinationFolderId,
-            )
-            return
-          }
-
-          await actions.upload(file, { category: uploadCategory, description }, uploadDestinationFolderId)
-        }}
       />
 
       <DocumentViewer
@@ -519,6 +579,10 @@ function AuthenticatedVault() {
           })
         }}
         onFavorite={(documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord))}
+        onReauthRequired={() => {
+          clearDriveAccessToken()
+          setShowDriveAuthModal(true)
+        }}
       />
 
       {renameOpen && renameTarget && (
@@ -668,6 +732,38 @@ function AuthenticatedVault() {
                     await actions.permanentlyDelete(confirmDeleteTarget)
                   }, 'Permanently deleting document...')
                   setConfirmDeleteOpen(false)
+                }}
+              >
+                Delete Permanently
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {bulkPermanentDeleteOpen && bulkPermanentDeleteItems.length > 0 && (
+        <div className="dialog-backdrop" role="presentation">
+          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-permanent-delete-title">
+            <header>
+              <h2 id="bulk-permanent-delete-title" style={{ color: '#d92d20' }}>Delete Permanently?</h2>
+            </header>
+            <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ margin: 0, color: '#b42318', fontSize: '14px', fontWeight: 600 }}>
+                Warning: This action is irreversible and cannot be undone.
+              </p>
+              <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
+                Permanently delete <strong>{bulkPermanentDeleteItems.length} selected {bulkPermanentDeleteItems.length === 1 ? 'item' : 'items'}</strong> from Google Drive and your vault?
+                Selected folders include their nested files and subfolders.
+              </p>
+            </div>
+            <footer>
+              <button type="button" className="secondary-button" onClick={() => setBulkPermanentDeleteOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button danger-button"
+                onClick={() => {
+                  void permanentlyDeleteSelectedTrash()
                 }}
               >
                 Delete Permanently
@@ -883,7 +979,8 @@ function AuthenticatedVault() {
           </div>
         ))}
       </div>
-    </AppLayout>
+      </AppLayout>
+    </UploadQueueProvider>
   )
 }
 
@@ -901,4 +998,113 @@ function getOperationErrorMessage(error: unknown) {
   }
 
   return 'The operation could not be completed. Check your connection and try again.'
+}
+
+function getTopLevelSelection(items: VaultDocument[], allDocuments: VaultDocument[]) {
+  const selectedIds = new Set(items.map((item) => item.id))
+  return items.filter((item) => !hasSelectedAncestor(item, selectedIds, allDocuments))
+}
+
+function hasSelectedAncestor(item: VaultDocument, selectedIds: Set<string>, allDocuments: VaultDocument[]) {
+  let parentId = item.parentId ?? null
+  while (parentId) {
+    if (selectedIds.has(parentId)) return true
+    parentId = allDocuments.find((documentRecord) => documentRecord.id === parentId)?.parentId ?? null
+  }
+  return false
+}
+
+interface DriveAuthManagerProps {
+  driveConnected: boolean
+  onReconnectDrive: () => Promise<void> | void
+  showDriveAuthModal: boolean
+  setShowDriveAuthModal: (show: boolean) => void
+  dismissedPausedAuthModal: boolean
+  setDismissedPausedAuthModal: (dismissed: boolean) => void
+}
+
+function DriveAuthManager({
+  driveConnected,
+  onReconnectDrive,
+  showDriveAuthModal,
+  setShowDriveAuthModal,
+  dismissedPausedAuthModal,
+  setDismissedPausedAuthModal,
+}: DriveAuthManagerProps) {
+  const { stats, start } = useUploadQueue()
+
+  // Reset dismissal state when pausedForAuth transitions back to false
+  useEffect(() => {
+    if (!stats.pausedForAuth) {
+      setDismissedPausedAuthModal(false)
+    }
+  }, [stats.pausedForAuth, setDismissedPausedAuthModal])
+
+  const isOpen = (stats.pausedForAuth && !dismissedPausedAuthModal) || showDriveAuthModal
+
+  if (!isOpen) return null
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="drive-auth-title">
+        <header>
+          <h2 id="drive-auth-title">Google Drive Authorization Required</h2>
+        </header>
+        <div className="dialog-body" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
+            {stats.pausedForAuth ? (
+              driveConnected ? (
+                <strong style={{ color: '#039855' }}>Google Drive connected successfully.</strong>
+              ) : (
+                'Your upload has been safely paused. Reconnect Google Drive to continue.'
+              )
+            ) : driveConnected ? (
+              <strong style={{ color: '#039855' }}>Google Drive connected successfully.</strong>
+            ) : (
+              'Google Drive authorization is required to perform this action.'
+            )}
+          </p>
+        </div>
+        <footer>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              if (stats.pausedForAuth) {
+                setDismissedPausedAuthModal(true)
+              } else {
+                setShowDriveAuthModal(false)
+              }
+            }}
+          >
+            Close
+          </button>
+          {!driveConnected ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={async () => {
+                await onReconnectDrive()
+              }}
+            >
+              Reconnect Google Drive
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                if (stats.pausedForAuth) {
+                  start()
+                }
+                setShowDriveAuthModal(false)
+              }}
+            >
+              {stats.pausedForAuth ? 'Continue Upload' : 'Continue'}
+            </button>
+          )}
+        </footer>
+      </section>
+    </div>
+  )
 }

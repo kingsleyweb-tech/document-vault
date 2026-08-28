@@ -120,7 +120,7 @@ button svg {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto auto auto;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto auto;
   gap: 14px;
   align-items: center;
   border-bottom: 1px solid #e4e7ec;
@@ -155,7 +155,14 @@ button svg {
   width: 100%;
   border: 0;
   outline: 0;
-  color: #101828;
+  /* Use the theme text variable so it is readable in both light and dark mode */
+  color: inherit;
+  background: transparent;
+}
+
+.search-box input::placeholder {
+  color: #98a2b3;
+  opacity: 1;
 }
 
 .primary-button,
@@ -178,6 +185,42 @@ button svg {
   background: #2563eb;
   color: #ffffff;
   padding: 0 16px;
+}
+
+.upload-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #344054;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.upload-indicator strong {
+  color: #101828;
+}
+
+.upload-indicator em {
+  color: #d92d20;
+  font-style: normal;
+}
+
+.upload-indicator-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #d0d5dd;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+}
+
+.upload-indicator-spinner.is-spinning {
+  animation: spin 1s linear infinite;
 }
 
 .danger-button {
@@ -403,7 +446,7 @@ select,
 .document-thumbnail img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: top center;
   transition: transform 0.2s ease;
 }
@@ -419,6 +462,14 @@ select,
   height: 100%;
   background: #f2f4f7;
   color: #98a2b3;
+}
+
+.document-thumbnail-loading {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #eef2f6, #f8fafc, #eef2f6);
+  background-size: 200% 100%;
+  animation: thumbnailPulse 1.2s ease-in-out infinite;
 }
 
 .document-row {
@@ -743,8 +794,9 @@ select,
 
 .dialog-backdrop {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  overflow: auto;
   padding: 16px;
 }
 
@@ -767,6 +819,16 @@ select,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.upload-dialog header {
+  position: sticky;
+  top: -20px;
+  z-index: 2;
+  background: #ffffff;
+  border-bottom: 1px solid #e4e7ec;
+  margin: -20px -20px 0;
+  padding: 20px 20px 14px;
 }
 
 .upload-dialog h2 {
@@ -795,6 +857,31 @@ select,
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
+}
+
+.upload-defaults {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.upload-defaults label {
+  display: grid;
+  gap: 6px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.upload-defaults select,
+.upload-defaults input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101828;
+  padding: 0 10px;
 }
 
 .upload-summary {
@@ -827,6 +914,16 @@ select,
 .upload-list {
   display: grid;
   gap: 10px;
+}
+
+.upload-list-note {
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475467;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .upload-item {
@@ -908,10 +1005,46 @@ select,
 }
 
 .viewer-stage {
+  position: relative;
   display: grid;
   place-items: center;
   overflow: auto;
   padding: 20px;
+}
+
+.viewer-side-nav {
+  position: fixed;
+  top: 50%;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  transform: translateY(-50%);
+}
+
+.viewer-side-nav:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.viewer-side-nav svg {
+  width: 26px;
+  height: 26px;
+}
+
+.viewer-side-nav--left {
+  left: 18px;
+}
+
+.viewer-side-nav--right {
+  right: 18px;
 }
 
 .pdf-frame {
@@ -921,6 +1054,39 @@ select,
   border-radius: 8px;
   background: #ffffff;
   transform-origin: top center;
+}
+
+.pdf-pages-viewer {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: min(100%, 1040px);
+  padding: 8px 0 28px;
+}
+
+.pdf-page {
+  width: min(100%, 980px);
+  margin: 0;
+  transform: scale(var(--viewer-zoom, 1));
+  transform-origin: top center;
+}
+
+.pdf-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.pdf-page figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .html-frame {
@@ -1318,6 +1484,15 @@ select,
   }
 }
 
+@keyframes thumbnailPulse {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 @media (max-width: 900px) {
   .app-shell {
     display: block;
@@ -1331,6 +1506,16 @@ select,
   .topbar {
     grid-template-columns: auto minmax(0, 1fr) auto;
     padding: 12px;
+  }
+
+  .upload-indicator {
+    grid-column: 1 / -1;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .upload-defaults {
+    grid-template-columns: 1fr;
   }
 
   .mobile-only {
@@ -2062,6 +2247,16 @@ select,
   border-color: var(--border);
   background-color: var(--surface);
   color: var(--text);
+}
+
+/* Dark mode: ensure search input text and placeholder are clearly visible */
+.search-box input {
+  color: var(--text);
+}
+
+.search-box input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .topbar {
@@ -3451,6 +3646,30 @@ mark {
     height: 120px;
   }
 
+  .viewer-side-nav {
+    width: 40px;
+    height: 56px;
+  }
+
+  .viewer-side-nav--left {
+    left: 8px;
+  }
+
+  .viewer-side-nav--right {
+    right: 8px;
+  }
+
+  .pdf-pages-viewer {
+    align-content: start;
+    gap: 12px;
+    padding: 4px 0 18px;
+  }
+
+  .pdf-page {
+    width: 100%;
+    transform: none;
+  }
+
   /* Search box shrinks */
   .search-box--inline input {
     width: 120px;
@@ -3566,6 +3785,11 @@ mark {
     width: 100%;
     overflow-x: auto;
     justify-content: center;
+  }
+
+  .viewer-stage {
+    place-items: start center;
+    padding: 12px 10px 80px;
   }
 
   /* Folder tree picker: full screen on small phones */

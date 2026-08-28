@@ -1,4 +1,4 @@
-const CACHE_NAME = 'document-vault-app-v3'
+const CACHE_NAME = 'document-vault-app-v4'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/dv.png', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -45,6 +45,24 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
+  if (['script', 'style', 'worker'].includes(event.request.destination)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse.ok) {
+            const responseCopy = networkResponse.clone()
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseCopy)
+            })
+          }
+
+          return networkResponse
+        })
+        .catch(() => caches.match(event.request).then((cachedResponse) => cachedResponse ?? Response.error())),
+    )
+    return
+  }
+
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) return cachedResponse
@@ -60,7 +78,7 @@ self.addEventListener('fetch', (event) => {
 
           return networkResponse
         })
-        .catch(() => caches.match('/index.html'))
+        .catch(() => Response.error())
     }),
   )
 })

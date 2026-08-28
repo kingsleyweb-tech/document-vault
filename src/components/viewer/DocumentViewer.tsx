@@ -1,7 +1,8 @@
-import { ArrowLeft, Copy, Download, Heart, Maximize2, Minus, Plus, RotateCcw, Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Download, Heart, Maximize2, Minus, Plus, RotateCcw, Search } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { VaultDocument } from '../../types/document'
 import { loadDocumentPreview, type DocumentPreview } from '../../services/documentViewer'
+import { GoogleDriveError, isDriveAuthorizationError } from '../../services/googleDrive'
 import { normalizeRelativePath } from '../../utils/fileUtils'
 
 interface DocumentViewerProps {
@@ -12,6 +13,7 @@ interface DocumentViewerProps {
   onDownload: (documentRecord: VaultDocument) => void
   onOpenDocument: (documentRecord: VaultDocument) => void
   onFavorite: (documentRecord: VaultDocument) => void
+  onReauthRequired?: () => void
 }
 
 export function DocumentViewer({
@@ -22,6 +24,7 @@ export function DocumentViewer({
   onDownload,
   onOpenDocument,
   onFavorite,
+  onReauthRequired,
 }: DocumentViewerProps) {
   const [preview, setPreview] = useState<DocumentPreview | null>(null)
   const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(null)
@@ -35,14 +38,21 @@ export function DocumentViewer({
   const htmlFrameRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
-    setActiveSheetIndex(0)
-    setActiveSlideIndex(0)
-    setTextSearch('')
-
-    if (!documentRecord || !accessToken) return undefined
-
     let cancelled = false
     let loadedUrl: string | null = null
+    const resetTimer = window.setTimeout(() => {
+      if (cancelled) return
+      setActiveSheetIndex(0)
+      setActiveSlideIndex(0)
+      setTextSearch('')
+    }, 0)
+
+    if (!documentRecord || !accessToken) {
+      return () => {
+        cancelled = true
+        window.clearTimeout(resetTimer)
+      }
+    }
 
     loadDocumentPreview(accessToken, documentRecord)
       .then((nextPreview) => {
@@ -57,14 +67,18 @@ export function DocumentViewer({
       })
       .catch((viewerError) => {
         console.error(viewerError)
-        if (!cancelled) setErrorState({ documentId: documentRecord.id, message: 'Unable to preview this document.' })
+        if (isDriveAuthorizationError(viewerError)) {
+          onReauthRequired?.()
+        }
+        if (!cancelled) setErrorState({ documentId: documentRecord.id, message: getPreviewErrorMessage(viewerError) })
       })
 
     return () => {
       cancelled = true
+      window.clearTimeout(resetTimer)
       if (loadedUrl) URL.revokeObjectURL(loadedUrl)
     }
-  }, [documentRecord, accessToken])
+  }, [documentRecord, accessToken, onReauthRequired])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -76,13 +90,47 @@ export function DocumentViewer({
   }, [])
 
   const documentPathIndex = useMemo(() => buildDocumentPathIndex(documents), [documents])
+  const openableDocuments = useMemo(
+    () => documents.filter((document) => document.fileType !== 'folder' && !document.isDeleted),
+    [documents],
+  )
+  const currentDocumentIndex = useMemo(
+    () => openableDocuments.findIndex((document) => document.id === documentRecord?.id),
+    [documentRecord?.id, openableDocuments],
+  )
+  const previousDocument = currentDocumentIndex > 0 ? openableDocuments[currentDocumentIndex - 1] : null
+  const nextDocument =
+    currentDocumentIndex >= 0 && currentDocumentIndex < openableDocuments.length - 1
+      ? openableDocuments[currentDocumentIndex + 1]
+      : null
+
+  useEffect(() => {
+    if (!documentRecord) return undefined
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (isTypingTarget(event.target)) return
+
+      if (event.key === 'ArrowLeft' && previousDocument) {
+        event.preventDefault()
+        onOpenDocument(previousDocument)
+      }
+      if (event.key === 'ArrowRight' && nextDocument) {
+        event.preventDefault()
+        onOpenDocument(nextDocument)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [documentRecord, nextDocument, onOpenDocument, previousDocument])
   
   const highlightedText = useMemo(() => {
     const currentPreviewText =
       previewDocumentId === documentRecord?.id ? preview?.text : undefined
     if (!currentPreviewText) return ''
     if (!textSearch.trim()) return currentPreviewText
-    const query = textSearch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const query = textSearch.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
     const regex = new RegExp(`(${query})`, 'gi')
     return currentPreviewText.replace(regex, '<mark>$1</mark>')
   }, [preview?.text, previewDocumentId, documentRecord?.id, textSearch])
@@ -111,7 +159,10 @@ export function DocumentViewer({
       })
       .catch((viewerError) => {
         console.error(viewerError)
-        setErrorState({ documentId: documentRecord.id, message: 'Unable to preview this document.' })
+        if (isDriveAuthorizationError(viewerError)) {
+          onReauthRequired?.()
+        }
+        setErrorState({ documentId: documentRecord.id, message: getPreviewErrorMessage(viewerError) })
       })
   }
   const copyText = async () => {
@@ -182,11 +233,30 @@ export function DocumentViewer({
       </header>
 
       <div className="viewer-stage">
+        {previousDocument ? (
+          <button
+            type="button"
+            className="viewer-side-nav viewer-side-nav--left"
+            onClick={() => onOpenDocument(previousDocument)}
+            aria-label={`Open previous file: ${previousDocument.name}`}
+          >
+            <ChevronLeft aria-hidden="true" />
+          </button>
+        ) : null}
+        {nextDocument ? (
+          <button
+            type="button"
+            className="viewer-side-nav viewer-side-nav--right"
+            onClick={() => onOpenDocument(nextDocument)}
+            aria-label={`Open next file: ${nextDocument.name}`}
+          >
+            <ChevronRight aria-hidden="true" />
+          </button>
+        ) : null}
         {loading ? <div className="viewer-message">Opening document...</div> : null}
         {activeError ? (
           <div className="viewer-message viewer-message--error">
             <strong>{activeError}</strong>
-            <span>The file may be missing, deleted, unsupported, or your Drive authorization may have expired.</span>
             <div className="viewer-message-actions">
               <button type="button" className="secondary-button" onClick={retry}>Try Again</button>
               <button type="button" className="primary-button" onClick={() => onDownload(documentRecord)}>
@@ -197,14 +267,7 @@ export function DocumentViewer({
           </div>
         ) : null}
         {!loading && !activeError && activePreview?.kind === 'pdf' ? (
-          <object
-            className="pdf-frame"
-            data={`${activePreview.objectUrl}#zoom=${Math.round(zoom * 100)}`}
-            type="application/pdf"
-            aria-label={documentRecord.name}
-          >
-            <div className="viewer-message">This browser cannot display the PDF inline.</div>
-          </object>
+          <PdfPageViewer blob={activePreview.blob} documentName={documentRecord.name} zoom={zoom} />
         ) : null}
         {!loading && !activeError && activePreview?.kind === 'image' ? (
           <img
@@ -379,6 +442,124 @@ export function DocumentViewer({
       ) : null}
     </div>
   )
+}
+
+function PdfPageViewer({
+  blob,
+  documentName,
+  zoom,
+}: {
+  blob: Blob
+  documentName: string
+  zoom: number
+}) {
+  const [renderState, setRenderState] = useState<{
+    key: string
+    pageUrls: string[]
+    error?: string
+  } | null>(null)
+  const pdfKey = `${blob.size}:${blob.type}:${documentName}`
+  const activeState = renderState?.key === pdfKey ? renderState : null
+
+  useEffect(() => {
+    let cancelled = false
+    const pageUrls: string[] = []
+
+    async function renderPages() {
+      try {
+        const pdfjs = await import('pdfjs-dist')
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+
+        const pdf = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise
+        try {
+          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+            if (cancelled) return
+            const page = await pdf.getPage(pageNumber)
+            const baseViewport = page.getViewport({ scale: 1 })
+            const scale = Math.min(2, Math.max(1.2, 980 / baseViewport.width))
+            const viewport = page.getViewport({ scale })
+            const canvas = window.document.createElement('canvas')
+            const canvasContext = canvas.getContext('2d')
+            if (!canvasContext) throw new Error('Could not render this PDF page.')
+
+            canvas.width = Math.ceil(viewport.width)
+            canvas.height = Math.ceil(viewport.height)
+            await page.render({ canvas, canvasContext, viewport }).promise
+
+            const pageBlob = await new Promise<Blob>((resolve, reject) => {
+              canvas.toBlob((nextBlob) => {
+                if (nextBlob) {
+                  resolve(nextBlob)
+                } else {
+                  reject(new Error('Could not create this PDF page image.'))
+                }
+              }, 'image/png')
+            })
+            const pageUrl = URL.createObjectURL(pageBlob)
+            pageUrls.push(pageUrl)
+
+            if (!cancelled) {
+              setRenderState({ key: pdfKey, pageUrls: [...pageUrls] })
+            }
+          }
+        } finally {
+          await pdf.cleanup()
+        }
+      } catch (error) {
+        console.error(error)
+        if (!cancelled) {
+          setRenderState({
+            key: pdfKey,
+            pageUrls: [],
+            error: error instanceof Error ? error.message : 'Could not render this PDF.',
+          })
+        }
+      }
+    }
+
+    void renderPages()
+
+    return () => {
+      cancelled = true
+      pageUrls.forEach((pageUrl) => URL.revokeObjectURL(pageUrl))
+    }
+  }, [blob, pdfKey])
+
+  if (activeState?.error) {
+    return <div className="viewer-message viewer-message--error">{activeState.error}</div>
+  }
+
+  if (!activeState || activeState.pageUrls.length === 0) {
+    return <div className="viewer-message">Preparing pages...</div>
+  }
+
+  return (
+    <div className="pdf-pages-viewer" aria-label={documentName} style={{ '--viewer-zoom': zoom } as CSSProperties}>
+      {activeState.pageUrls.map((pageUrl, index) => (
+        <figure className="pdf-page" key={pageUrl}>
+          <img src={pageUrl} alt={`${documentName} page ${index + 1}`} />
+          <figcaption>Page {index + 1}</figcaption>
+        </figure>
+      ))}
+    </div>
+  )
+}
+
+function getPreviewErrorMessage(error: unknown) {
+  if (error instanceof GoogleDriveError) {
+    if (error.status === 404) return `Google Drive confirmed this file is unavailable: ${error.message}`
+    if (isDriveAuthorizationError(error)) return 'Google Drive authorization is required. Reconnect Drive, then try again.'
+    if (error.status === 403) return `Google Drive denied access: ${error.message}`
+    return `Google Drive request failed ${error.status}: ${error.message}`
+  }
+  if (error instanceof Error) return error.message || 'Unable to preview this document.'
+  return 'Unable to preview this document.'
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName.toLowerCase()
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable
 }
 
 function buildDocumentPathIndex(documents: VaultDocument[]) {

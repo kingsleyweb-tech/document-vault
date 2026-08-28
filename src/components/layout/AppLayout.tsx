@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
+import { useUploadQueue } from '../../hooks/useUploadQueue'
 import type { ThemeMode } from '../../types/document'
 import type { VaultUser } from '../../types/user'
 import vaultLogo from '../../assets/dv.png'
@@ -25,6 +26,7 @@ interface AppLayoutProps {
   searchPlaceholder?: string
   onSearchChange: (value: string) => void
   onUploadClick: () => void
+  onUploadProgressClick: () => void
   driveConnected: boolean
   onReconnectDrive: () => void
   onLogout: () => void
@@ -50,6 +52,7 @@ export function AppLayout({
   searchPlaceholder = 'Search all documents',
   onSearchChange,
   onUploadClick,
+  onUploadProgressClick,
   driveConnected,
   onReconnectDrive,
   onLogout,
@@ -60,6 +63,7 @@ export function AppLayout({
   const [mobileNavOpen, setMobileNavOpen] = useState(true)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const { stats } = useUploadQueue()
 
   useEffect(() => {
     const handleScroll = () => setShowScrollTop(window.scrollY > 360)
@@ -107,6 +111,7 @@ export function AppLayout({
             <Upload aria-hidden="true" />
             <span>Upload</span>
           </button>
+          {stats.total > 0 ? <UploadIndicator onOpen={onUploadProgressClick} /> : null}
           {!driveConnected ? (
             <button className="secondary-button reconnect-button" type="button" onClick={onReconnectDrive}>
               <span>Reconnect Drive</span>
@@ -222,5 +227,33 @@ export function AppLayout({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function UploadIndicator({ onOpen }: { onOpen: () => void }) {
+  const { stats } = useUploadQueue()
+  const processed = stats.completed + stats.failed
+
+  return (
+    <button type="button" className="upload-indicator" onClick={onOpen} aria-label="Open upload manager">
+      {stats.pausedForAuth ? (
+        <>
+          <span>⏸ Upload Paused</span>
+          <strong>
+            {processed.toLocaleString()} / {stats.total.toLocaleString()}
+          </strong>
+        </>
+      ) : (
+        <>
+          <span className={stats.running ? 'upload-indicator-spinner is-spinning' : 'upload-indicator-spinner'} aria-hidden="true" />
+          <span>{stats.running ? 'Uploading' : 'Upload Queue'}</span>
+          <strong>
+            {processed.toLocaleString()} / {stats.total.toLocaleString()}
+          </strong>
+          <span>{stats.progress}%</span>
+        </>
+      )}
+      {stats.failed > 0 ? <em>{stats.failed.toLocaleString()} failed</em> : null}
+    </button>
   )
 }

@@ -1,4 +1,4 @@
-import { Archive, FolderPlus, Grid2X2, List, Search, Upload, Trash2, FolderInput, Heart, Download } from 'lucide-react'
+import { Archive, FolderPlus, Grid2X2, List, Search, Upload, Trash2, FolderInput, Heart, Download, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DocumentCard } from '../components/documents/DocumentCard'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -13,6 +13,7 @@ interface VaultPageProps {
   title: string
   description: string
   documents: VaultDocument[]
+  accessToken?: string | null
   loading: boolean
   error: string | null
   search: string
@@ -44,12 +45,14 @@ interface VaultPageProps {
   onBulkMove?: (selectedItems: VaultDocument[]) => void
   onBulkFavorite?: (selectedItems: VaultDocument[]) => void
   onBulkDownload?: (selectedItems: VaultDocument[]) => void
+  onBulkPermanentDelete?: (selectedItems: VaultDocument[]) => void
 }
 
 export function VaultPage({
   title,
   description,
   documents,
+  accessToken,
   loading,
   error,
   search,
@@ -81,6 +84,7 @@ export function VaultPage({
   onBulkMove,
   onBulkFavorite,
   onBulkDownload,
+  onBulkPermanentDelete,
 }: VaultPageProps) {
   const [categoryStatsOpen, setCategoryStatsOpen] = useState(false)
   const [folderSearch, setFolderSearch] = useState('')
@@ -115,6 +119,8 @@ export function VaultPage({
 
   const activeDocuments = documents.filter((documentRecord) => !documentRecord.isDeleted)
   const favoriteCount = activeDocuments.filter((documentRecord) => documentRecord.isFavorite).length
+  const selectedDocuments = visibleDocuments.filter((documentRecord) => selectedIds.has(documentRecord.id))
+  const allVisibleSelected = visibleDocuments.length > 0 && visibleDocuments.every((documentRecord) => selectedIds.has(documentRecord.id))
   const ownerName = currentUser.displayName?.split(' ')[0] ?? 'there'
   const folderPathLabel = useMemo(
     () => new Map(documents.map((documentRecord) => [documentRecord.id, buildPathLabel(documents, documentRecord.parentId ?? null)])),
@@ -198,6 +204,17 @@ export function VaultPage({
                 />
               </label>
             ) : null}
+            {visibleDocuments.length > 0 ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleDocuments.map((documentRecord) => documentRecord.id)))
+                }}
+              >
+                {allVisibleSelected ? 'Clear Selection' : 'Select All'}
+              </button>
+            ) : null}
           </div>
           <div className="toolbar-group">
             <button
@@ -272,8 +289,9 @@ export function VaultPage({
                 inTrash={inTrash}
                 itemCount={folderItemCount}
                 pathLabel={search ? folderPathLabel.get(documentRecord.id) : undefined}
+                accessToken={accessToken}
                 isSelected={selectedIds.has(documentRecord.id)}
-                onSelectToggle={!inTrash ? () => handleSelectToggle(documentRecord.id) : undefined}
+                onSelectToggle={() => handleSelectToggle(documentRecord.id)}
                 onMove={!inTrash ? onMove : undefined}
                 onView={onView}
                 onDownload={onDownload}
@@ -290,22 +308,52 @@ export function VaultPage({
 
       {/* Spacer that reserves vertical space equal to the toolbar height so
           the last row of cards is never hidden behind the fixed toolbar */}
-      {selectedIds.size > 0 && !inTrash && (
+      {selectedDocuments.length > 0 && (
         <div className="bulk-toolbar-spacer" aria-hidden="true" />
       )}
 
       {/* Bulk action toolbar – fixed to bottom of viewport */}
-      {selectedIds.size > 0 && !inTrash && (
+      {selectedDocuments.length > 0 && (
         <div className="bulk-toolbar" role="toolbar" aria-label="Bulk actions">
           <span className="bulk-toolbar-info">
-            <strong>{selectedIds.size}</strong> {selectedIds.size === 1 ? 'item' : 'items'} selected
+            <strong>{selectedDocuments.length}</strong> {selectedDocuments.length === 1 ? 'item' : 'items'} selected
           </span>
           <div className="bulk-toolbar-actions">
+            {inTrash ? (
+              <>
+                <button
+                  type="button"
+                  className="bulk-action-btn"
+                  onClick={() => {
+                    selectedDocuments.forEach(onRestore)
+                    setSelectedIds(new Set())
+                  }}
+                >
+                  <RotateCcw size={14} />
+                  Restore
+                </button>
+                <div className="bulk-toolbar-divider" />
+                {onBulkPermanentDelete ? (
+                  <button
+                    type="button"
+                    className="bulk-action-btn danger"
+                    onClick={() => {
+                      onBulkPermanentDelete(selectedDocuments)
+                      setSelectedIds(new Set())
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    Delete Permanently
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <>
             {onBulkDownload && (
               <button
                 type="button"
                 className="bulk-action-btn"
-                onClick={() => { onBulkDownload(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+                onClick={() => { onBulkDownload(selectedDocuments); setSelectedIds(new Set()) }}
               >
                 <Download size={14} />
                 Download
@@ -315,7 +363,7 @@ export function VaultPage({
               <button
                 type="button"
                 className="bulk-action-btn"
-                onClick={() => { onBulkFavorite(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+                onClick={() => { onBulkFavorite(selectedDocuments); setSelectedIds(new Set()) }}
               >
                 <Heart size={14} />
                 Favorite
@@ -325,7 +373,7 @@ export function VaultPage({
               <button
                 type="button"
                 className="bulk-action-btn"
-                onClick={() => { onBulkMove(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+                onClick={() => { onBulkMove(selectedDocuments); setSelectedIds(new Set()) }}
               >
                 <FolderInput size={14} />
                 Move
@@ -336,7 +384,7 @@ export function VaultPage({
               <button
                 type="button"
                 className="bulk-action-btn danger"
-                onClick={() => { onBulkTrash(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+                onClick={() => { onBulkTrash(selectedDocuments); setSelectedIds(new Set()) }}
               >
                 <Trash2 size={14} />
                 Delete
@@ -346,6 +394,8 @@ export function VaultPage({
             <button type="button" className="bulk-action-cancel" onClick={() => setSelectedIds(new Set())}>
               Cancel
             </button>
+              </>
+            )}
           </div>
         </div>
       )}

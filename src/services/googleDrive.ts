@@ -26,6 +26,19 @@ export class GoogleDriveError extends Error {
   }
 }
 
+export function isDriveAuthorizationError(error: unknown) {
+  if (!(error instanceof GoogleDriveError)) return false
+  const reason = error.reason?.toLowerCase()
+  return (
+    error.status === 401 ||
+    (error.status === 403 &&
+      (reason === 'autherror' ||
+        reason === 'insufficientpermissions' ||
+        reason === 'insufficientpermission' ||
+        reason === 'forbidden'))
+  )
+}
+
 async function parseDriveError(response: Response) {
   const details = await response.text()
 
@@ -65,6 +78,61 @@ async function driveFetch<T>(accessToken: string, url: string, init: RequestInit
 function escapeDriveQuery(value: string) {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
+
+// ─── In-memory blob cache ─────────────────────────────────────────────────────
+// Keeps the last N blobs in memory so reopening a recently viewed document is
+// instant (no network round trip at all).
+
+const BLOB_CACHE_MAX = 8
+
+interface BlobCacheEntry {
+  blob: Blob
+  mimeType: string
+  accessedAt: number
+}
+
+const blobCache = new Map<string, BlobCacheEntry>()
+
+function blobCacheKey(fileId: string, mimeType: string) {
+  return `${fileId}::${mimeType}`
+}
+
+function getBlobFromCache(fileId: string, mimeType: string): Blob | null {
+  const key = blobCacheKey(fileId, mimeType)
+  const entry = blobCache.get(key)
+  if (!entry) return null
+  entry.accessedAt = Date.now()
+  return entry.blob
+}
+
+function storeBlobInCache(fileId: string, mimeType: string, blob: Blob) {
+  const key = blobCacheKey(fileId, mimeType)
+
+  // Evict LRU entries when over limit
+  if (blobCache.size >= BLOB_CACHE_MAX) {
+    let oldestKey = ''
+    let oldestTime = Infinity
+    for (const [k, v] of blobCache) {
+      if (v.accessedAt < oldestTime) {
+        oldestTime = v.accessedAt
+        oldestKey = k
+      }
+    }
+    if (oldestKey) blobCache.delete(oldestKey)
+  }
+
+  blobCache.set(key, { blob, mimeType, accessedAt: Date.now() })
+}
+
+/** Evicts all cache entries for a given file ID (e.g. after an update). */
+export function invalidateBlobCache(fileId: string) {
+  for (const key of blobCache.keys()) {
+    if (key.startsWith(`${fileId}::`)) {
+      blobCache.delete(key)
+    }
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function ensureVaultFolder(accessToken: string): Promise<DriveFolder> {
   return ensureDriveFolder(accessToken, vaultFolderName)
@@ -143,6 +211,34 @@ export async function getDriveFileMetadata(accessToken: string, fileId: string) 
   )
 }
 
+export async function getDriveFileThumbnail(
+  accessToken: string,
+  fileId: string,
+  knownThumbnailUrl?: string,
+) {
+  let thumbnailUrl = knownThumbnailUrl
+
+  if (!thumbnailUrl) {
+    const metadata = await getDriveFileMetadata(accessToken, fileId)
+    thumbnailUrl = metadata.thumbnailLink
+  }
+
+  if (!thumbnailUrl) {
+    throw new GoogleDriveError(404, 'Google Drive has not generated a thumbnail for this file yet.', 'thumbnailMissing')
+  }
+
+  const response = await fetch(thumbnailUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    credentials: 'omit',
+  })
+
+  if (!response.ok) {
+    throw await parseDriveError(response)
+  }
+
+  return response.blob()
+}
+
 export async function getDriveFileContent(accessToken: string, fileId: string) {
   const response = await fetch(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -175,10 +271,29 @@ function isPotentiallyConvertible(mimeType: string) {
   )
 }
 
-export async function downloadDriveFile(accessToken: string, fileId: string, mimeType?: string) {
-  let activeMimeType = mimeType
+/**
+ * Downloads a file from Drive, with an optional pre-fetched mimeType to skip
+ * an extra metadata round trip.  Results are cached in memory so reopening
+ * the same document is immediate.
+ */
+export async function downloadDriveFile(
+  accessToken: string,
+  fileId: string,
+  mimeType?: string,
+  /** Pass pre-fetched metadata to avoid an extra getDriveFileMetadata call */
+  knownMimeType?: string,
+) {
+  // 1. Resolve the actual MIME type we'll use for the download
+  let activeMimeType = knownMimeType ?? mimeType
 
-  if (!activeMimeType || (!activeMimeType.startsWith('application/vnd.google-apps.') && isPotentiallyConvertible(activeMimeType))) {
+  // Only fetch metadata when we genuinely don't know the type or it may be
+  // a convertible format whose actual server type we need.
+  if (
+    !activeMimeType ||
+    (activeMimeType.startsWith('application/vnd.google-apps.') === false &&
+      isPotentiallyConvertible(activeMimeType))
+  ) {
+    // We still need to check for Google Workspace types — but only then
     try {
       const metadata = await getDriveFileMetadata(accessToken, fileId)
       activeMimeType = metadata.mimeType
@@ -187,14 +302,29 @@ export async function downloadDriveFile(accessToken: string, fileId: string, mim
     }
   }
 
+  // 2. Check the cache before making any download request
+  const cacheKey = activeMimeType ?? 'unknown'
+  const cached = getBlobFromCache(fileId, cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  // 3. Download the file
+  let blob: Blob
+
   if (activeMimeType && activeMimeType.startsWith('application/vnd.google-apps.')) {
     if (activeMimeType === 'application/vnd.google-apps.folder') {
       throw new Error('Cannot download a folder.')
     }
-    return exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType)
+    blob = await exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType)
+  } else {
+    blob = await getDriveFileContent(accessToken, fileId)
   }
 
-  return getDriveFileContent(accessToken, fileId)
+  // 4. Store in cache for future opens
+  storeBlobInCache(fileId, cacheKey, blob)
+
+  return blob
 }
 
 export async function exportGoogleWorkspaceFile(accessToken: string, fileId: string, mimeType: string) {
@@ -246,6 +376,7 @@ export async function moveDriveFile(
 }
 
 export async function trashDriveFile(accessToken: string, fileId: string) {
+  invalidateBlobCache(fileId)
   return driveFetch<DriveFile>(accessToken, `${driveApi}/files/${fileId}?fields=id,name`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -262,6 +393,7 @@ export async function restoreDriveFile(accessToken: string, fileId: string) {
 }
 
 export async function deleteDriveFile(accessToken: string, fileId: string) {
+  invalidateBlobCache(fileId)
   await driveFetch<void>(accessToken, `${driveApi}/files/${fileId}`, { method: 'DELETE' })
 }
 
@@ -311,4 +443,19 @@ function getWorkspaceExportMimeType(mimeType: string) {
     return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
   }
   return 'application/pdf'
+}
+
+export async function findFileInDrive(
+  accessToken: string,
+  name: string,
+  parentFolderId: string,
+): Promise<DriveFile | null> {
+  const query = encodeURIComponent(
+    `name='${escapeDriveQuery(name)}' and '${escapeDriveQuery(parentFolderId)}' in parents and trashed=false`,
+  )
+  const result = await driveFetch<{ files: DriveFile[] }>(
+    accessToken,
+    `${driveApi}/files?q=${query}&spaces=drive&fields=files(id,name,mimeType,webViewLink,thumbnailLink,size)&pageSize=1`,
+  )
+  return result.files[0] ?? null
 }

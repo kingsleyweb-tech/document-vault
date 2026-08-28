@@ -15,6 +15,7 @@ import {
   deleteDriveFile,
   ensureDriveFolder,
   ensureVaultFolder,
+  GoogleDriveError,
   renameDriveFile,
   restoreDriveFile,
   trashDriveFile,
@@ -90,23 +91,41 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
       }
     }
 
-    // Validate each document in the background
-    toValidate.forEach(async (docRecord) => {
-      const result = await checkFileExists(accessToken, docRecord.driveFileId)
-      if (!result.exists) {
-        console.warn(`File ${docRecord.name} not found on Google Drive. Cleaning up local metadata.`)
-        await deleteFromVault(docRecord)
-      } else if (result.trashed !== undefined) {
-        // If Google Drive trash state doesn't match vault metadata, sync them.
-        if (result.trashed && !docRecord.isDeleted) {
-          console.info(`File ${docRecord.name} was trashed on Google Drive. Syncing trash state.`)
-          await updateDocumentRecord(docRecord.id, { isDeleted: true })
-        } else if (!result.trashed && docRecord.isDeleted) {
-          console.info(`File ${docRecord.name} was restored on Google Drive. Syncing trash state.`)
-          await updateDocumentRecord(docRecord.id, { isDeleted: false })
+    let cancelled = false
+    let nextIndex = 0
+    const validationConcurrency = 2
+
+    const validateNext = async () => {
+      while (!cancelled) {
+        const docRecord = toValidate[nextIndex++]
+        if (!docRecord) return
+
+        try {
+          const result = await checkFileExists(accessToken, docRecord.driveFileId)
+          if (cancelled) return
+          if (!result.exists) {
+            console.warn(`File ${docRecord.name} not found on Google Drive. Cleaning up local metadata.`)
+            await deleteFromVault(docRecord)
+          } else if (result.trashed !== undefined) {
+            // If Google Drive trash state doesn't match vault metadata, sync them.
+            if (result.trashed && !docRecord.isDeleted) {
+              console.info(`File ${docRecord.name} was trashed on Google Drive. Syncing trash state.`)
+              await updateDocumentRecord(docRecord.id, { isDeleted: true })
+            } else if (!result.trashed && docRecord.isDeleted) {
+              console.info(`File ${docRecord.name} was restored on Google Drive. Syncing trash state.`)
+              await updateDocumentRecord(docRecord.id, { isDeleted: false })
+            }
+          }
+        } catch (validationError) {
+          console.warn('Drive existence validation failed:', docRecord.name, validationError)
         }
       }
-    })
+    }
+
+    void Promise.all(Array.from({ length: Math.min(validationConcurrency, toValidate.length) }, validateNext))
+    return () => {
+      cancelled = true
+    }
   }, [accessToken, documents])
 
   const actions = useMemo(
@@ -333,12 +352,8 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
               await recursiveDelete(child)
             }
           }
-          await deleteDriveFile(accessToken, record.driveFileId)
-          if (record.fileType === 'folder' && record.isFolderRecord) {
-            await deleteFolderRecord(record.id)
-          } else {
-            await deleteDocumentRecord(record.id)
-          }
+          await safeDeleteDriveFile(accessToken, record.driveFileId)
+          await deleteVaultRecordMetadata(record)
         }
 
         await recursiveDelete(documentRecord)
@@ -421,6 +436,59 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
   )
 
   return { documents, loading, error, actions }
+}
+
+async function safeDeleteDriveFile(accessToken: string, driveFileId: string) {
+  try {
+    await deleteDriveFile(accessToken, driveFileId)
+  } catch (error) {
+    if (error instanceof GoogleDriveError && error.status === 404) {
+      return
+    }
+    throw error
+  }
+}
+
+async function deleteVaultRecordMetadata(record: VaultDocument) {
+  await retryFirestoreDelete(async () => {
+    if (record.fileType === 'folder' && record.isFolderRecord) {
+      await deleteFolderRecord(record.id)
+    } else {
+      await deleteDocumentRecord(record.id)
+    }
+  })
+}
+
+async function retryFirestoreDelete(deleteMetadata: () => Promise<void>) {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await deleteMetadata()
+      return
+    } catch (error) {
+      lastError = error
+      if (!isRetryableFirestoreDeleteError(error) || attempt === 3) break
+      await delay(400 * 2 ** (attempt - 1))
+    }
+  }
+
+  throw lastError
+}
+
+function isRetryableFirestoreDeleteError(error: unknown) {
+  if (!(error instanceof Error)) return false
+  const code = 'code' in error ? String(error.code) : ''
+  return (
+    code === 'unavailable' ||
+    code === 'deadline-exceeded' ||
+    code === 'aborted' ||
+    /network|timeout|offline|unavailable|deadline/i.test(error.message)
+  )
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 async function ensureUserVaultFolder(user: VaultUser, accessToken: string) {

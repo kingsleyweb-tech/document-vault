@@ -8,6 +8,7 @@ import type { VaultUser } from '../types/user'
 
 interface AllFoldersProps {
   documents: VaultDocument[]
+  accessToken?: string | null
   loading: boolean
   error: string | null
   currentUser: VaultUser
@@ -22,6 +23,7 @@ interface AllFoldersProps {
 
 export function AllFolders({
   documents,
+  accessToken,
   loading,
   error,
   onCreateFolder,
@@ -97,6 +99,7 @@ export function AllFolders({
                 documentRecord={folder}
                 mode="grid"
                 itemCount={itemCount}
+                accessToken={accessToken}
                 onView={onView}
                 onDownload={onDownload}
                 onRename={onRename}

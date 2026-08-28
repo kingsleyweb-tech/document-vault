@@ -8,6 +8,7 @@ import type { VaultUser } from '../types/user'
 
 interface AllFilesProps {
   documents: VaultDocument[]
+  accessToken?: string | null
   loading: boolean
   error: string | null
   currentUser: VaultUser
@@ -26,6 +27,7 @@ interface AllFilesProps {
 
 export function AllFiles({
   documents,
+  accessToken,
   loading,
   error,
   onView,
@@ -242,6 +244,7 @@ export function AllFiles({
               onSelectToggle={() => handleSelectToggle(file.id)}
               onMove={onMove}
               pathLabel={buildLocationLabel(file.parentId ?? null)}
+              accessToken={accessToken}
               onView={onView}
               onDownload={onDownload}
               onRename={onRename}
