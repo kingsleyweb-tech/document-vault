@@ -5,6 +5,13 @@ const mimeKindMap: Record<string, DocumentKind> = {
   'image/jpeg': 'image',
   'image/png': 'image',
   'image/webp': 'image',
+  'image/gif': 'image',
+  'image/svg+xml': 'image',
+  'text/plain': 'text',
+  'text/html': 'html',
+  'application/xhtml+xml': 'html',
+  'application/rtf': 'text',
+  'text/rtf': 'text',
   'application/msword': 'word',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'word',
   'application/vnd.ms-excel': 'spreadsheet',
@@ -19,12 +26,24 @@ const extensionKindMap: Record<string, DocumentKind> = {
   jpeg: 'image',
   png: 'image',
   webp: 'image',
+  gif: 'image',
+  svg: 'image',
+  txt: 'text',
+  text: 'text',
+  rtf: 'text',
+  html: 'html',
+  htm: 'html',
+  xhtml: 'html',
   doc: 'word',
   docx: 'word',
   xls: 'spreadsheet',
   xlsx: 'spreadsheet',
   ppt: 'presentation',
   pptx: 'presentation',
+  epub: 'ebook',
+  mobi: 'ebook',
+  azw: 'ebook',
+  azw3: 'ebook',
 }
 
 export function getFileExtension(fileName: string) {
@@ -42,4 +61,8 @@ export function isSupportedFile(file: File) {
 
 export function stripExtension(fileName: string) {
   return fileName.replace(/\.[^/.]+$/, '')
+}
+
+export function normalizeRelativePath(path: string) {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
 }

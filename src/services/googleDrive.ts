@@ -136,8 +136,15 @@ export async function uploadFileToDrive(
   )
 }
 
-export async function getDriveFileBlob(accessToken: string, fileId: string) {
-  const response = await fetch(`${driveApi}/files/${fileId}?alt=media`, {
+export async function getDriveFileMetadata(accessToken: string, fileId: string) {
+  return driveFetch<DriveFile>(
+    accessToken,
+    `${driveApi}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,webViewLink,thumbnailLink,size,trashed`,
+  )
+}
+
+export async function getDriveFileContent(accessToken: string, fileId: string) {
+  const response = await fetch(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
 
@@ -146,6 +153,42 @@ export async function getDriveFileBlob(accessToken: string, fileId: string) {
   }
 
   return response.blob()
+}
+
+export async function getDriveFileBlob(accessToken: string, fileId: string) {
+  return getDriveFileContent(accessToken, fileId)
+}
+
+export async function downloadDriveFile(accessToken: string, fileId: string, mimeType: string) {
+  if (mimeType.startsWith('application/vnd.google-apps.')) {
+    return exportGoogleWorkspaceFile(accessToken, fileId, mimeType)
+  }
+
+  return getDriveFileContent(accessToken, fileId)
+}
+
+export async function exportGoogleWorkspaceFile(accessToken: string, fileId: string, mimeType: string) {
+  const exportMimeType = getWorkspaceExportMimeType(mimeType)
+  const response = await fetch(
+    `${driveApi}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMimeType)}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  )
+
+  if (!response.ok) {
+    throw await parseDriveError(response)
+  }
+
+  return response.blob()
+}
+
+export async function getDriveFolderChildren(accessToken: string, folderId: string) {
+  const query = encodeURIComponent(`'${escapeDriveQuery(folderId)}' in parents and trashed=false`)
+  return driveFetch<{ files: DriveFile[] }>(
+    accessToken,
+    `${driveApi}/files?q=${query}&spaces=drive&fields=files(id,name,mimeType,webViewLink,thumbnailLink,size)&pageSize=1000`,
+  )
 }
 
 export async function renameDriveFile(accessToken: string, fileId: string, name: string) {
@@ -209,4 +252,17 @@ export async function checkFileExists(
     // For other errors (network/auth), assume it exists and matches current state
     return { exists: true }
   }
+}
+
+function getWorkspaceExportMimeType(mimeType: string) {
+  if (mimeType === 'application/vnd.google-apps.document') {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  }
+  if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }
+  if (mimeType === 'application/vnd.google-apps.presentation') {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  }
+  return 'application/pdf'
 }

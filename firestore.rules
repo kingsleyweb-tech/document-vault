@@ -22,7 +22,30 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.driveFileId is string
-        && request.resource.data.driveFolderId is string;
+        && request.resource.data.driveFolderId is string
+        && (!('folderId' in request.resource.data)
+          || request.resource.data.folderId == null
+          || request.resource.data.folderId is string);
+
+      allow update: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /folders/{folderId} {
+      allow read: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.driveFolderId is string
+        && request.resource.data.name is string
+        && (!('parentFolderId' in request.resource.data)
+          || request.resource.data.parentFolderId == null
+          || request.resource.data.parentFolderId is string);
 
       allow update: if request.auth != null
         && resource.data.ownerId == request.auth.uid

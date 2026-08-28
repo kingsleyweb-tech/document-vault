@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createDocumentRecord,
+  createFolderRecord,
   deleteDocumentRecord,
-  listenToUserDocuments,
+  deleteFolderRecord,
+  findFolderRecord,
+  listenToUserLibrary,
   markDocumentViewed,
   updateDocumentRecord,
+  updateFolderRecord,
 } from '../services/firestore'
 import {
   checkFileExists,
-  createDriveFolder,
   deleteDriveFile,
   ensureDriveFolder,
   ensureVaultFolder,
@@ -19,7 +22,7 @@ import {
 } from '../services/googleDrive'
 import type { DocumentCategory, NewDocumentMetadata, SortMode, VaultDocument } from '../types/document'
 import type { VaultUser } from '../types/user'
-import { getDocumentKind, stripExtension } from '../utils/fileUtils'
+import { getDocumentKind, normalizeRelativePath, stripExtension } from '../utils/fileUtils'
 import { getUserProfile, updateUserDriveConnection } from '../services/users'
 
 interface UploadOptions {
@@ -37,7 +40,7 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
       return undefined
     }
 
-    return listenToUserDocuments(
+    return listenToUserLibrary(
       user.uid,
       (nextDocuments) => {
         setDocuments(nextDocuments)
@@ -71,7 +74,11 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           await deleteFromVault(child)
         }
       }
-      await deleteDocumentRecord(record.id)
+      if (record.fileType === 'folder' && record.isFolderRecord) {
+        await deleteFolderRecord(record.id)
+      } else {
+        await deleteDocumentRecord(record.id)
+      }
     }
 
     // Validate each document in the background
@@ -101,10 +108,13 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
         }
 
         let targetFolderId: string
+        const targetVaultFolderId = parentId
+        let folderPath = ''
         if (parentId) {
           const parentFolder = documents.find((d) => d.id === parentId)
           if (!parentFolder) throw new Error('Parent folder not found.')
           targetFolderId = parentFolder.driveFileId
+          folderPath = buildFolderPath(documents, parentId)
         } else {
           const rootFolder = await ensureUserVaultFolder(user, accessToken)
           const categoryFolder = await ensureDriveFolder(accessToken, options.category, rootFolder.id)
@@ -124,7 +134,9 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           description: options.description,
           driveFileId: driveFile.id,
           driveFolderId: targetFolderId,
-          parentId: parentId,
+          parentId: targetVaultFolderId,
+          folderId: targetVaultFolderId,
+          folderPath,
         }
 
         if (driveFile.webViewLink) {
@@ -134,6 +146,69 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           metadata.thumbnailUrl = driveFile.thumbnailLink
         }
 
+        await createDocumentRecord(metadata)
+      },
+      async uploadWithRelativePath(
+        file: File,
+        relativePath: string,
+        options: UploadOptions,
+        parentId: string | null = null,
+      ) {
+        if (!user || !accessToken) {
+          throw new Error('Please reconnect Google Drive before uploading.')
+        }
+
+        const normalizedPath = normalizeRelativePath(relativePath || file.name)
+        const pathParts = normalizedPath.split('/').filter(Boolean)
+        const fileName = pathParts.pop() ?? file.name
+        let currentParentId = parentId
+        let currentDriveParentId: string
+        let folderPath = ''
+
+        if (currentParentId) {
+          const parentFolder = documents.find((d) => d.id === currentParentId)
+          if (!parentFolder) throw new Error('Parent folder not found.')
+          currentDriveParentId = parentFolder.driveFileId
+          folderPath = buildFolderPath(documents, currentParentId)
+        } else {
+          const rootFolder = await ensureUserVaultFolder(user, accessToken)
+          currentDriveParentId = rootFolder.id
+        }
+
+        for (const folderName of pathParts) {
+          const folderRecord = await ensureFirestoreFolder(
+            user.uid,
+            accessToken,
+            documents,
+            folderName,
+            currentParentId,
+            currentDriveParentId,
+          )
+          currentParentId = folderRecord.id
+          currentDriveParentId = folderRecord.driveFileId
+          folderPath = folderPath ? `${folderPath} / ${folderRecord.name}` : folderRecord.name
+        }
+
+        const namedFile = file.name === fileName ? file : new File([file], fileName, { type: file.type })
+        const driveFile = await uploadFileToDrive(accessToken, namedFile, currentDriveParentId)
+        const metadata: NewDocumentMetadata = {
+          ownerId: user.uid,
+          name: stripExtension(fileName),
+          originalName: fileName,
+          mimeType: file.type || driveFile.mimeType,
+          fileType: getDocumentKind(namedFile),
+          fileSize: file.size,
+          category: options.category,
+          description: options.description,
+          driveFileId: driveFile.id,
+          driveFolderId: currentDriveParentId,
+          parentId: currentParentId,
+          folderId: currentParentId,
+          folderPath,
+        }
+
+        if (driveFile.webViewLink) metadata.driveWebViewLink = driveFile.webViewLink
+        if (driveFile.thumbnailLink) metadata.thumbnailUrl = driveFile.thumbnailLink
         await createDocumentRecord(metadata)
       },
       async createFolder(name: string, parentId: string | null = null): Promise<string> {
@@ -151,32 +226,41 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           targetFolderId = rootFolder.id
         }
 
-        const driveFolder = await createDriveFolder(accessToken, name, targetFolderId)
+        const existingFolder = documents.find(
+          (d) => d.fileType === 'folder' && d.name === name && (d.parentId ?? null) === parentId,
+        )
+        if (existingFolder) return existingFolder.id
 
-        const metadata: NewDocumentMetadata = {
+        const foundFolder = await findFolderRecord(user.uid, name, parentId)
+        if (foundFolder) return foundFolder.id
+
+        const driveFolder = await ensureDriveFolder(accessToken, name, targetFolderId)
+
+        const metadata = {
           ownerId: user.uid,
           name: name,
-          originalName: name,
-          mimeType: 'application/vnd.google-apps.folder',
-          fileType: 'folder',
-          fileSize: 0,
-          category: 'Other',
-          description: '',
-          driveFileId: driveFolder.id,
-          driveFolderId: targetFolderId,
-          parentId: parentId,
+          parentFolderId: parentId,
+          driveFolderId: driveFolder.id,
         }
 
-        const docRef = await createDocumentRecord(metadata)
+        const docRef = await createFolderRecord(metadata)
         return docRef.id
       },
       async rename(documentRecord: VaultDocument, nextName: string) {
         if (!accessToken) throw new Error('Please reconnect Google Drive before renaming.')
         await renameDriveFile(accessToken, documentRecord.driveFileId, nextName)
-        await updateDocumentRecord(documentRecord.id, { name: nextName })
+        if (documentRecord.fileType === 'folder' && documentRecord.isFolderRecord) {
+          await updateFolderRecord(documentRecord.id, { name: nextName })
+        } else {
+          await updateDocumentRecord(documentRecord.id, { name: nextName })
+        }
       },
       async toggleFavorite(documentRecord: VaultDocument) {
-        await updateDocumentRecord(documentRecord.id, { isFavorite: !documentRecord.isFavorite })
+        if (documentRecord.fileType === 'folder' && documentRecord.isFolderRecord) {
+          await updateFolderRecord(documentRecord.id, { isFavorite: !documentRecord.isFavorite })
+        } else {
+          await updateDocumentRecord(documentRecord.id, { isFavorite: !documentRecord.isFavorite })
+        }
       },
       async moveToTrash(documentRecord: VaultDocument) {
         if (!accessToken) throw new Error('Please reconnect Google Drive before deleting.')
@@ -189,7 +273,11 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
             }
           }
           await trashDriveFile(accessToken, record.driveFileId)
-          await updateDocumentRecord(record.id, { isDeleted: true })
+          if (record.fileType === 'folder' && record.isFolderRecord) {
+            await updateFolderRecord(record.id, { isDeleted: true })
+          } else {
+            await updateDocumentRecord(record.id, { isDeleted: true })
+          }
         }
 
         await recursiveTrash(documentRecord)
@@ -205,7 +293,11 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
             }
           }
           await restoreDriveFile(accessToken, record.driveFileId)
-          await updateDocumentRecord(record.id, { isDeleted: false })
+          if (record.fileType === 'folder' && record.isFolderRecord) {
+            await updateFolderRecord(record.id, { isDeleted: false })
+          } else {
+            await updateDocumentRecord(record.id, { isDeleted: false })
+          }
         }
 
         await recursiveRestore(documentRecord)
@@ -221,7 +313,11 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
             }
           }
           await deleteDriveFile(accessToken, record.driveFileId)
-          await deleteDocumentRecord(record.id)
+          if (record.fileType === 'folder' && record.isFolderRecord) {
+            await deleteFolderRecord(record.id)
+          } else {
+            await deleteDocumentRecord(record.id)
+          }
         }
 
         await recursiveDelete(documentRecord)
@@ -256,6 +352,7 @@ export function filterAndSortDocuments(
   currentFolderId: string | null = null,
 ) {
   const normalizedSearch = search.trim().toLowerCase()
+  const descendantIds = currentFolderId ? collectDescendantFolderIds(documents, currentFolderId) : new Set<string>()
   const filtered = documents.filter((documentRecord) => {
     // 1. Filter by parentId hierarchy if not searching
     if (!normalizedSearch) {
@@ -272,6 +369,13 @@ export function filterAndSortDocuments(
 
     if (!normalizedSearch) return true
 
+    if (currentFolderId) {
+      const parentId = documentRecord.parentId ?? null
+      if (documentRecord.id !== currentFolderId && parentId !== currentFolderId && !descendantIds.has(parentId ?? '')) {
+        return false
+      }
+    }
+
     return [
       documentRecord.name,
       documentRecord.originalName,
@@ -279,6 +383,7 @@ export function filterAndSortDocuments(
       documentRecord.description,
       documentRecord.fileType,
       documentRecord.mimeType,
+      documentRecord.folderPath,
     ]
       .join(' ')
       .toLowerCase()
@@ -308,4 +413,105 @@ export function filterAndSortDocuments(
         return second.uploadedAt.toMillis() - first.uploadedAt.toMillis()
     }
   })
+}
+
+async function ensureFirestoreFolder(
+  ownerId: string,
+  accessToken: string,
+  documents: VaultDocument[],
+  folderName: string,
+  parentFolderId: string | null,
+  driveParentId: string,
+) {
+  const existingFolder = documents.find(
+    (documentRecord) =>
+      documentRecord.fileType === 'folder' &&
+      documentRecord.name.toLowerCase() === folderName.toLowerCase() &&
+      (documentRecord.parentId ?? null) === parentFolderId,
+  )
+  if (existingFolder) return existingFolder
+
+  const storedFolder = await findFolderRecord(ownerId, folderName, parentFolderId)
+  if (storedFolder) {
+    return {
+      id: storedFolder.id,
+      ownerId: storedFolder.ownerId,
+      name: storedFolder.name,
+      originalName: storedFolder.name,
+      mimeType: 'application/vnd.google-apps.folder',
+      fileType: 'folder' as const,
+      fileSize: 0,
+      category: 'Other' as DocumentCategory,
+      description: '',
+      driveFileId: storedFolder.driveFolderId,
+      driveFolderId: storedFolder.driveFolderId,
+      isFavorite: storedFolder.isFavorite,
+      isDeleted: storedFolder.isDeleted,
+      createdAt: storedFolder.createdAt,
+      uploadedAt: storedFolder.createdAt,
+      updatedAt: storedFolder.updatedAt,
+      parentId: storedFolder.parentFolderId,
+      folderId: storedFolder.parentFolderId,
+      isFolderRecord: true,
+    }
+  }
+
+  const driveFolder = await ensureDriveFolder(accessToken, folderName, driveParentId)
+  const folderRef = await createFolderRecord({
+    ownerId,
+    name: folderName,
+    parentFolderId,
+    driveFolderId: driveFolder.id,
+  })
+
+  const now = {
+    toDate: () => new Date(),
+    toMillis: () => Date.now(),
+  }
+
+  return {
+    id: folderRef.id,
+    ownerId,
+    name: folderName,
+    originalName: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+    fileType: 'folder' as const,
+    fileSize: 0,
+    category: 'Other' as DocumentCategory,
+    description: '',
+    driveFileId: driveFolder.id,
+    driveFolderId: driveFolder.id,
+    isFavorite: false,
+    isDeleted: false,
+    createdAt: now,
+    uploadedAt: now,
+    updatedAt: now,
+    parentId: parentFolderId,
+    folderId: parentFolderId,
+    isFolderRecord: true,
+  }
+}
+
+function buildFolderPath(documents: VaultDocument[], folderId: string | null) {
+  const names: string[] = []
+  let current = folderId ? documents.find((documentRecord) => documentRecord.id === folderId) : undefined
+  while (current) {
+    names.unshift(current.name)
+    current = current.parentId ? documents.find((documentRecord) => documentRecord.id === current?.parentId) : undefined
+  }
+  return names.join(' / ')
+}
+
+function collectDescendantFolderIds(documents: VaultDocument[], folderId: string) {
+  const descendantIds = new Set<string>()
+  const visit = (parentId: string) => {
+    documents
+      .filter((documentRecord) => documentRecord.fileType === 'folder' && (documentRecord.parentId ?? null) === parentId)
+      .forEach((folder) => {
+        descendantIds.add(folder.id)
+        visit(folder.id)
+      })
+  }
+  visit(folderId)
+  return descendantIds
 }

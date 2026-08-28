@@ -5,6 +5,7 @@ export interface DriveFile {
   webViewLink?: string
   thumbnailLink?: string
   size?: string
+  trashed?: boolean
 }
 
 export interface DriveFolder {

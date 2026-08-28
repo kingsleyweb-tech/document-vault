@@ -10,6 +10,7 @@ interface DocumentCardProps {
   mode: 'grid' | 'list'
   inTrash?: boolean
   itemCount?: number
+  pathLabel?: string
   onView: (documentRecord: VaultDocument) => void
   onDownload: (documentRecord: VaultDocument) => void
   onRename: (documentRecord: VaultDocument) => void
@@ -24,6 +25,7 @@ export function DocumentCard({
   mode,
   inTrash,
   itemCount,
+  pathLabel,
   onView,
   onDownload,
   onRename,
@@ -107,6 +109,7 @@ export function DocumentCard({
               </>
             )}
           </p>
+          {pathLabel ? <p className="document-path-label">Folder: {pathLabel}</p> : null}
         </div>
       </div>
 

@@ -83,6 +83,10 @@ export function VaultPage({
   const activeDocuments = documents.filter((documentRecord) => !documentRecord.isDeleted)
   const favoriteCount = activeDocuments.filter((documentRecord) => documentRecord.isFavorite).length
   const ownerName = currentUser.displayName?.split(' ')[0] ?? 'there'
+  const folderPathLabel = useMemo(
+    () => new Map(documents.map((documentRecord) => [documentRecord.id, buildPathLabel(documents, documentRecord.parentId ?? null)])),
+    [documents],
+  )
 
   return (
     <section className="page-section">
@@ -222,6 +226,7 @@ export function VaultPage({
                 mode={viewMode}
                 inTrash={inTrash}
                 itemCount={folderItemCount}
+                pathLabel={search ? folderPathLabel.get(documentRecord.id) : undefined}
                 onView={onView}
                 onDownload={onDownload}
                 onRename={onRename}
@@ -236,4 +241,14 @@ export function VaultPage({
       ) : null}
     </section>
   )
+}
+
+function buildPathLabel(documents: VaultDocument[], folderId: string | null) {
+  const names: string[] = []
+  let current = folderId ? documents.find((documentRecord) => documentRecord.id === folderId) : undefined
+  while (current) {
+    names.unshift(current.name)
+    current = current.parentId ? documents.find((documentRecord) => documentRecord.id === current?.parentId) : undefined
+  }
+  return names.length > 0 ? names.join(' / ') : 'Home'
 }

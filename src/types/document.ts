@@ -7,7 +7,17 @@ export type DocumentCategory =
   | 'Reports'
   | 'Other'
 
-export type DocumentKind = 'pdf' | 'image' | 'word' | 'spreadsheet' | 'presentation' | 'folder' | 'other'
+export type DocumentKind =
+  | 'pdf'
+  | 'image'
+  | 'word'
+  | 'spreadsheet'
+  | 'presentation'
+  | 'folder'
+  | 'html'
+  | 'text'
+  | 'ebook'
+  | 'other'
 
 export interface VaultTimestamp {
   toDate: () => Date
@@ -30,10 +40,14 @@ export interface VaultDocument {
   thumbnailUrl?: string
   isFavorite: boolean
   isDeleted: boolean
+  createdAt: VaultTimestamp
   uploadedAt: VaultTimestamp
   updatedAt: VaultTimestamp
   lastViewedAt?: VaultTimestamp
   parentId?: string | null
+  folderId?: string | null
+  folderPath?: string
+  isFolderRecord?: boolean
 }
 
 export interface NewDocumentMetadata {
@@ -50,6 +64,27 @@ export interface NewDocumentMetadata {
   driveWebViewLink?: string
   thumbnailUrl?: string
   parentId?: string | null
+  folderId?: string | null
+  folderPath?: string
+}
+
+export interface VaultFolder {
+  id: string
+  ownerId: string
+  name: string
+  parentFolderId: string | null
+  driveFolderId: string
+  isFavorite: boolean
+  isDeleted: boolean
+  createdAt: VaultTimestamp
+  updatedAt: VaultTimestamp
+}
+
+export interface NewFolderMetadata {
+  ownerId: string
+  name: string
+  parentFolderId: string | null
+  driveFolderId: string
 }
 
 export type SortMode =
@@ -74,5 +109,6 @@ export interface UploadItem {
   progress: number
   category: DocumentCategory
   description: string
+  relativePath?: string
   error?: string
 }

@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, FileUp, Loader2, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FileUp, FolderUp, Loader2, RotateCcw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { DocumentCategory, UploadItem } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
@@ -11,13 +11,14 @@ interface UploadDialogProps {
   categories: DocumentCategory[]
   folderName?: string | null
   onClose: () => void
-  onUpload: (file: File, category: DocumentCategory, description: string) => Promise<void>
+  onUpload: (file: File, category: DocumentCategory, description: string, relativePath?: string) => Promise<void>
 }
 
 export function UploadDialog({ open, categories, folderName, onClose, onUpload }: UploadDialogProps) {
   const [items, setItems] = useState<UploadItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   if (!open) return null
 
@@ -31,6 +32,7 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
         progress: 0,
         category: 'Other' as DocumentCategory,
         description: '',
+        relativePath: getRelativePath(file),
         error: error ?? undefined,
       }
     })
@@ -57,7 +59,7 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
       }, 150)
 
       try {
-        await onUpload(item.file, item.category, item.description)
+        await onUpload(item.file, item.category, item.description, item.relativePath)
         clearInterval(interval)
         setItems((currentItems) =>
           currentItems.map((currentItem) =>
@@ -90,6 +92,12 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
   }
 
   const queuedCount = items.filter((item) => item.status === 'queued').length
+  const completedCount = items.filter((item) => item.status === 'success').length
+  const failedCount = items.filter((item) => item.status === 'error' && item.progress === 0 && item.error).length
+  const totalCount = items.length
+  const aggregateProgress = totalCount === 0
+    ? 0
+    : Math.round(items.reduce((sum, item) => sum + item.progress, 0) / totalCount)
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -108,10 +116,8 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
           </button>
         </header>
 
-        <button
-          type="button"
+        <div
           className={`dropzone ${isDragging ? 'is-dragging' : ''}`}
-          onClick={() => inputRef.current?.click()}
           onDragOver={(event) => {
             event.preventDefault()
             setIsDragging(true)
@@ -123,12 +129,21 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
             queueFiles(event.dataTransfer.files)
           }}
         >
-          <FileUp aria-hidden="true" />
-          <strong>Drop files here or choose files</strong>
-          <span>All file types are supported.</span>
-        </button>
+          <div className="upload-picker-actions">
+            <button type="button" className="primary-button" onClick={() => fileInputRef.current?.click()}>
+              <FileUp aria-hidden="true" />
+              <span>Upload File</span>
+            </button>
+            <button type="button" className="secondary-button" onClick={() => folderInputRef.current?.click()}>
+              <FolderUp aria-hidden="true" />
+              <span>Upload Folder</span>
+            </button>
+          </div>
+          <strong>Drop files here or choose files or folders</strong>
+          <span>Folder uploads preserve subfolders in Drive and Firestore.</span>
+        </div>
         <input
-          ref={inputRef}
+          ref={fileInputRef}
           className="sr-only"
           type="file"
           multiple
@@ -137,6 +152,33 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
             event.target.value = ''
           }}
         />
+        <input
+          ref={folderInputRef}
+          className="sr-only"
+          type="file"
+          multiple
+          {...{ webkitdirectory: '', directory: '' }}
+          onChange={(event) => {
+            if (event.target.files) queueFiles(event.target.files)
+            event.target.value = ''
+          }}
+        />
+
+        {totalCount > 0 ? (
+          <div className="upload-summary" role="status" aria-live="polite">
+            <div>
+              <strong>
+                {completedCount} / {totalCount} files completed
+              </strong>
+              <span>
+                {failedCount > 0 ? `${failedCount} failed` : `${queuedCount} waiting`} · {aggregateProgress}%
+              </span>
+            </div>
+            <div className="upload-item-progress-track">
+              <div className="upload-item-progress-fill" style={{ width: `${aggregateProgress}%` }} />
+            </div>
+          </div>
+        ) : null}
 
         <div className="upload-list">
           {items.map((item) => (
@@ -146,6 +188,7 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
                 <span>
                   {getDocumentKind(item.file).toUpperCase()} · {formatFileSize(item.file.size)}
                 </span>
+                {item.relativePath && item.relativePath !== item.file.name ? <span>{item.relativePath}</span> : null}
                 {item.error ? <small>{item.error}</small> : null}
 
                 {(item.status === 'uploading' || item.status === 'success') && (
@@ -181,7 +224,18 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
                 disabled={item.status === 'uploading' || item.status === 'success'}
                 aria-label={`Description for ${item.file.name}`}
               />
-              <StatusIcon status={item.status} />
+              {item.status === 'error' && !validateUploadFile(item.file) ? (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => updateItem(item.id, { status: 'queued', progress: 0, error: undefined })}
+                  aria-label={`Retry ${item.file.name}`}
+                >
+                  <RotateCcw aria-hidden="true" />
+                </button>
+              ) : (
+                <StatusIcon status={item.status} />
+              )}
             </div>
           ))}
         </div>
@@ -197,6 +251,10 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
       </section>
     </div>
   )
+}
+
+function getRelativePath(file: File) {
+  return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
 }
 
 function getUploadErrorMessage(error: unknown) {

@@ -503,6 +503,13 @@ select,
   font-size: 13px;
 }
 
+.document-path-label {
+  margin-top: 4px !important;
+  color: var(--subtle) !important;
+  font-size: 12px !important;
+  font-weight: 700;
+}
+
 .document-meta {
   display: grid;
   gap: 4px;
@@ -773,6 +780,35 @@ select,
   text-align: center;
 }
 
+.upload-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.upload-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.upload-summary > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.upload-summary span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .dropzone.is-dragging {
   border-color: #2563eb;
   background: #eff6ff;
@@ -875,6 +911,72 @@ select,
   border-radius: 8px;
   background: #ffffff;
   transform-origin: top center;
+}
+
+.html-frame {
+  width: min(100%, 1040px);
+  height: calc(100vh - 112px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  transform-origin: top center;
+}
+
+.text-viewer,
+.office-fallback {
+  width: min(100%, 980px);
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  transform-origin: top center;
+}
+
+.text-viewer {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.text-viewer-toolbar,
+.viewer-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.text-viewer-toolbar .search-box {
+  flex: 1;
+}
+
+.text-viewer pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font: 14px/1.7 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.office-fallback {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 280px;
+  padding: 28px;
+  text-align: center;
+}
+
+.office-fallback span {
+  max-width: 520px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.slide-counter {
+  display: none;
 }
 
 .office-viewer-container {
@@ -2353,9 +2455,13 @@ select,
 }
 
 .viewer.is-fullscreen .pdf-frame,
-.viewer.is-fullscreen .office-viewer-container {
+.viewer.is-fullscreen .office-viewer-container,
+.viewer.is-fullscreen .html-frame,
+.viewer.is-fullscreen .text-viewer,
+.viewer.is-fullscreen .office-fallback {
   width: 100vw;
   height: 100vh;
+  max-height: 100vh;
   border-radius: 0;
 }
 

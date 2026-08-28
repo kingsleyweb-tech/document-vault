@@ -11,7 +11,8 @@ import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
 import { ProtectedRoute } from './routes/ProtectedRoute'
 import { logout, reconnectGoogleDrive } from './services/auth'
-import { getDriveFileBlob } from './services/googleDrive'
+import { downloadDriveFile } from './services/googleDrive'
+import { buildDownloadName } from './services/documentViewer'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
 import './App.css'
 
@@ -183,11 +184,11 @@ function AuthenticatedVault() {
   async function downloadDocument(documentRecord: VaultDocument) {
     await withFriendlyErrors(async () => {
       const token = await ensureAccessToken()
-      const blob = await getDriveFileBlob(token, documentRecord.driveFileId)
+      const blob = await downloadDriveFile(token, documentRecord.driveFileId, documentRecord.mimeType)
       const link = document.createElement('a')
       const url = URL.createObjectURL(blob)
       link.href = url
-      link.download = documentRecord.originalName
+      link.download = buildDownloadName(documentRecord)
       document.body.append(link)
       link.click()
       link.remove()
@@ -252,6 +253,7 @@ function AuthenticatedVault() {
     <AppLayout
       user={user}
       search={search}
+      searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search all documents'}
       onSearchChange={setSearch}
       onUploadClick={handleUploadClick}
       driveConnected={Boolean(accessToken)}
@@ -378,17 +380,36 @@ function AuthenticatedVault() {
         categories={categories}
         folderName={uploadDestinationFolder?.name || currentFolder?.name}
         onClose={() => setUploadOpen(false)}
-        onUpload={async (file, uploadCategory, description) => {
+        onUpload={async (file, uploadCategory, description, relativePath) => {
           await ensureAccessToken()
+          if (relativePath && relativePath !== file.name) {
+            await actions.uploadWithRelativePath(
+              file,
+              relativePath,
+              { category: uploadCategory, description },
+              uploadDestinationFolderId,
+            )
+            return
+          }
+
           await actions.upload(file, { category: uploadCategory, description }, uploadDestinationFolderId)
         }}
       />
 
       <DocumentViewer
         documentRecord={viewerDocument}
+        documents={activeDocuments}
         accessToken={accessToken}
         onClose={() => setViewerDocument(null)}
         onDownload={(documentRecord) => void downloadDocument(documentRecord)}
+        onOpenDocument={(documentRecord) => {
+          void withFriendlyErrors(async () => {
+            await ensureAccessToken()
+            await actions.viewed(documentRecord)
+            setViewerDocument(documentRecord)
+          })
+        }}
+        onFavorite={(documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord))}
       />
 
       {renameOpen && renameTarget && (

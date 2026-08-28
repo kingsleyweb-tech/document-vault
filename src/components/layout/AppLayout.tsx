@@ -22,6 +22,7 @@ import vaultLogo from '../../assets/dv.png'
 interface AppLayoutProps {
   user: VaultUser
   search: string
+  searchPlaceholder?: string
   onSearchChange: (value: string) => void
   onUploadClick: () => void
   driveConnected: boolean
@@ -44,6 +45,7 @@ const navItems = [
 export function AppLayout({
   user,
   search,
+  searchPlaceholder = 'Search all documents',
   onSearchChange,
   onUploadClick,
   driveConnected,
@@ -95,7 +97,7 @@ export function AppLayout({
             <input
               value={search}
               onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search documents"
+              placeholder={searchPlaceholder}
               type="search"
             />
           </label>

@@ -2,7 +2,8 @@ import type { NewDocumentMetadata, VaultDocument, VaultTimestamp } from '../type
 
 type Unsubscribe = () => void
 
-type StoredVaultDocument = Omit<VaultDocument, 'uploadedAt' | 'updatedAt' | 'lastViewedAt'> & {
+type StoredVaultDocument = Omit<VaultDocument, 'createdAt' | 'uploadedAt' | 'updatedAt' | 'lastViewedAt'> & {
+  createdAt: number
   uploadedAt: number
   updatedAt: number
   lastViewedAt?: number
@@ -52,6 +53,7 @@ export async function createDocumentRecord(metadata: NewDocumentMetadata) {
     id,
     isFavorite: false,
     isDeleted: false,
+    createdAt: now,
     uploadedAt: now,
     updatedAt: now,
   }
@@ -126,6 +128,7 @@ function saveStoredDocuments(documents: StoredVaultDocument[]) {
 function toVaultDocument(documentRecord: StoredVaultDocument): VaultDocument {
   return {
     ...documentRecord,
+    createdAt: createTimestamp(documentRecord.createdAt ?? documentRecord.uploadedAt),
     uploadedAt: createTimestamp(documentRecord.uploadedAt),
     updatedAt: createTimestamp(documentRecord.updatedAt),
     lastViewedAt: documentRecord.lastViewedAt ? createTimestamp(documentRecord.lastViewedAt) : undefined,
@@ -133,10 +136,11 @@ function toVaultDocument(documentRecord: StoredVaultDocument): VaultDocument {
 }
 
 function serializeDocument(documentRecord: VaultDocument): StoredVaultDocument {
-  const { uploadedAt, updatedAt, lastViewedAt, ...serializableDocument } = documentRecord
+  const { createdAt, uploadedAt, updatedAt, lastViewedAt, ...serializableDocument } = documentRecord
 
   return {
     ...serializableDocument,
+    createdAt: createdAt.toMillis(),
     uploadedAt: uploadedAt.toMillis(),
     updatedAt: updatedAt.toMillis(),
     lastViewedAt: lastViewedAt?.toMillis(),
