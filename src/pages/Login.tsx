@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Navigate } from 'react-router-dom'
 import { signInWithGoogle } from '../services/auth'
@@ -30,6 +32,23 @@ function GoogleLogo() {
 
 export function Login() {
   const { isAuthenticated, loading } = useAuth()
+  const [signInError, setSignInError] = useState<string | null>(null)
+  const [signingIn, setSigningIn] = useState(false)
+  const buttonDisabled = loading || signingIn
+
+  async function handleGoogleSignIn() {
+    setSignInError(null)
+    setSigningIn(true)
+
+    try {
+      await signInWithGoogle()
+    } catch (error) {
+      console.error(error)
+      setSignInError(getGoogleSignInErrorMessage(error))
+    } finally {
+      setSigningIn(false)
+    }
+  }
 
   if (!loading && isAuthenticated) {
     return <Navigate to="/" replace />
@@ -80,13 +99,46 @@ export function Login() {
               <p>Continue with Google to open your document vault.</p>
             </div>
             <p className="login-desktop-signin-copy">Continue with Google to open your document vault.</p>
-            <button type="button" className="login-button" onClick={() => void signInWithGoogle()} disabled={loading}>
+            {signInError ? (
+              <p className="login-error" role="alert">
+                {signInError}
+              </p>
+            ) : null}
+            <button type="button" className="login-button" onClick={() => void handleGoogleSignIn()} disabled={buttonDisabled}>
               <GoogleLogo />
-              <span>{loading ? 'Checking session...' : 'Continue with Google'}</span>
+              <span>{loading ? 'Checking session...' : signingIn ? 'Opening Google...' : 'Continue with Google'}</span>
             </button>
           </div>
         </div>
       </section>
     </main>
   )
+}
+
+function getGoogleSignInErrorMessage(error: unknown) {
+  if (error instanceof FirebaseError) {
+    if (error.code === 'auth/unauthorized-domain') {
+      return 'This domain is not authorized in Firebase Authentication. Add the exact Vercel domain, then redeploy.'
+    }
+
+    if (error.code === 'auth/popup-blocked') {
+      return 'Your browser blocked the Google sign-in popup. Allow popups for this site and try again.'
+    }
+
+    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+      return 'Google sign-in was closed before it finished. Try again.'
+    }
+
+    if (error.code === 'auth/operation-not-allowed') {
+      return 'Google sign-in is not enabled for this Firebase project.'
+    }
+
+    if (error.code === 'auth/invalid-api-key' || error.code === 'auth/invalid-auth-event' || error.code === 'auth/configuration-not-found') {
+      return `Firebase is not configured correctly in this deployment (${error.code}). Check the Vercel environment variables.`
+    }
+
+    return `Google sign-in failed (${error.code}). Check this domain in Firebase and Google Cloud OAuth settings.`
+  }
+
+  return 'Google sign-in failed. Check the browser console for the detailed error.'
 }
