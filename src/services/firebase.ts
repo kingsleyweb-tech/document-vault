@@ -4,13 +4,13 @@ import { getFirestore } from 'firebase/firestore'
 import { getAnalytics, isSupported } from 'firebase/analytics'
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey: 'AIzaSyD2iBLsST0GnQV3QhhUls0mBHScu-DJT3U',
+  authDomain: 'document-vault-76520.firebaseapp.com',
+  projectId: 'document-vault-76520',
+  storageBucket: 'document-vault-76520.firebasestorage.app',
+  messagingSenderId: '393631457328',
+  appId: '1:393631457328:web:e7eb81d8db666a84bdcdf5',
+  measurementId: 'G-GYFPX9B5XZ',
 }
 
 export const firebaseRuntimeInfo = {
