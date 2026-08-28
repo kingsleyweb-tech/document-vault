@@ -10,7 +10,7 @@ import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
 import { ProtectedRoute } from './routes/ProtectedRoute'
-import { logout, reconnectGoogleDrive } from './services/auth'
+import { logout } from './services/auth'
 import { getDriveFileBlob } from './services/googleDrive'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
 import './App.css'
@@ -40,8 +40,7 @@ function App() {
 
 function AuthenticatedVault() {
   const { user, driveAccessToken } = useAuth()
-  const [reauthorizedAccessToken, setReauthorizedAccessToken] = useState<string | null>(null)
-  const accessToken = reauthorizedAccessToken ?? driveAccessToken
+  const accessToken = driveAccessToken
   const { documents, loading, error, actions } = useDocuments(user, accessToken)
 
   const [search, setSearch] = useState('')
@@ -167,9 +166,7 @@ function AuthenticatedVault() {
 
   async function ensureAccessToken() {
     if (accessToken) return accessToken
-    const token = await reconnectGoogleDrive()
-    setReauthorizedAccessToken(token)
-    return token
+    throw new Error('Google Drive authorization is missing. Sign out, sign back in, and approve Drive access.')
   }
 
   async function downloadDocument(documentRecord: VaultDocument) {

@@ -4,6 +4,7 @@ import type { VaultUser } from '../types/user'
 
 const driveScope = 'https://www.googleapis.com/auth/drive.file'
 const tokenStorageKey = 'documentVault.googleDriveAccessToken'
+const tokenChangedEvent = 'documentVault.googleDriveTokenChanged'
 
 export async function signInWithGoogle() {
   const provider = createGoogleProvider()
@@ -16,6 +17,7 @@ export async function signInWithGoogle() {
   }
 
   sessionStorage.setItem(tokenStorageKey, accessToken)
+  notifyDriveTokenChanged()
   return toVaultUser(result.user)
 }
 
@@ -25,6 +27,18 @@ export function observeAuth(callback: (user: VaultUser | null) => void) {
 
 export function getDriveAccessToken() {
   return sessionStorage.getItem(tokenStorageKey)
+}
+
+export function observeDriveAccessToken(callback: (accessToken: string | null) => void) {
+  const handleTokenChanged = () => callback(getDriveAccessToken())
+
+  window.addEventListener(tokenChangedEvent, handleTokenChanged)
+  window.addEventListener('storage', handleTokenChanged)
+
+  return () => {
+    window.removeEventListener(tokenChangedEvent, handleTokenChanged)
+    window.removeEventListener('storage', handleTokenChanged)
+  }
 }
 
 export async function reconnectGoogleDrive() {
@@ -38,6 +52,7 @@ export async function reconnectGoogleDrive() {
 
 export async function logout() {
   sessionStorage.removeItem(tokenStorageKey)
+  notifyDriveTokenChanged()
   await signOut(auth)
 }
 
@@ -46,6 +61,10 @@ function createGoogleProvider() {
   provider.addScope(driveScope)
   provider.setCustomParameters({ prompt: 'consent select_account' })
   return provider
+}
+
+function notifyDriveTokenChanged() {
+  window.dispatchEvent(new Event(tokenChangedEvent))
 }
 
 function toVaultUser(user: { uid: string; displayName: string | null; email: string | null; photoURL: string | null }): VaultUser {

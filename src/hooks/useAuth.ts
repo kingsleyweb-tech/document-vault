@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { VaultUser } from '../types/user'
-import { getDriveAccessToken, observeAuth } from '../services/auth'
+import { getDriveAccessToken, observeAuth, observeDriveAccessToken } from '../services/auth'
 
 export function useAuth() {
   const [user, setUser] = useState<VaultUser | null>(null)
@@ -8,11 +8,20 @@ export function useAuth() {
   const [driveAccessToken, setDriveAccessToken] = useState(() => getDriveAccessToken())
 
   useEffect(() => {
-    return observeAuth((nextUser) => {
+    const unsubscribeAuth = observeAuth((nextUser) => {
       setUser(nextUser)
       setDriveAccessToken(getDriveAccessToken())
       setLoading(false)
     })
+
+    const unsubscribeDriveToken = observeDriveAccessToken((nextAccessToken) => {
+      setDriveAccessToken(nextAccessToken)
+    })
+
+    return () => {
+      unsubscribeAuth()
+      unsubscribeDriveToken()
+    }
   }, [])
 
   return useMemo(
