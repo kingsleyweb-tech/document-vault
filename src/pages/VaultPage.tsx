@@ -1,4 +1,4 @@
-import { Archive, FolderPlus, Grid2X2, List, Upload } from 'lucide-react'
+import { Archive, FolderPlus, Grid2X2, List, Search, Upload, Trash2, FolderInput, Heart, Download } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DocumentCard } from '../components/documents/DocumentCard'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -39,6 +39,11 @@ interface VaultPageProps {
   onTrash: (documentRecord: VaultDocument) => void
   onRestore: (documentRecord: VaultDocument) => void
   onPermanentDelete: (documentRecord: VaultDocument) => void
+  onMove?: (documentRecord: VaultDocument) => void
+  onBulkTrash?: (selectedItems: VaultDocument[]) => void
+  onBulkMove?: (selectedItems: VaultDocument[]) => void
+  onBulkFavorite?: (selectedItems: VaultDocument[]) => void
+  onBulkDownload?: (selectedItems: VaultDocument[]) => void
 }
 
 export function VaultPage({
@@ -71,14 +76,42 @@ export function VaultPage({
   onTrash,
   onRestore,
   onPermanentDelete,
+  onMove,
+  onBulkTrash,
+  onBulkMove,
+  onBulkFavorite,
+  onBulkDownload,
 }: VaultPageProps) {
   const [categoryStatsOpen, setCategoryStatsOpen] = useState(false)
+  const [folderSearch, setFolderSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const handleSelectToggle = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
   const effectiveSortMode = documentOnly ? 'newest' : sortMode
   const effectiveCategory = documentOnly ? 'All' : category
-  const visibleDocuments = useMemo(
+  const rawVisible = useMemo(
     () => filterAndSortDocuments(documents, search, effectiveSortMode, effectiveCategory, currentFolderId),
     [documents, search, effectiveSortMode, effectiveCategory, currentFolderId],
   )
+  const visibleDocuments = useMemo(() => {
+    const q = folderSearch.trim().toLowerCase()
+    const filtered = q ? rawVisible.filter((d) => d.name.toLowerCase().includes(q)) : rawVisible
+    // Folders always appear before files
+    const folders = filtered.filter((d) => d.fileType === 'folder')
+    const files = filtered.filter((d) => d.fileType !== 'folder')
+    return [...folders, ...files]
+  }, [rawVisible, folderSearch])
 
   const activeDocuments = documents.filter((documentRecord) => !documentRecord.isDeleted)
   const favoriteCount = activeDocuments.filter((documentRecord) => documentRecord.isFavorite).length
@@ -153,6 +186,18 @@ export function VaultPage({
               <option value="smallest">Smallest</option>
               <option value="updated">Recently updated</option>
             </select>
+            {currentFolderId ? (
+              <label className="search-box search-box--inline">
+                <Search aria-hidden="true" />
+                <input
+                  value={folderSearch}
+                  onChange={(e) => setFolderSearch(e.target.value)}
+                  placeholder="Search this folder…"
+                  type="search"
+                  aria-label="Search within current folder"
+                />
+              </label>
+            ) : null}
           </div>
           <div className="toolbar-group">
             <button
@@ -227,6 +272,9 @@ export function VaultPage({
                 inTrash={inTrash}
                 itemCount={folderItemCount}
                 pathLabel={search ? folderPathLabel.get(documentRecord.id) : undefined}
+                isSelected={selectedIds.has(documentRecord.id)}
+                onSelectToggle={!inTrash ? () => handleSelectToggle(documentRecord.id) : undefined}
+                onMove={!inTrash ? onMove : undefined}
                 onView={onView}
                 onDownload={onDownload}
                 onRename={onRename}
@@ -239,6 +287,68 @@ export function VaultPage({
           })}
         </div>
       ) : null}
+
+      {/* Spacer that reserves vertical space equal to the toolbar height so
+          the last row of cards is never hidden behind the fixed toolbar */}
+      {selectedIds.size > 0 && !inTrash && (
+        <div className="bulk-toolbar-spacer" aria-hidden="true" />
+      )}
+
+      {/* Bulk action toolbar – fixed to bottom of viewport */}
+      {selectedIds.size > 0 && !inTrash && (
+        <div className="bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+          <span className="bulk-toolbar-info">
+            <strong>{selectedIds.size}</strong> {selectedIds.size === 1 ? 'item' : 'items'} selected
+          </span>
+          <div className="bulk-toolbar-actions">
+            {onBulkDownload && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkDownload(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+              >
+                <Download size={14} />
+                Download
+              </button>
+            )}
+            {onBulkFavorite && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkFavorite(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+              >
+                <Heart size={14} />
+                Favorite
+              </button>
+            )}
+            {onBulkMove && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkMove(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+              >
+                <FolderInput size={14} />
+                Move
+              </button>
+            )}
+            <div className="bulk-toolbar-divider" />
+            {onBulkTrash && (
+              <button
+                type="button"
+                className="bulk-action-btn danger"
+                onClick={() => { onBulkTrash(visibleDocuments.filter((d) => selectedIds.has(d.id))); setSelectedIds(new Set()) }}
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            )}
+            <div className="bulk-toolbar-divider" />
+            <button type="button" className="bulk-action-cancel" onClick={() => setSelectedIds(new Set())}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

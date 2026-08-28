@@ -34,7 +34,9 @@ interface AppLayoutProps {
 }
 
 const navItems = [
-  { to: '/', label: 'All Documents', icon: FileText },
+  { to: '/', label: 'Dashboard', icon: FileText },
+  { to: '/files', label: 'All Files', icon: FileText },
+  { to: '/folders', label: 'All Folders', icon: Folder },
   { to: '/recent', label: 'Recent', icon: Clock },
   { to: '/favorites', label: 'Favorites', icon: Heart },
   { to: '/categories', label: 'Categories', icon: Folder },

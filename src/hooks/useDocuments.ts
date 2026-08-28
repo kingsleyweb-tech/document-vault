@@ -19,6 +19,7 @@ import {
   restoreDriveFile,
   trashDriveFile,
   uploadFileToDrive,
+  moveDriveFile,
 } from '../services/googleDrive'
 import type { DocumentCategory, NewDocumentMetadata, SortMode, VaultDocument } from '../types/document'
 import type { VaultUser } from '../types/user'
@@ -28,6 +29,14 @@ import { getUserProfile, updateUserDriveConnection } from '../services/users'
 interface UploadOptions {
   category: DocumentCategory
   description: string
+}
+
+// Session-level cache: prevents duplicate folder creation across sequential uploads in one batch.
+// Key = `ownerId|parentVaultId|folderNameLower`, Value = the created/found folder record.
+const folderSessionCache = new Map<string, { id: string; driveFileId: string; name: string }>()
+
+export function clearFolderSessionCache() {
+  folderSessionCache.clear()
 }
 
 export function useDocuments(user: VaultUser | null, accessToken: string | null) {
@@ -176,14 +185,26 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
         }
 
         for (const folderName of pathParts) {
-          const folderRecord = await ensureFirestoreFolder(
-            user.uid,
-            accessToken,
-            documents,
-            folderName,
-            currentParentId,
-            currentDriveParentId,
-          )
+          // Check the session cache first to avoid duplicate Firestore/Drive calls
+          const cacheKey = `${user.uid}|${currentParentId ?? 'root'}|${folderName.toLowerCase()}`
+          const cached = folderSessionCache.get(cacheKey)
+
+          let folderRecord: { id: string; driveFileId: string; name: string }
+          if (cached) {
+            folderRecord = cached
+          } else {
+            const created = await ensureFirestoreFolder(
+              user.uid,
+              accessToken,
+              documents,
+              folderName,
+              currentParentId,
+              currentDriveParentId,
+            )
+            folderRecord = { id: created.id, driveFileId: created.driveFileId, name: created.name }
+            folderSessionCache.set(cacheKey, folderRecord)
+          }
+
           currentParentId = folderRecord.id
           currentDriveParentId = folderRecord.driveFileId
           folderPath = folderPath ? `${folderPath} / ${folderRecord.name}` : folderRecord.name
@@ -325,6 +346,76 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
       async viewed(documentRecord: VaultDocument) {
         await markDocumentViewed(documentRecord.id)
       },
+      async moveItem(documentRecord: VaultDocument, destinationFolderId: string | null) {
+        if (!user || !accessToken) {
+          throw new Error('Please reconnect Google Drive before moving documents.')
+        }
+
+        // Validate circular reference
+        if (documentRecord.fileType === 'folder') {
+          if (documentRecord.id === destinationFolderId) {
+            throw new Error('Cannot move a folder into itself.')
+          }
+          const descendants = collectDescendantFolderIds(documents, documentRecord.id)
+          if (destinationFolderId && descendants.has(destinationFolderId)) {
+            throw new Error('Cannot move a folder into one of its descendants.')
+          }
+        }
+
+        // Get target Drive folder ID
+        let destinationDriveFolderId: string
+        let targetFolderPath = ''
+        if (destinationFolderId) {
+          const destFolder = documents.find((d) => d.id === destinationFolderId)
+          if (!destFolder) throw new Error('Destination folder not found.')
+          destinationDriveFolderId = destFolder.driveFileId
+          targetFolderPath = buildFolderPath(documents, destinationFolderId)
+        } else {
+          const rootFolder = await ensureUserVaultFolder(user, accessToken)
+          destinationDriveFolderId = rootFolder.id
+        }
+
+        // Move in Google Drive
+        const oldDriveParentId = documentRecord.driveFolderId
+        if (oldDriveParentId !== destinationDriveFolderId) {
+          await moveDriveFile(accessToken, documentRecord.driveFileId, destinationDriveFolderId, oldDriveParentId)
+        }
+
+        // Update in Firestore
+        if (documentRecord.fileType === 'folder' && documentRecord.isFolderRecord) {
+          await updateFolderRecord(documentRecord.id, {
+            parentFolderId: destinationFolderId,
+          })
+          
+          // Helper to recursively update nested documents' paths
+          const updateDescendantPaths = async (parentId: string, currentPath: string) => {
+            const children = documents.filter((d) => d.parentId === parentId)
+            for (const child of children) {
+              if (child.fileType === 'folder') {
+                const subPath = currentPath ? `${currentPath} / ${child.name}` : child.name
+                await updateDescendantPaths(child.id, subPath)
+              } else {
+                await updateDocumentRecord(child.id, { folderPath: currentPath })
+              }
+            }
+          }
+
+          const folderNamePath = targetFolderPath ? `${targetFolderPath} / ${documentRecord.name}` : documentRecord.name
+          await updateDescendantPaths(documentRecord.id, folderNamePath)
+        } else {
+          await updateDocumentRecord(documentRecord.id, {
+            parentId: destinationFolderId,
+            folderId: destinationFolderId,
+            driveFolderId: destinationDriveFolderId,
+            folderPath: targetFolderPath,
+          })
+        }
+      },
+      async moveItems(itemsToMove: VaultDocument[], destinationFolderId: string | null) {
+        for (const item of itemsToMove) {
+          await this.moveItem(item, destinationFolderId)
+        }
+      },
     }),
     [user, accessToken, documents],
   )
@@ -423,6 +514,7 @@ async function ensureFirestoreFolder(
   parentFolderId: string | null,
   driveParentId: string,
 ) {
+  // 1. Check the live React state snapshot first (already-synced folders from previous sessions)
   const existingFolder = documents.find(
     (documentRecord) =>
       documentRecord.fileType === 'folder' &&
@@ -431,31 +523,10 @@ async function ensureFirestoreFolder(
   )
   if (existingFolder) return existingFolder
 
-  const storedFolder = await findFolderRecord(ownerId, folderName, parentFolderId)
-  if (storedFolder) {
-    return {
-      id: storedFolder.id,
-      ownerId: storedFolder.ownerId,
-      name: storedFolder.name,
-      originalName: storedFolder.name,
-      mimeType: 'application/vnd.google-apps.folder',
-      fileType: 'folder' as const,
-      fileSize: 0,
-      category: 'Other' as DocumentCategory,
-      description: '',
-      driveFileId: storedFolder.driveFolderId,
-      driveFolderId: storedFolder.driveFolderId,
-      isFavorite: storedFolder.isFavorite,
-      isDeleted: storedFolder.isDeleted,
-      createdAt: storedFolder.createdAt,
-      uploadedAt: storedFolder.createdAt,
-      updatedAt: storedFolder.updatedAt,
-      parentId: storedFolder.parentFolderId,
-      folderId: storedFolder.parentFolderId,
-      isFolderRecord: true,
-    }
-  }
-
+  // 2. Skip the Firestore multi-field query (requires a composite index that may not exist).
+  //    The session cache in uploadWithRelativePath already deduplicates within a batch.
+  //    Just create the Drive folder (ensureDriveFolder is idempotent — it checks before creating),
+  //    then write the Firestore record.
   const driveFolder = await ensureDriveFolder(accessToken, folderName, driveParentId)
   const folderRef = await createFolderRecord({
     ownerId,
@@ -502,7 +573,7 @@ function buildFolderPath(documents: VaultDocument[], folderId: string | null) {
   return names.join(' / ')
 }
 
-function collectDescendantFolderIds(documents: VaultDocument[], folderId: string) {
+export function collectDescendantFolderIds(documents: VaultDocument[], folderId: string) {
   const descendantIds = new Set<string>()
   const visit = (parentId: string) => {
     documents

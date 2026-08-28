@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Download, Eye, Heart, MoreVertical, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
+import { Download, Eye, Folder, Heart, MoreVertical, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { VaultDocument } from '../../types/document'
 import { formatDate, formatFileSize } from '../../utils/formatters'
@@ -11,6 +11,9 @@ interface DocumentCardProps {
   inTrash?: boolean
   itemCount?: number
   pathLabel?: string
+  isSelected?: boolean
+  onSelectToggle?: () => void
+  onMove?: (documentRecord: VaultDocument) => void
   onView: (documentRecord: VaultDocument) => void
   onDownload: (documentRecord: VaultDocument) => void
   onRename: (documentRecord: VaultDocument) => void
@@ -26,6 +29,9 @@ export function DocumentCard({
   inTrash,
   itemCount,
   pathLabel,
+  isSelected = false,
+  onSelectToggle,
+  onMove,
   onView,
   onDownload,
   onRename,
@@ -74,7 +80,20 @@ export function DocumentCard({
     : null
 
   return (
-    <article className={`${className} ${isFolder ? 'is-folder' : ''}`}>
+    <article className={`${className} ${isFolder ? 'is-folder' : ''} ${isSelected ? 'is-selected' : ''}`}>
+      {/* Checkbox overlay for grid mode */}
+      {mode === 'grid' && onSelectToggle && (
+        <div className={`document-select-checkbox-wrapper ${isSelected ? 'is-selected' : ''}`} onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="document-select-checkbox"
+            checked={isSelected}
+            onChange={onSelectToggle}
+            aria-label={`Select ${documentRecord.name}`}
+          />
+        </div>
+      )}
+
       {/* Thumbnail preview for grid mode */}
       {mode === 'grid' && (
         <div className="document-thumbnail" onClick={handleView} style={{ cursor: 'pointer' }}>
@@ -89,6 +108,19 @@ export function DocumentCard({
       )}
 
       <div className="document-main" onClick={handleView} style={{ cursor: 'pointer' }}>
+        {/* Checkbox for list mode */}
+        {mode === 'list' && onSelectToggle && (
+          <div className={`document-select-checkbox-wrapper ${isSelected ? 'is-selected' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              className="document-select-checkbox"
+              checked={isSelected}
+              onChange={onSelectToggle}
+              aria-label={`Select ${documentRecord.name}`}
+            />
+          </div>
+        )}
+
         <div className={`file-icon file-icon--${documentRecord.fileType}`}>
           <DocumentIcon kind={documentRecord.fileType} />
         </div>
@@ -146,6 +178,12 @@ export function DocumentCard({
                   <Pencil size={16} />
                   <span>Rename</span>
                 </button>
+                {onMove && (
+                  <button type="button" role="menuitem" onClick={() => closeAndRun(() => onMove(documentRecord))}>
+                    <Folder size={16} />
+                    <span>Move</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   role="menuitem"

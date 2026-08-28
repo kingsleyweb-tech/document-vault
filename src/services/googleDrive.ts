@@ -146,6 +146,7 @@ export async function getDriveFileMetadata(accessToken: string, fileId: string) 
 export async function getDriveFileContent(accessToken: string, fileId: string) {
   const response = await fetch(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    credentials: 'omit',
   })
 
   if (!response.ok) {
@@ -159,9 +160,38 @@ export async function getDriveFileBlob(accessToken: string, fileId: string) {
   return getDriveFileContent(accessToken, fileId)
 }
 
-export async function downloadDriveFile(accessToken: string, fileId: string, mimeType: string) {
-  if (mimeType.startsWith('application/vnd.google-apps.')) {
-    return exportGoogleWorkspaceFile(accessToken, fileId, mimeType)
+function isPotentiallyConvertible(mimeType: string) {
+  const t = mimeType.toLowerCase()
+  return (
+    t.includes('word') ||
+    t.includes('excel') ||
+    t.includes('spreadsheet') ||
+    t.includes('powerpoint') ||
+    t.includes('presentation') ||
+    t.includes('officedocument') ||
+    t.includes('ms-') ||
+    t.includes('text/') ||
+    t.includes('html')
+  )
+}
+
+export async function downloadDriveFile(accessToken: string, fileId: string, mimeType?: string) {
+  let activeMimeType = mimeType
+
+  if (!activeMimeType || (!activeMimeType.startsWith('application/vnd.google-apps.') && isPotentiallyConvertible(activeMimeType))) {
+    try {
+      const metadata = await getDriveFileMetadata(accessToken, fileId)
+      activeMimeType = metadata.mimeType
+    } catch {
+      // Fallback to whatever was provided
+    }
+  }
+
+  if (activeMimeType && activeMimeType.startsWith('application/vnd.google-apps.')) {
+    if (activeMimeType === 'application/vnd.google-apps.folder') {
+      throw new Error('Cannot download a folder.')
+    }
+    return exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType)
   }
 
   return getDriveFileContent(accessToken, fileId)
@@ -173,6 +203,7 @@ export async function exportGoogleWorkspaceFile(accessToken: string, fileId: str
     `${driveApi}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMimeType)}`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },
+      credentials: 'omit',
     },
   )
 
@@ -197,6 +228,21 @@ export async function renameDriveFile(accessToken: string, fileId: string, name:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
+}
+
+export async function moveDriveFile(
+  accessToken: string,
+  fileId: string,
+  addParents: string,
+  removeParents: string,
+): Promise<DriveFile> {
+  return driveFetch<DriveFile>(
+    accessToken,
+    `${driveApi}/files/${fileId}?addParents=${encodeURIComponent(addParents)}&removeParents=${encodeURIComponent(removeParents)}&fields=id,parents`,
+    {
+      method: 'PATCH',
+    },
+  )
 }
 
 export async function trashDriveFile(accessToken: string, fileId: string) {

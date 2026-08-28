@@ -100,7 +100,7 @@ export type ViewMode = 'grid' | 'list'
 
 export type ThemeMode = 'light' | 'dark'
 
-export type UploadStatus = 'queued' | 'uploading' | 'success' | 'error'
+export type UploadStatus = 'queued' | 'compressing' | 'uploading' | 'success' | 'error'
 
 export interface UploadItem {
   id: string
@@ -111,4 +111,7 @@ export interface UploadItem {
   description: string
   relativePath?: string
   error?: string
+  originalSize?: number
+  compressedSize?: number
+  savedPercentage?: number
 }

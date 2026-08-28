@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useMatch } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes, useMatch } from 'react-router-dom'
 import { UploadDialog } from './components/documents/UploadDialog'
 import { AppLayout } from './components/layout/AppLayout'
 import { DocumentViewer } from './components/viewer/DocumentViewer'
 import { useAuth } from './hooks/useAuth'
-import { useDocuments } from './hooks/useDocuments'
+import { useDocuments, collectDescendantFolderIds } from './hooks/useDocuments'
 import { Categories } from './pages/Categories'
 import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
+import { AllFiles } from './pages/AllFiles'
+import { AllFolders } from './pages/AllFolders'
+import { FolderTreePicker } from './components/documents/FolderTreePicker'
 import { ProtectedRoute } from './routes/ProtectedRoute'
 import { logout, reconnectGoogleDrive } from './services/auth'
 import { downloadDriveFile } from './services/googleDrive'
@@ -28,14 +31,14 @@ const categories: DocumentCategory[] = [
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/*" element={<AuthenticatedVault />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
@@ -79,6 +82,25 @@ function AuthenticatedVault() {
   const [newFolderUploadOpen, setNewFolderUploadOpen] = useState(false)
   const [uploadNewFolderName, setUploadNewFolderName] = useState('')
   const [uploadDestinationFolderId, setUploadDestinationFolderId] = useState<string | null>(null)
+
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
+  const [bulkMoveItems, setBulkMoveItems] = useState<VaultDocument[]>([])
+
+  const [bulkTrashOpen, setBulkTrashOpen] = useState(false)
+  const [bulkTrashItems, setBulkTrashItems] = useState<VaultDocument[]>([])
+
+  const [individualMoveOpen, setIndividualMoveOpen] = useState(false)
+  const [individualMoveTarget, setIndividualMoveTarget] = useState<VaultDocument | null>(null)
+
+  const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'error' | 'info' }>>([])
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = crypto.randomUUID()
+    setToasts((current) => [...current, { id, message, type }])
+    setTimeout(() => {
+      setToasts((current) => current.filter((t) => t.id !== id))
+    }, 4000)
+  }
 
   const uploadDestinationFolder = useMemo(() => {
     return documents.find((d) => d.id === uploadDestinationFolderId)
@@ -207,6 +229,63 @@ function AuthenticatedVault() {
     setFolderModalOpen(true)
   }
 
+  const handleBulkTrash = (items: VaultDocument[]) => {
+    setBulkTrashItems(items)
+    setBulkTrashOpen(true)
+  }
+
+  const handleBulkMove = (items: VaultDocument[]) => {
+    setBulkMoveItems(items)
+    setBulkMoveOpen(true)
+  }
+
+  const handleBulkFavorite = async (items: VaultDocument[]) => {
+    await withFriendlyErrors(async () => {
+      for (const item of items) {
+        await actions.toggleFavorite(item)
+      }
+      addToast(`Updated favorites for ${items.length} items.`, 'success')
+    }, 'Updating favorites...')
+  }
+
+  const handleBulkDownload = async (items: VaultDocument[]) => {
+    const filesToDownload = items.filter((i) => i.fileType !== 'folder')
+    if (filesToDownload.length === 0) {
+      addToast('No files to download (folders cannot be downloaded directly).', 'info')
+      return
+    }
+
+    addToast(`Starting download for ${filesToDownload.length} files...`, 'info')
+    let successCount = 0
+    let failCount = 0
+
+    for (const file of filesToDownload) {
+      try {
+        const token = await ensureAccessToken()
+        const blob = await downloadDriveFile(token, file.driveFileId, file.mimeType)
+        const link = document.createElement('a')
+        const url = URL.createObjectURL(blob)
+        link.href = url
+        link.download = buildDownloadName(file)
+        document.body.append(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        successCount++
+      } catch (err) {
+        console.error('Failed downloading bulk item:', file.name, err)
+        failCount++
+      }
+    }
+
+    if (successCount > 0) {
+      addToast(`Downloaded ${successCount} files successfully.`, 'success')
+    }
+    if (failCount > 0) {
+      addToast(`Failed to download ${failCount} files.`, 'error')
+    }
+  }
+
   const commonPageProps = {
     loading,
     error: operationError ?? error,
@@ -247,6 +326,14 @@ function AuthenticatedVault() {
       setConfirmDeleteTarget(documentRecord)
       setConfirmDeleteOpen(true)
     },
+    onMove: (documentRecord: VaultDocument) => {
+      setIndividualMoveTarget(documentRecord)
+      setIndividualMoveOpen(true)
+    },
+    onBulkTrash: handleBulkTrash,
+    onBulkMove: handleBulkMove,
+    onBulkFavorite: handleBulkFavorite,
+    onBulkDownload: handleBulkDownload,
   }
 
   return (
@@ -273,6 +360,28 @@ function AuthenticatedVault() {
               documents={activeDocuments}
               emptyTitle="Your document vault is empty."
               emptyMessage="Upload your first document to get started."
+            />
+          }
+        />
+        <Route
+          path="files"
+          element={
+            <AllFiles
+              {...commonPageProps}
+              documents={activeDocuments}
+              onBulkTrash={handleBulkTrash}
+              onBulkMove={handleBulkMove}
+              onBulkFavorite={handleBulkFavorite}
+              onBulkDownload={handleBulkDownload}
+            />
+          }
+        />
+        <Route
+          path="folders"
+          element={
+            <AllFolders
+              {...commonPageProps}
+              documents={activeDocuments}
             />
           }
         />
@@ -673,6 +782,107 @@ function AuthenticatedVault() {
           </div>
         </div>
       ) : null}
+
+      {/* Reusable dialogs for individual/bulk moving and bulk trashing */}
+      {individualMoveOpen && individualMoveTarget && (
+        <FolderTreePicker
+          open={individualMoveOpen}
+          documents={documents}
+          title={`Move "${individualMoveTarget.name}"`}
+          disabledFolderIds={(() => {
+            const set = new Set<string>()
+            if (individualMoveTarget.fileType === 'folder') {
+              set.add(individualMoveTarget.id)
+              const descendants = collectDescendantFolderIds(documents, individualMoveTarget.id)
+              descendants.forEach(id => set.add(id))
+            }
+            return set
+          })()}
+          onClose={() => setIndividualMoveOpen(false)}
+          onMoveHere={(destId) => {
+            void withFriendlyErrors(async () => {
+              await ensureAccessToken()
+              await actions.moveItem(individualMoveTarget, destId)
+              addToast(`Moved "${individualMoveTarget.name}" successfully.`, 'success')
+            }, 'Moving item...')
+            setIndividualMoveOpen(false)
+          }}
+        />
+      )}
+
+      {bulkMoveOpen && bulkMoveItems.length > 0 && (
+        <FolderTreePicker
+          open={bulkMoveOpen}
+          documents={documents}
+          title={`Move ${bulkMoveItems.length} items`}
+          disabledFolderIds={(() => {
+            const set = new Set<string>()
+            bulkMoveItems.forEach(item => {
+              if (item.fileType === 'folder') {
+                set.add(item.id)
+                const descendants = collectDescendantFolderIds(documents, item.id)
+                descendants.forEach(id => set.add(id))
+              }
+            })
+            return set
+          })()}
+          onClose={() => setBulkMoveOpen(false)}
+          onMoveHere={(destId) => {
+            void withFriendlyErrors(async () => {
+              await ensureAccessToken()
+              await actions.moveItems(bulkMoveItems, destId)
+              addToast(`Moved ${bulkMoveItems.length} items successfully.`, 'success')
+            }, 'Moving items...')
+            setBulkMoveOpen(false)
+          }}
+        />
+      )}
+
+      {bulkTrashOpen && bulkTrashItems.length > 0 && (
+        <div className="dialog-backdrop" role="presentation">
+          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-trash-title">
+            <header>
+              <h2 id="bulk-trash-title">Move {bulkTrashItems.length} items to Trash?</h2>
+            </header>
+            <div className="dialog-body">
+              <p style={{ margin: '0 0 8px 0', color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
+                Are you sure you want to move <strong>{bulkTrashItems.length} selected items</strong> to the trash?
+                All nested files and subfolders inside selected folders will also be moved to the trash.
+              </p>
+            </div>
+            <footer>
+              <button type="button" className="secondary-button" onClick={() => setBulkTrashOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button danger-button"
+                onClick={() => {
+                  void withFriendlyErrors(async () => {
+                    await ensureAccessToken()
+                    for (const item of bulkTrashItems) {
+                      await actions.moveToTrash(item)
+                    }
+                    addToast(`Moved ${bulkTrashItems.length} items to trash.`, 'success')
+                  }, 'Moving items to trash...')
+                  setBulkTrashOpen(false)
+                }}
+              >
+                Move to Trash
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {/* Floating toast notifications */}
+      <div className="toast-container" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast-card is-${t.type}`}>
+            {t.message}
+          </div>
+        ))}
+      </div>
     </AppLayout>
   )
 }

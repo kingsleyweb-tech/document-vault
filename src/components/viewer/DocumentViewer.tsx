@@ -29,10 +29,16 @@ export function DocumentViewer({
   const [zoom, setZoom] = useState(1)
   const [textSearch, setTextSearch] = useState('')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [activeSheetIndex, setActiveSheetIndex] = useState(0)
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0)
   const viewerRef = useRef<HTMLDivElement>(null)
   const htmlFrameRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
+    setActiveSheetIndex(0)
+    setActiveSlideIndex(0)
+    setTextSearch('')
+
     if (!documentRecord || !accessToken) return undefined
 
     let cancelled = false
@@ -70,6 +76,16 @@ export function DocumentViewer({
   }, [])
 
   const documentPathIndex = useMemo(() => buildDocumentPathIndex(documents), [documents])
+  
+  const highlightedText = useMemo(() => {
+    const currentPreviewText =
+      previewDocumentId === documentRecord?.id ? preview?.text : undefined
+    if (!currentPreviewText) return ''
+    if (!textSearch.trim()) return currentPreviewText
+    const query = textSearch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const regex = new RegExp(`(${query})`, 'gi')
+    return currentPreviewText.replace(regex, '<mark>$1</mark>')
+  }, [preview?.text, previewDocumentId, documentRecord?.id, textSearch])
 
   if (!documentRecord) return null
 
@@ -86,6 +102,8 @@ export function DocumentViewer({
     setPreview(null)
     setPreviewDocumentId(null)
     setErrorState(null)
+    setActiveSheetIndex(0)
+    setActiveSlideIndex(0)
     loadDocumentPreview(accessToken, documentRecord)
       .then((nextPreview) => {
         setPreview(nextPreview)
@@ -225,7 +243,101 @@ export function DocumentViewer({
               </button>
             </div>
             {!matchingText ? <div className="notice">No text matches found.</div> : null}
-            <pre>{activePreview.text}</pre>
+            <pre dangerouslySetInnerHTML={{ __html: highlightedText }} />
+          </div>
+        ) : null}
+        {!loading && !activeError && activePreview?.kind === 'word' ? (
+          <iframe
+            className="word-frame"
+            title={documentRecord.name}
+            sandbox="allow-same-origin allow-popups allow-downloads"
+            srcDoc={`
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <style>
+                    body {
+                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                      line-height: 1.6;
+                      color: #333;
+                      padding: 40px;
+                      max-width: 800px;
+                      margin: 0 auto;
+                      background-color: #fff;
+                      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                      border-radius: 4px;
+                    }
+                    img { max-width: 100%; height: auto; }
+                    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background-color: #f5f5f5; }
+                  </style>
+                </head>
+                <body>
+                  ${activePreview.html}
+                </body>
+              </html>
+            `}
+            style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+          />
+        ) : null}
+        {!loading && !activeError && activePreview?.kind === 'spreadsheet' && activePreview.sheets ? (
+          <div className="spreadsheet-viewer" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
+            <div className="spreadsheet-content">
+              <div 
+                className="sheet-table-wrapper"
+                dangerouslySetInnerHTML={{ __html: activePreview.sheets[activeSheetIndex]?.html || '' }} 
+              />
+            </div>
+            {activePreview.sheets.length > 1 && (
+              <div className="spreadsheet-tabs">
+                {activePreview.sheets.map((sheet, index) => (
+                  <button
+                    key={sheet.name}
+                    type="button"
+                    className={index === activeSheetIndex ? 'sheet-tab is-active' : 'sheet-tab'}
+                    onClick={() => setActiveSheetIndex(index)}
+                  >
+                    {sheet.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+        {!loading && !activeError && activePreview?.kind === 'presentation' && activePreview.slides ? (
+          <div className="presentation-viewer" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
+            <div className="slide-view">
+              <div className="slide-card">
+                <h3>{activePreview.slides[activeSlideIndex]?.title || `Slide ${activeSlideIndex + 1}`}</h3>
+                <div className="slide-content-text">
+                  {activePreview.slides[activeSlideIndex]?.text.map((line, lineIndex) => (
+                    <p key={lineIndex}>{line}</p>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="presentation-controls">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={activeSlideIndex === 0}
+                onClick={() => setActiveSlideIndex((i) => Math.max(0, i - 1))}
+              >
+                Previous
+              </button>
+              <span className="slide-number">
+                Slide {activeSlideIndex + 1} of {activePreview.slides.length}
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={activeSlideIndex === activePreview.slides.length - 1}
+                onClick={() => setActiveSlideIndex((i) => Math.min(activePreview.slides!.length - 1, i + 1))}
+              >
+                Next
+              </button>
+            </div>
           </div>
         ) : null}
         {!loading && !activeError && activePreview?.kind === 'office' ? (
@@ -250,15 +362,6 @@ export function DocumentViewer({
               <span>Download</span>
             </button>
           </div>
-        ) : null}
-        {!loading && !activeError && activePreview?.kind === 'office' && documentRecord.fileType === 'presentation' ? (
-          <div className="slide-counter">Slide preview requires an Office renderer. Download is available.</div>
-        ) : null}
-        {!loading && !activeError && activePreview?.kind === 'office' && documentRecord.fileType === 'spreadsheet' ? (
-          <div className="slide-counter">Spreadsheet preview requires an Office renderer. Download is available.</div>
-        ) : null}
-        {!loading && !activeError && activePreview?.kind === 'office' && documentRecord.fileType === 'word' ? (
-          <div className="slide-counter">Document preview requires an Office renderer. Download is available.</div>
         ) : null}
       </div>
 

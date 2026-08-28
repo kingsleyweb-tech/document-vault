@@ -60,33 +60,45 @@ export async function loadDocumentPreview(accessToken: string, documentRecord: V
     }
   }
 
-  if (kind === 'office' && fileName.endsWith('.docx')) {
-    return {
-      kind: 'word',
-      blob: typedBlob,
-      objectUrl,
-      html: await renderDocx(typedBlob),
-      downloadable: true,
+  if (kind === 'office' && /\.(docx?|rtf)$/i.test(fileName)) {
+    try {
+      return {
+        kind: 'word',
+        blob: typedBlob,
+        objectUrl,
+        html: await renderDocx(typedBlob),
+        downloadable: true,
+      }
+    } catch {
+      // Fall through to office fallback if rendering fails
     }
   }
 
-  if (kind === 'office' && fileName.endsWith('.xlsx')) {
-    return {
-      kind: 'spreadsheet',
-      blob: typedBlob,
-      objectUrl,
-      sheets: await renderSpreadsheet(typedBlob),
-      downloadable: true,
+  if (kind === 'office' && /\.(xlsx?|csv)$/i.test(fileName)) {
+    try {
+      return {
+        kind: 'spreadsheet',
+        blob: typedBlob,
+        objectUrl,
+        sheets: await renderSpreadsheet(typedBlob),
+        downloadable: true,
+      }
+    } catch {
+      // Fall through to office fallback if rendering fails
     }
   }
 
-  if (kind === 'office' && fileName.endsWith('.pptx')) {
-    return {
-      kind: 'presentation',
-      blob: typedBlob,
-      objectUrl,
-      slides: await renderPresentation(typedBlob),
-      downloadable: true,
+  if (kind === 'office' && /\.(pptx?)$/i.test(fileName)) {
+    try {
+      return {
+        kind: 'presentation',
+        blob: typedBlob,
+        objectUrl,
+        slides: await renderPresentation(typedBlob),
+        downloadable: true,
+      }
+    } catch {
+      // Fall through to office fallback if rendering fails
     }
   }
 
@@ -107,6 +119,13 @@ export function getPreviewKind(documentRecord: Pick<VaultDocument, 'fileType' | 
     return 'office'
   }
 
+  const name = documentRecord.originalName.toLowerCase()
+  if (/\.(docx?|rtf)$/.test(name)) return 'office'
+  if (/\.(xlsx?|csv)$/.test(name)) return 'office'
+  if (/\.(pptx?)$/.test(name)) return 'office'
+  if (documentRecord.mimeType.includes('word') || documentRecord.mimeType.includes('officedocument.word')) return 'office'
+  if (documentRecord.mimeType.includes('excel') || documentRecord.mimeType.includes('officedocument.sheet')) return 'office'
+  if (documentRecord.mimeType.includes('powerpoint') || documentRecord.mimeType.includes('officedocument.presentation')) return 'office'
   if (documentRecord.mimeType.startsWith('text/')) return 'text'
   if (/\.(html?|xhtml)$/i.test(documentRecord.originalName)) return 'html'
   return 'fallback'
