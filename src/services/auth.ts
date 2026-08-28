@@ -1,5 +1,7 @@
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { auth } from './firebase'
+import { ensureVaultFolder } from './googleDrive'
+import { upsertUserProfile } from './users'
 import type { VaultUser } from '../types/user'
 
 const driveScope = 'https://www.googleapis.com/auth/drive.file'
@@ -17,12 +19,24 @@ export async function signInWithGoogle() {
   }
 
   sessionStorage.setItem(tokenStorageKey, accessToken)
+  const user = toVaultUser(result.user)
+  const vaultFolder = await ensureVaultFolder(accessToken)
+  await upsertUserProfile(user, vaultFolder.id)
   notifyDriveTokenChanged()
-  return toVaultUser(result.user)
+  return { ...user, driveFolderId: vaultFolder.id, driveConnected: true }
 }
 
 export function observeAuth(callback: (user: VaultUser | null) => void) {
-  return onAuthStateChanged(auth, (user) => callback(user ? toVaultUser(user) : null))
+  return onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      callback(null)
+      return
+    }
+
+    const vaultUser = toVaultUser(user)
+    callback(vaultUser)
+    void upsertUserProfile(vaultUser)
+  })
 }
 
 export function getDriveAccessToken() {
@@ -59,7 +73,7 @@ export async function logout() {
 function createGoogleProvider() {
   const provider = new GoogleAuthProvider()
   provider.addScope(driveScope)
-  provider.setCustomParameters({ prompt: 'consent select_account' })
+  provider.setCustomParameters({ prompt: 'select_account' })
   return provider
 }
 

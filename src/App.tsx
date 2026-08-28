@@ -10,7 +10,7 @@ import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
 import { ProtectedRoute } from './routes/ProtectedRoute'
-import { logout } from './services/auth'
+import { logout, reconnectGoogleDrive } from './services/auth'
 import { getDriveFileBlob } from './services/googleDrive'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
 import './App.css'
@@ -84,6 +84,11 @@ function AuthenticatedVault() {
   }, [documents, uploadDestinationFolderId])
 
   const handleUploadClick = () => {
+    if (!accessToken) {
+      setOperationError('Reconnect Google Drive before uploading. Your sign-in session is active, but Drive access needs to be refreshed.')
+      return
+    }
+
     setUploadDestinationFolderId(currentFolderId)
     setUploadChoiceOpen(true)
   }
@@ -169,6 +174,12 @@ function AuthenticatedVault() {
     throw new Error('Google Drive authorization is missing. Sign out, sign back in, and approve Drive access.')
   }
 
+  async function reconnectDrive() {
+    await withFriendlyErrors(async () => {
+      await reconnectGoogleDrive()
+    }, 'Reconnecting Google Drive...')
+  }
+
   async function downloadDocument(documentRecord: VaultDocument) {
     await withFriendlyErrors(async () => {
       const token = await ensureAccessToken()
@@ -243,6 +254,8 @@ function AuthenticatedVault() {
       search={search}
       onSearchChange={setSearch}
       onUploadClick={handleUploadClick}
+      driveConnected={Boolean(accessToken)}
+      onReconnectDrive={() => void reconnectDrive()}
       onLogout={() => void logout()}
       themeMode={themeMode}
       onThemeModeChange={setThemeMode}

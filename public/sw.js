@@ -1,4 +1,4 @@
-const CACHE_NAME = 'document-vault-app-v2'
+const CACHE_NAME = 'document-vault-app-v3'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/dv.png', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -22,7 +22,28 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
 
+  const requestUrl = new URL(event.request.url)
+  if (requestUrl.origin !== self.location.origin) return
+
   const isNavigation = event.request.mode === 'navigate'
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse.ok) {
+            const responseCopy = networkResponse.clone()
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put('/index.html', responseCopy)
+            })
+          }
+
+          return networkResponse
+        })
+        .catch(() => caches.match('/index.html').then((cachedResponse) => cachedResponse ?? caches.match('/'))),
+    )
+    return
+  }
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
@@ -30,11 +51,7 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(event.request)
         .then((networkResponse) => {
-          if (isNavigation && networkResponse.status === 404) {
-            return caches.match('/index.html') ?? networkResponse
-          }
-
-          if (networkResponse.ok) {
+          if (networkResponse.ok && ['style', 'script', 'image', 'font', 'manifest'].includes(event.request.destination)) {
             const responseCopy = networkResponse.clone()
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(event.request, responseCopy)

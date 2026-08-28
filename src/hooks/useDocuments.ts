@@ -20,6 +20,7 @@ import {
 import type { DocumentCategory, NewDocumentMetadata, SortMode, VaultDocument } from '../types/document'
 import type { VaultUser } from '../types/user'
 import { getDocumentKind, stripExtension } from '../utils/fileUtils'
+import { getUserProfile, updateUserDriveConnection } from '../services/users'
 
 interface UploadOptions {
   category: DocumentCategory
@@ -105,7 +106,7 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           if (!parentFolder) throw new Error('Parent folder not found.')
           targetFolderId = parentFolder.driveFileId
         } else {
-          const rootFolder = await ensureVaultFolder(accessToken)
+          const rootFolder = await ensureUserVaultFolder(user, accessToken)
           const categoryFolder = await ensureDriveFolder(accessToken, options.category, rootFolder.id)
           targetFolderId = categoryFolder.id
         }
@@ -146,7 +147,7 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
           if (!parentFolder) throw new Error('Parent folder not found.')
           targetFolderId = parentFolder.driveFileId
         } else {
-          const rootFolder = await ensureVaultFolder(accessToken)
+          const rootFolder = await ensureUserVaultFolder(user, accessToken)
           targetFolderId = rootFolder.id
         }
 
@@ -233,6 +234,18 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
   )
 
   return { documents, loading, error, actions }
+}
+
+async function ensureUserVaultFolder(user: VaultUser, accessToken: string) {
+  const profile = await getUserProfile(user.uid)
+
+  if (profile?.driveFolderId) {
+    return { id: profile.driveFolderId, name: 'Document Vault' }
+  }
+
+  const rootFolder = await ensureVaultFolder(accessToken)
+  await updateUserDriveConnection(user.uid, rootFolder.id)
+  return rootFolder
 }
 
 export function filterAndSortDocuments(

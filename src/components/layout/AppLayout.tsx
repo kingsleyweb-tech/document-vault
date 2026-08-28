@@ -24,6 +24,8 @@ interface AppLayoutProps {
   search: string
   onSearchChange: (value: string) => void
   onUploadClick: () => void
+  driveConnected: boolean
+  onReconnectDrive: () => void
   onLogout: () => void
   themeMode: ThemeMode
   onThemeModeChange: (themeMode: ThemeMode) => void
@@ -44,6 +46,8 @@ export function AppLayout({
   search,
   onSearchChange,
   onUploadClick,
+  driveConnected,
+  onReconnectDrive,
   onLogout,
   themeMode,
   onThemeModeChange,
@@ -99,6 +103,11 @@ export function AppLayout({
             <Upload aria-hidden="true" />
             <span>Upload</span>
           </button>
+          {!driveConnected ? (
+            <button className="secondary-button reconnect-button" type="button" onClick={onReconnectDrive}>
+              <span>Reconnect Drive</span>
+            </button>
+          ) : null}
           <div className="theme-switcher" aria-label="Theme">
             <button
               type="button"

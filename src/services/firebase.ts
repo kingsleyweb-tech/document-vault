@@ -16,7 +16,7 @@ const missingKeys = Object.entries(requiredEnv)
   .map(([key]) => `VITE_FIREBASE_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`)
 
 if (missingKeys.length > 0) {
-  throw new Error(`Missing Firebase environment variables: ${missingKeys.join(', ')}`)
+  console.error(`Missing Firebase environment variables: ${missingKeys.join(', ')}`)
 }
 
 export const firebaseApp = initializeApp({
