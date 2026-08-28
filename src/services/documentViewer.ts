@@ -1,7 +1,18 @@
 import type { VaultDocument } from '../types/document'
 import { downloadDriveFile, getDriveFileMetadata, GoogleDriveError } from './googleDrive'
 
-export type PreviewKind = 'pdf' | 'image' | 'html' | 'text' | 'office' | 'fallback'
+export type PreviewKind = 'pdf' | 'image' | 'html' | 'text' | 'word' | 'spreadsheet' | 'presentation' | 'office' | 'fallback'
+
+export interface SpreadsheetSheet {
+  name: string
+  html: string
+}
+
+export interface PresentationSlide {
+  index: number
+  title: string
+  text: string[]
+}
 
 export interface DocumentPreview {
   kind: PreviewKind
@@ -9,6 +20,8 @@ export interface DocumentPreview {
   objectUrl: string
   text?: string
   html?: string
+  sheets?: SpreadsheetSheet[]
+  slides?: PresentationSlide[]
   downloadable: boolean
 }
 
@@ -24,6 +37,8 @@ export async function loadDocumentPreview(accessToken: string, documentRecord: V
   const typedBlob = blob.type ? blob : new Blob([blob], { type: mimeType || documentRecord.mimeType })
   const objectUrl = URL.createObjectURL(typedBlob)
   const kind = getPreviewKind({ ...documentRecord, mimeType })
+
+  const fileName = documentRecord.originalName.toLowerCase()
 
   if (kind === 'text') {
     return {
@@ -41,6 +56,36 @@ export async function loadDocumentPreview(accessToken: string, documentRecord: V
       blob: typedBlob,
       objectUrl,
       html: sanitizeHtml(await typedBlob.text()),
+      downloadable: true,
+    }
+  }
+
+  if (kind === 'office' && fileName.endsWith('.docx')) {
+    return {
+      kind: 'word',
+      blob: typedBlob,
+      objectUrl,
+      html: await renderDocx(typedBlob),
+      downloadable: true,
+    }
+  }
+
+  if (kind === 'office' && fileName.endsWith('.xlsx')) {
+    return {
+      kind: 'spreadsheet',
+      blob: typedBlob,
+      objectUrl,
+      sheets: await renderSpreadsheet(typedBlob),
+      downloadable: true,
+    }
+  }
+
+  if (kind === 'office' && fileName.endsWith('.pptx')) {
+    return {
+      kind: 'presentation',
+      blob: typedBlob,
+      objectUrl,
+      slides: await renderPresentation(typedBlob),
       downloadable: true,
     }
   }
@@ -93,4 +138,56 @@ function sanitizeHtml(html: string) {
   })
 
   return `<!doctype html>${doc.documentElement.outerHTML}`
+}
+
+async function renderDocx(blob: Blob) {
+  const mammoth = await import('mammoth/mammoth.browser')
+  const result = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() })
+  return sanitizeHtml(result.value)
+}
+
+async function renderSpreadsheet(blob: Blob): Promise<SpreadsheetSheet[]> {
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(await blob.arrayBuffer(), { type: 'array', cellStyles: true })
+  return workbook.SheetNames.map((name) => ({
+    name,
+    html: XLSX.utils.sheet_to_html(workbook.Sheets[name], { id: `sheet-${cssSafeId(name)}` }),
+  }))
+}
+
+async function renderPresentation(blob: Blob): Promise<PresentationSlide[]> {
+  const JSZip = (await import('jszip')).default
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer())
+  const slideNames = Object.keys(zip.files)
+    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort((first, second) => getSlideNumber(first) - getSlideNumber(second))
+
+  const slides: PresentationSlide[] = []
+  for (const slideName of slideNames) {
+    const xml = await zip.file(slideName)?.async('text')
+    const text = xml ? extractSlideText(xml) : []
+    slides.push({
+      index: getSlideNumber(slideName),
+      title: text[0] ?? `Slide ${slides.length + 1}`,
+      text,
+    })
+  }
+
+  return slides
+}
+
+function extractSlideText(xml: string) {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xml, 'application/xml')
+  return Array.from(doc.getElementsByTagName('a:t'))
+    .map((node) => node.textContent?.trim() ?? '')
+    .filter(Boolean)
+}
+
+function getSlideNumber(path: string) {
+  return Number(path.match(/slide(\d+)\.xml$/)?.[1] ?? 0)
+}
+
+function cssSafeId(value: string) {
+  return value.replace(/[^a-z0-9_-]/gi, '-')
 }
