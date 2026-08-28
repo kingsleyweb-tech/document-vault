@@ -1,5 +1,3 @@
-import type { Timestamp } from 'firebase/firestore'
-
 export type DocumentCategory =
   | 'Personal'
   | 'School'
@@ -10,6 +8,11 @@ export type DocumentCategory =
   | 'Other'
 
 export type DocumentKind = 'pdf' | 'image' | 'word' | 'spreadsheet' | 'presentation' | 'folder' | 'other'
+
+export interface VaultTimestamp {
+  toDate: () => Date
+  toMillis: () => number
+}
 
 export interface VaultDocument {
   id: string
@@ -27,9 +30,9 @@ export interface VaultDocument {
   thumbnailUrl?: string
   isFavorite: boolean
   isDeleted: boolean
-  uploadedAt: Timestamp
-  updatedAt: Timestamp
-  lastViewedAt?: Timestamp
+  uploadedAt: VaultTimestamp
+  updatedAt: VaultTimestamp
+  lastViewedAt?: VaultTimestamp
   parentId?: string | null
 }
 

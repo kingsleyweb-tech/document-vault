@@ -15,12 +15,12 @@ import {
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import type { User } from 'firebase/auth'
 import type { ThemeMode } from '../../types/document'
+import type { VaultUser } from '../../types/user'
 import vaultLogo from '../../assets/dv.png'
 
 interface AppLayoutProps {
-  user: User
+  user: VaultUser
   search: string
   onSearchChange: (value: string) => void
   onUploadClick: () => void

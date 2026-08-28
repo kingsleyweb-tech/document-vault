@@ -1,10 +1,10 @@
 import { Archive, FolderPlus, Grid2X2, List, Upload } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { User } from 'firebase/auth'
 import { DocumentCard } from '../components/documents/DocumentCard'
 import { EmptyState } from '../components/ui/EmptyState'
 import { LoadingState } from '../components/ui/LoadingState'
 import type { DocumentCategory, SortMode, VaultDocument, ViewMode } from '../types/document'
+import type { VaultUser } from '../types/user'
 import { filterAndSortDocuments } from '../hooks/useDocuments'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs'
 import { StatsBar } from '../components/dashboard/StatsBar'
@@ -20,7 +20,7 @@ interface VaultPageProps {
   sortMode: SortMode
   category: DocumentCategory | 'All'
   categories: DocumentCategory[]
-  currentUser: User
+  currentUser: VaultUser
   emptyTitle: string
   emptyMessage: string
   inTrash?: boolean

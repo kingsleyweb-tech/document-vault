@@ -1,6 +1,5 @@
 import { AlertCircle, CheckCircle2, FileUp, Loader2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { FirebaseError } from 'firebase/app'
 import type { DocumentCategory, UploadItem } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
 import { getDocumentKind } from '../../utils/fileUtils'
@@ -101,7 +100,7 @@ export function UploadDialog({ open, categories, folderName, onClose, onUpload }
             <p>
               {folderName
                 ? `Files will be stored in folder: ${folderName}`
-                : 'Files are stored in Google Drive. Firestore stores metadata only.'}
+                : 'Files are stored in Google Drive. Metadata is saved in this browser.'}
             </p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close upload dialog">
@@ -207,7 +206,7 @@ function getUploadErrorMessage(error: unknown) {
     }
 
     if (error.status === 403 && error.reason === 'accessNotConfigured') {
-      return 'Enable Google Drive API in the Firebase-linked Google Cloud project: document-vault-76520.'
+      return 'Enable Google Drive API in the Google Cloud project that owns your OAuth client.'
     }
 
     if (error.status === 403) {
@@ -215,18 +214,6 @@ function getUploadErrorMessage(error: unknown) {
     }
 
     return `Google Drive upload failed (${error.status}: ${error.reason ?? error.message}).`
-  }
-
-  if (error instanceof FirebaseError) {
-    if (error.code === 'permission-denied') {
-      return 'Firestore blocked the metadata save. Publish firestore.rules in Firebase Console.'
-    }
-
-    if (error.code === 'not-found' || error.code === 'failed-precondition') {
-      return `Firestore is not ready for metadata saves (${error.code}). Check the database and indexes.`
-    }
-
-    return `Firebase metadata save failed (${error.code}).`
   }
 
   if (error instanceof Error && error.message.includes('Google Drive authorization')) {

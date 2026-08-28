@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { User } from 'firebase/auth'
-import { completeRedirectSignIn, getDriveAccessToken, observeAuth } from '../services/auth'
+import type { VaultUser } from '../types/user'
+import { getDriveAccessToken, observeAuth } from '../services/auth'
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<VaultUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [driveAccessToken, setDriveAccessToken] = useState(() => getDriveAccessToken())
 
   useEffect(() => {
-    void completeRedirectSignIn()
-      .then(() => {
-        setDriveAccessToken(getDriveAccessToken())
-      })
-      .catch((error) => {
-        console.error('Failed to complete Google redirect sign-in.', error)
-      })
-
     return observeAuth((nextUser) => {
       setUser(nextUser)
       setDriveAccessToken(getDriveAccessToken())

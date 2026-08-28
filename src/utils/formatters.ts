@@ -1,4 +1,4 @@
-import type { Timestamp } from 'firebase/firestore'
+import type { VaultTimestamp } from '../types/document'
 
 export function formatFileSize(bytes: number) {
   if (bytes === 0) return '0 B'
@@ -7,7 +7,7 @@ export function formatFileSize(bytes: number) {
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
 }
 
-export function formatDate(value?: Timestamp) {
+export function formatDate(value?: VaultTimestamp) {
   if (!value) return 'Never'
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',

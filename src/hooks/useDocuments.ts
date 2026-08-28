@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { User } from 'firebase/auth'
 import {
   createDocumentRecord,
   deleteDocumentRecord,
   listenToUserDocuments,
   markDocumentViewed,
   updateDocumentRecord,
-} from '../services/firestore'
+} from '../services/localDocuments'
 import {
   checkFileExists,
   createDriveFolder,
@@ -19,6 +18,7 @@ import {
   uploadFileToDrive,
 } from '../services/googleDrive'
 import type { DocumentCategory, NewDocumentMetadata, SortMode, VaultDocument } from '../types/document'
+import type { VaultUser } from '../types/user'
 import { getDocumentKind, stripExtension } from '../utils/fileUtils'
 
 interface UploadOptions {
@@ -26,7 +26,7 @@ interface UploadOptions {
   description: string
 }
 
-export function useDocuments(user: User | null, accessToken: string | null) {
+export function useDocuments(user: VaultUser | null, accessToken: string | null) {
   const [documents, setDocuments] = useState<VaultDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -63,12 +63,11 @@ export function useDocuments(user: User | null, accessToken: string | null) {
     // Mark them as checked immediately so we don't trigger multiple checks in parallel
     toValidate.forEach((doc) => validatedIdsRef.current.add(doc.id))
 
-    // Helper to recursively delete folder and its contents from Firestore
-    const deleteFromFirestore = async (record: VaultDocument) => {
+    const deleteFromVault = async (record: VaultDocument) => {
       if (record.fileType === 'folder') {
         const children = documents.filter((d) => d.parentId === record.id)
         for (const child of children) {
-          await deleteFromFirestore(child)
+          await deleteFromVault(child)
         }
       }
       await deleteDocumentRecord(record.id)
@@ -78,10 +77,10 @@ export function useDocuments(user: User | null, accessToken: string | null) {
     toValidate.forEach(async (docRecord) => {
       const result = await checkFileExists(accessToken, docRecord.driveFileId)
       if (!result.exists) {
-        console.warn(`File ${docRecord.name} not found on Google Drive. Cleaning up from Firestore.`)
-        await deleteFromFirestore(docRecord)
+        console.warn(`File ${docRecord.name} not found on Google Drive. Cleaning up local metadata.`)
+        await deleteFromVault(docRecord)
       } else if (result.trashed !== undefined) {
-        // If Google Drive trash state doesn't match Firestore isDeleted state, sync them
+        // If Google Drive trash state doesn't match vault metadata, sync them.
         if (result.trashed && !docRecord.isDeleted) {
           console.info(`File ${docRecord.name} was trashed on Google Drive. Syncing trash state.`)
           await updateDocumentRecord(docRecord.id, { isDeleted: true })

@@ -333,7 +333,7 @@ function AuthenticatedVault() {
             <VaultPage
               {...commonPageProps}
               title="Trash"
-              description="Restore documents or permanently remove them from Drive and Firestore."
+              description="Restore documents or permanently remove them from Drive and your vault."
               documents={trashDocuments}
               emptyTitle="Your trash is empty."
               emptyMessage="Deleted documents will appear here before permanent removal."
@@ -510,7 +510,7 @@ function AuthenticatedVault() {
                 Warning: This action is irreversible and cannot be undone.
               </p>
               <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
-                Are you sure you want to permanently delete <strong>{confirmDeleteTarget.name}</strong> from Google Drive and Firebase?
+                Are you sure you want to permanently delete <strong>{confirmDeleteTarget.name}</strong> from Google Drive and your vault?
                 {confirmDeleteTarget.fileType === 'folder' && ' All nested files and subfolders inside this folder will be permanently deleted.'}
               </p>
             </div>

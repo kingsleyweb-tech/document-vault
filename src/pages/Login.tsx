@@ -1,9 +1,7 @@
 import { useState } from 'react'
-import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Navigate } from 'react-router-dom'
 import { signInWithGoogle } from '../services/auth'
-import { firebaseRuntimeInfo } from '../services/firebase'
 import { useAuth } from '../hooks/useAuth'
 import loginImage from '../assets/col.png'
 import vaultLogo from '../assets/dv.png'
@@ -117,33 +115,9 @@ export function Login() {
 }
 
 function getGoogleSignInErrorMessage(error: unknown) {
-  if (error instanceof FirebaseError) {
-    if (error.code === 'auth/unauthorized-domain') {
-      return `This domain is not authorized in Firebase. Add "${window.location.hostname}" in Firebase Authentication -> Settings -> Authorized domains for project "${firebaseRuntimeInfo.projectId}", then redeploy.`
-    }
-
-    if (error.code === 'auth/popup-blocked') {
-      return 'Your browser blocked an older Google sign-in popup. Redeploy the latest build, then refresh this page.'
-    }
-
-    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-      return 'An older Google sign-in popup was cancelled. Redeploy the latest build, then refresh this page.'
-    }
-
-    if (error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-auth-event') {
-      return `Google redirect sign-in could not finish (${error.code}). Check the OAuth authorized origin for this Vercel URL.`
-    }
-
-    if (error.code === 'auth/operation-not-allowed') {
-      return 'Google sign-in is not enabled for this Firebase project.'
-    }
-
-    if (error.code === 'auth/invalid-api-key' || error.code === 'auth/invalid-auth-event' || error.code === 'auth/configuration-not-found') {
-      return `Firebase is not configured correctly in this deployment (${error.code}). Check the Vercel environment variables.`
-    }
-
-    return `Google sign-in failed (${error.code}). Current domain: "${window.location.hostname}". Firebase project: "${firebaseRuntimeInfo.projectId}". Auth domain: "${firebaseRuntimeInfo.authDomain}".`
+  if (error instanceof Error) {
+    return error.message
   }
 
-  return 'Google sign-in failed. Check the browser console for the detailed error.'
+  return 'Google sign-in failed. Check the Google OAuth client ID and authorized JavaScript origins.'
 }
