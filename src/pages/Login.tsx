@@ -3,6 +3,7 @@ import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Navigate } from 'react-router-dom'
 import { signInWithGoogle } from '../services/auth'
+import { firebaseRuntimeInfo } from '../services/firebase'
 import { useAuth } from '../hooks/useAuth'
 import loginImage from '../assets/col.png'
 import vaultLogo from '../assets/dv.png'
@@ -118,7 +119,7 @@ export function Login() {
 function getGoogleSignInErrorMessage(error: unknown) {
   if (error instanceof FirebaseError) {
     if (error.code === 'auth/unauthorized-domain') {
-      return 'This domain is not authorized in Firebase Authentication. Add the exact Vercel domain, then redeploy.'
+      return `This domain is not authorized in Firebase. Add "${window.location.hostname}" in Firebase Authentication -> Settings -> Authorized domains for project "${firebaseRuntimeInfo.projectId}", then redeploy.`
     }
 
     if (error.code === 'auth/popup-blocked') {
@@ -141,7 +142,7 @@ function getGoogleSignInErrorMessage(error: unknown) {
       return `Firebase is not configured correctly in this deployment (${error.code}). Check the Vercel environment variables.`
     }
 
-    return `Google sign-in failed (${error.code}). Check this domain in Firebase and Google Cloud OAuth settings.`
+    return `Google sign-in failed (${error.code}). Current domain: "${window.location.hostname}". Firebase project: "${firebaseRuntimeInfo.projectId}". Auth domain: "${firebaseRuntimeInfo.authDomain}".`
   }
 
   return 'Google sign-in failed. Check the browser console for the detailed error.'
