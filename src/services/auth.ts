@@ -1,8 +1,11 @@
 import {
   GoogleAuthProvider,
   type User,
+  type UserCredential,
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth'
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore'
@@ -24,14 +27,35 @@ function googleProvider() {
 }
 
 export async function signInWithGoogle() {
+  if (import.meta.env.PROD) {
+    await signInWithRedirect(auth, googleProvider())
+    return null
+  }
+
   const result = await signInWithPopup(auth, googleProvider())
+  await finishGoogleSignIn(result)
+  return result.user
+}
+
+export async function completeRedirectSignIn() {
+  const result = await getRedirectResult(auth)
+
+  if (!result) {
+    return null
+  }
+
+  await finishGoogleSignIn(result)
+  return result.user
+}
+
+async function finishGoogleSignIn(result: UserCredential) {
   const credential = GoogleAuthProvider.credentialFromResult(result)
 
   if (credential?.accessToken) {
     sessionStorage.setItem(tokenStorageKey, credential.accessToken)
   }
 
-  await setDoc(
+  void setDoc(
     doc(db, 'users', result.user.uid),
     {
       name: result.user.displayName ?? 'Vault user',
@@ -40,9 +64,9 @@ export async function signInWithGoogle() {
       updatedAt: serverTimestamp(),
     },
     { merge: true },
-  )
-
-  return result.user
+  ).catch((error) => {
+    console.error('Failed to save user profile metadata after Google sign-in.', error)
+  })
 }
 
 export function observeAuth(callback: (user: User | null) => void) {
