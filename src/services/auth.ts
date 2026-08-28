@@ -4,7 +4,6 @@ import {
   type UserCredential,
   getRedirectResult,
   onAuthStateChanged,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
 } from 'firebase/auth'
@@ -13,6 +12,7 @@ import { auth, db } from './firebase'
 
 const driveScope = 'https://www.googleapis.com/auth/drive.file'
 const tokenStorageKey = 'documentVault.googleDriveAccessToken'
+let pendingRedirectResult: Promise<User | null> | null = null
 
 function googleProvider() {
   const provider = new GoogleAuthProvider()
@@ -27,25 +27,21 @@ function googleProvider() {
 }
 
 export async function signInWithGoogle() {
-  if (import.meta.env.PROD) {
-    await signInWithRedirect(auth, googleProvider())
-    return null
-  }
-
-  const result = await signInWithPopup(auth, googleProvider())
-  await finishGoogleSignIn(result)
-  return result.user
+  await signInWithRedirect(auth, googleProvider())
+  return null
 }
 
 export async function completeRedirectSignIn() {
-  const result = await getRedirectResult(auth)
+  pendingRedirectResult ??= getRedirectResult(auth).then(async (result) => {
+    if (!result) {
+      return null
+    }
 
-  if (!result) {
-    return null
-  }
+    await finishGoogleSignIn(result)
+    return result.user
+  })
 
-  await finishGoogleSignIn(result)
-  return result.user
+  return pendingRedirectResult
 }
 
 async function finishGoogleSignIn(result: UserCredential) {

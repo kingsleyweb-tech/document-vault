@@ -122,11 +122,15 @@ function getGoogleSignInErrorMessage(error: unknown) {
     }
 
     if (error.code === 'auth/popup-blocked') {
-      return 'Your browser blocked the Google sign-in popup. Allow popups for this site and try again.'
+      return 'Your browser blocked an older Google sign-in popup. Redeploy the latest build, then refresh this page.'
     }
 
     if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-      return 'Google sign-in was closed before it finished. Try again.'
+      return 'An older Google sign-in popup was cancelled. Redeploy the latest build, then refresh this page.'
+    }
+
+    if (error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-auth-event') {
+      return `Google redirect sign-in could not finish (${error.code}). Check the OAuth authorized origin for this Vercel URL.`
     }
 
     if (error.code === 'auth/operation-not-allowed') {
