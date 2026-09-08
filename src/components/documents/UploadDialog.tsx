@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, FileText, FileUp, FolderUp, Loader2, RotateCcw, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FileText, FileUp, FolderOpen, FolderUp, Loader2, Plus, RotateCcw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { DocumentCategory, UploadItem } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
@@ -19,13 +19,59 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
   const [defaultCategory, setDefaultCategory] = useState<DocumentCategory>('Other')
   const [defaultDescription, setDefaultDescription] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  // Track folders queued in this session: rootFolderName -> file count
+  const [queuedFolders, setQueuedFolders] = useState<Map<string, number>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const addFolderInputRef = useRef<HTMLInputElement>(null)
 
   if (!open) return null
 
-  function queueFiles(files: FileList | File[]) {
+  /** Queue files and record the root folder name for the summary panel */
+  function queueFiles(files: FileList | File[], rootFolderName?: string) {
     enqueueFiles(files, defaultCategory, defaultDescription, destinationFolderId)
+    if (rootFolderName) {
+      setQueuedFolders((prev) => {
+        const next = new Map(prev)
+        next.set(rootFolderName, (next.get(rootFolderName) ?? 0) + files.length)
+        return next
+      })
+    }
+  }
+
+  /** Handle folder input change — derive root folder name from relativePath */
+  function handleFolderInput(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return
+    // The first file's webkitRelativePath is "FolderName/..."
+    const firstPath = fileList[0].webkitRelativePath
+    const rootName = firstPath ? firstPath.split('/')[0] : 'Folder'
+    queueFiles(fileList, rootName)
+  }
+
+  /** Handle drag-drop: support multiple folders via webkitGetAsEntry */
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setIsDragging(false)
+    const items = Array.from(e.dataTransfer.items)
+    const hasEntryAPI = items.length > 0 && typeof items[0].webkitGetAsEntry === 'function'
+
+    if (hasEntryAPI) {
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry()
+        if (!entry) continue
+        if (entry.isDirectory) {
+          const files = await readDirectoryEntry(entry as FileSystemDirectoryEntry)
+          queueFiles(files, entry.name)
+        } else if (entry.isFile) {
+          const file = await new Promise<File>((resolve, reject) =>
+            (entry as FileSystemFileEntry).file(resolve, reject)
+          )
+          queueFiles([file])
+        }
+      }
+    } else {
+      queueFiles(e.dataTransfer.files)
+    }
   }
 
   const queuedCount = stats.pending + stats.retrying
@@ -165,7 +211,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
           className={`dropzone ${isDragging ? 'is-dragging' : ''}`}
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
           onDragLeave={() => setIsDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setIsDragging(false); queueFiles(e.dataTransfer.files) }}
+          onDrop={handleDrop}
         >
           <div className="upload-picker-actions">
             <button type="button" className="primary-button" onClick={() => fileInputRef.current?.click()}>
@@ -178,8 +224,36 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
             </button>
           </div>
           <strong>Drop files or folders here</strong>
-          <span>Folder uploads preserve the folder structure inside Google Drive.</span>
+          <span>Drag multiple folders at once, or click to add them one by one.</span>
         </div>
+
+        {/* ── QUEUED FOLDERS SUMMARY ── */}
+        {queuedFolders.size > 0 && (
+          <div className="queued-folders-panel">
+            <div className="queued-folders-header">
+              <FolderOpen size={14} aria-hidden="true" />
+              <span>{queuedFolders.size} folder{queuedFolders.size > 1 ? 's' : ''} queued</span>
+              <button
+                type="button"
+                className="add-folder-btn"
+                onClick={() => addFolderInputRef.current?.click()}
+                title="Add another folder"
+              >
+                <Plus size={13} aria-hidden="true" />
+                Add Another Folder
+              </button>
+            </div>
+            <ul className="queued-folders-list">
+              {Array.from(queuedFolders.entries()).map(([name, count]) => (
+                <li key={name} className="queued-folder-item">
+                  <FolderOpen size={13} className="queued-folder-icon" aria-hidden="true" />
+                  <span className="queued-folder-name">{name}</span>
+                  <span className="queued-folder-count">{count} file{count !== 1 ? 's' : ''}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* ── DEFAULTS ── */}
         <div className="upload-defaults">
@@ -207,13 +281,23 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
           multiple
           onChange={(e) => { if (e.target.files) queueFiles(e.target.files); e.target.value = '' }}
         />
+        {/* Folder input — first folder picker */}
         <input
           ref={folderInputRef}
           className="sr-only"
           type="file"
           multiple
           {...{ webkitdirectory: '', directory: '' }}
-          onChange={(e) => { if (e.target.files) queueFiles(e.target.files); e.target.value = '' }}
+          onChange={(e) => { handleFolderInput(e.target.files); e.target.value = '' }}
+        />
+        {/* Second folder input — for adding more folders without resetting */}
+        <input
+          ref={addFolderInputRef}
+          className="sr-only"
+          type="file"
+          multiple
+          {...{ webkitdirectory: '', directory: '' }}
+          onChange={(e) => { handleFolderInput(e.target.files); e.target.value = '' }}
         />
 
         {/* ── QUEUE LIST ── */}
@@ -377,3 +461,31 @@ function StatusIcon({ status }: { status: UploadItem['status'] }) {
   if (status === 'COMPRESSING') return <Loader2      size={18} className="uq-icon-spin"    aria-label="Compressing" style={{ color: '#7c3aed' }} />
   return <span className="uq-queued-dot" aria-label="Queued" />
 }
+
+/** Recursively reads all files inside a directory entry (for drag-drop multi-folder support) */
+async function readDirectoryEntry(dir: FileSystemDirectoryEntry): Promise<File[]> {
+  const files: File[] = []
+  const reader = dir.createReader()
+
+  const readBatch = () =>
+    new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
+
+  let batch: FileSystemEntry[]
+  do {
+    batch = await readBatch()
+    for (const entry of batch) {
+      if (entry.isFile) {
+        const file = await new Promise<File>((resolve, reject) =>
+          (entry as FileSystemFileEntry).file(resolve, reject)
+        )
+        files.push(file)
+      } else if (entry.isDirectory) {
+        const subFiles = await readDirectoryEntry(entry as FileSystemDirectoryEntry)
+        files.push(...subFiles)
+      }
+    }
+  } while (batch.length > 0)
+
+  return files
+}
+

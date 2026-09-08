@@ -1001,6 +1001,126 @@ select,
   padding: 0 10px;
 }
 
+/* Queued folders summary panel */
+.queued-folders-panel {
+  margin: 0 24px;
+  border: 1px solid #e0e7ff;
+  border-radius: 10px;
+  background: #f5f7ff;
+  overflow: hidden;
+}
+
+.queued-folders-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4338ca;
+  background: #eef2ff;
+  border-bottom: 1px solid #e0e7ff;
+}
+
+.queued-folders-header > span {
+  flex: 1;
+}
+
+.add-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.add-folder-btn:hover {
+  background: #4f46e5;
+  color: #ffffff;
+}
+
+.queued-folders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.queued-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  border-bottom: 1px solid #e9eeff;
+}
+
+.queued-folder-item:last-child {
+  border-bottom: none;
+}
+
+.queued-folder-icon {
+  color: #6366f1;
+  flex-shrink: 0;
+}
+
+.queued-folder-name {
+  flex: 1;
+  font-weight: 500;
+  color: #1e1b4b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-folder-count {
+  color: #6366f1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Dark mode */
+[data-theme='dark'] .queued-folders-panel {
+  background: #1e1b4b20;
+  border-color: #4338ca40;
+}
+
+[data-theme='dark'] .queued-folders-header {
+  background: #1e1b4b40;
+  border-color: #4338ca40;
+  color: #a5b4fc;
+}
+
+[data-theme='dark'] .queued-folder-item {
+  border-color: #4338ca20;
+}
+
+[data-theme='dark'] .queued-folder-name {
+  color: #c7d2fe;
+}
+
+[data-theme='dark'] .queued-folder-count {
+  color: #a5b4fc;
+}
+
+[data-theme='dark'] .add-folder-btn {
+  background: #1e1b4b;
+  border-color: #6366f1;
+  color: #a5b4fc;
+}
+
+[data-theme='dark'] .add-folder-btn:hover {
+  background: #4f46e5;
+  color: #ffffff;
+}
+
 .upload-top-actions {
   display: flex;
   flex-wrap: wrap;
