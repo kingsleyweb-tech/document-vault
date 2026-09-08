@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { HashRouter, Navigate, Route, Routes, useMatch } from 'react-router-dom'
 import { UploadDialog } from './components/documents/UploadDialog'
 import { AppLayout } from './components/layout/AppLayout'
+import { DashboardView } from './components/dashboard/DashboardView'
 import { DocumentViewer } from './components/viewer/DocumentViewer'
 import { useAuth } from './hooks/useAuth'
 import { useDocuments, collectDescendantFolderIds } from './hooks/useDocuments'
@@ -411,6 +412,7 @@ function AuthenticatedVault() {
       />
       <AppLayout
         user={user}
+        documents={documents}
         search={search}
         searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search all documents'}
         onSearchChange={setSearch}
@@ -426,13 +428,23 @@ function AuthenticatedVault() {
         <Route
           index
           element={
-            <VaultPage
-              {...commonPageProps}
-              title="All documents"
-              description="Search, sort, preview, and manage your private document library."
+            <DashboardView
+              user={user}
               documents={activeDocuments}
-              emptyTitle="Your document vault is empty."
-              emptyMessage="Upload your first document to get started."
+              driveConnected={Boolean(accessToken)}
+              onUploadClick={handleUploadClick}
+              onCreateFolder={createNewFolder}
+              onSearchFocus={() => {
+                const searchInput = document.querySelector<HTMLInputElement>('.search-box input')
+                searchInput?.focus()
+              }}
+              onView={commonPageProps.onView}
+              onDownload={commonPageProps.onDownload}
+              onRename={commonPageProps.onRename}
+              onFavorite={commonPageProps.onFavorite}
+              onTrash={commonPageProps.onTrash}
+              onMove={commonPageProps.onMove}
+              onReconnectDrive={() => void reconnectDrive()}
             />
           }
         />

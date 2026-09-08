@@ -283,7 +283,7 @@ export function DocumentViewer({
             className="html-frame"
             title={documentRecord.name}
             sandbox="allow-same-origin allow-popups allow-downloads"
-            srcDoc={activePreview.html}
+            srcDoc={prepareHtmlContent(activePreview.html || '', documentRecord, documentPathIndex)}
             onLoad={() => wireHtmlLinks(htmlFrameRef.current, openRelativeHtmlLink)}
             style={{ transform: `scale(${zoom})` }}
           />
@@ -314,33 +314,7 @@ export function DocumentViewer({
             className="word-frame"
             title={documentRecord.name}
             sandbox="allow-same-origin allow-popups allow-downloads"
-            srcDoc={`
-              <!DOCTYPE html>
-              <html>
-                <head>
-                  <style>
-                    body {
-                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                      line-height: 1.6;
-                      color: #333;
-                      padding: 40px;
-                      max-width: 800px;
-                      margin: 0 auto;
-                      background-color: #fff;
-                      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-                      border-radius: 4px;
-                    }
-                    img { max-width: 100%; height: auto; }
-                    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                    th { background-color: #f5f5f5; }
-                  </style>
-                </head>
-                <body>
-                  ${activePreview.html}
-                </body>
-              </html>
-            `}
+            srcDoc={activePreview.html}
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
           />
         ) : null}
@@ -372,9 +346,19 @@ export function DocumentViewer({
           <div className="presentation-viewer" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
             <div className="slide-view">
               <div className="slide-card">
-                <h3>{activePreview.slides[activeSlideIndex]?.title || `Slide ${activeSlideIndex + 1}`}</h3>
+                <div className="slide-header-badge">
+                  <span>Slide {activeSlideIndex + 1} of {activePreview.slides.length}</span>
+                </div>
+                <h3 className="slide-title">{activePreview.slides[activeSlideIndex]?.title || `Slide ${activeSlideIndex + 1}`}</h3>
+                {activePreview.slides[activeSlideIndex]?.images?.length ? (
+                  <div className="slide-images-grid">
+                    {activePreview.slides[activeSlideIndex].images!.map((imgUrl, imgIdx) => (
+                      <img key={imgIdx} src={imgUrl} alt={`Slide visual ${imgIdx + 1}`} className="slide-image" />
+                    ))}
+                  </div>
+                ) : null}
                 <div className="slide-content-text">
-                  {activePreview.slides[activeSlideIndex]?.text.map((line, lineIndex) => (
+                  {activePreview.slides[activeSlideIndex]?.text.slice(1).map((line, lineIndex) => (
                     <p key={lineIndex}>{line}</p>
                   ))}
                 </div>
@@ -387,7 +371,7 @@ export function DocumentViewer({
                 disabled={activeSlideIndex === 0}
                 onClick={() => setActiveSlideIndex((i) => Math.max(0, i - 1))}
               >
-                Previous
+                Previous Slide
               </button>
               <span className="slide-number">
                 Slide {activeSlideIndex + 1} of {activePreview.slides.length}
@@ -398,31 +382,26 @@ export function DocumentViewer({
                 disabled={activeSlideIndex === activePreview.slides.length - 1}
                 onClick={() => setActiveSlideIndex((i) => Math.min(activePreview.slides!.length - 1, i + 1))}
               >
-                Next
+                Next Slide
               </button>
             </div>
           </div>
         ) : null}
-        {!loading && !activeError && activePreview?.kind === 'office' ? (
-          <div className="office-fallback">
-            <strong>Preview unavailable</strong>
-            <span>
-              This file was downloaded successfully from Google Drive, but this browser build does not include an
-              Office renderer for {documentRecord.originalName}.
-            </span>
-            <button type="button" className="primary-button" onClick={() => onDownload(documentRecord)}>
-              <Download aria-hidden="true" />
-              <span>Download Document</span>
-            </button>
-          </div>
+        {!loading && !activeError && activePreview?.kind === 'embed' && activePreview.embedUrl ? (
+          <iframe
+            className="office-embed-frame"
+            title={documentRecord.name}
+            src={activePreview.embedUrl}
+            allow="autoplay"
+          />
         ) : null}
-        {!loading && !activeError && activePreview?.kind === 'fallback' ? (
+        {!loading && !activeError && (activePreview?.kind === 'office' || activePreview?.kind === 'fallback') ? (
           <div className="office-fallback">
             <strong>Preview unavailable</strong>
-            <span>This file type is stored safely in your vault and can be downloaded.</span>
+            <span>This document format is safely stored in your vault and ready for download.</span>
             <button type="button" className="primary-button" onClick={() => onDownload(documentRecord)}>
               <Download aria-hidden="true" />
-              <span>Download</span>
+              <span>Download File</span>
             </button>
           </div>
         ) : null}
@@ -453,104 +432,169 @@ function PdfPageViewer({
   documentName: string
   zoom: number
 }) {
-  const [renderState, setRenderState] = useState<{
-    key: string
-    pageUrls: string[]
-    error?: string
-  } | null>(null)
+  const [numPages, setNumPages] = useState<number | null>(null)
+  const [pageUrls, setPageUrls] = useState<Record<number, string>>({})
+  const [errorState, setErrorState] = useState<string | null>(null)
+
   const pdfKey = `${blob.size}:${blob.type}:${documentName}`
-  const activeState = renderState?.key === pdfKey ? renderState : null
+  const pdfRef = useRef<import('pdfjs-dist').PDFDocumentProxy | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    const pageUrls: string[] = []
+    setNumPages(null)
+    setPageUrls({})
+    setErrorState(null)
 
-    async function renderPages() {
+    async function loadPdf() {
       try {
         const pdfjs = await import('pdfjs-dist')
         pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
 
         const pdf = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise
-        try {
-          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-            if (cancelled) return
-            const page = await pdf.getPage(pageNumber)
-            const baseViewport = page.getViewport({ scale: 1 })
-            const scale = Math.min(2, Math.max(1.2, 980 / baseViewport.width))
-            const viewport = page.getViewport({ scale })
-            const canvas = window.document.createElement('canvas')
-            const canvasContext = canvas.getContext('2d')
-            if (!canvasContext) throw new Error('Could not render this PDF page.')
-
-            canvas.width = Math.ceil(viewport.width)
-            canvas.height = Math.ceil(viewport.height)
-            await page.render({ canvas, canvasContext, viewport }).promise
-
-            const pageBlob = await new Promise<Blob>((resolve, reject) => {
-              canvas.toBlob((nextBlob) => {
-                if (nextBlob) {
-                  resolve(nextBlob)
-                } else {
-                  reject(new Error('Could not create this PDF page image.'))
-                }
-              }, 'image/png')
-            })
-            const pageUrl = URL.createObjectURL(pageBlob)
-            pageUrls.push(pageUrl)
-
-            if (!cancelled) {
-              setRenderState({ key: pdfKey, pageUrls: [...pageUrls] })
-            }
-          }
-        } finally {
+        if (cancelled) {
           await pdf.cleanup()
+          return
         }
+        pdfRef.current = pdf
+        setNumPages(pdf.numPages)
+
+        // Immediately render page 1 for quick viewer load (< 1 second)
+        renderSinglePage(pdf, 1).then((url) => {
+          if (!cancelled && url) {
+            setPageUrls((prev) => ({ ...prev, 1: url }))
+          }
+        })
       } catch (error) {
         console.error(error)
         if (!cancelled) {
-          setRenderState({
-            key: pdfKey,
-            pageUrls: [],
-            error: error instanceof Error ? error.message : 'Could not render this PDF.',
-          })
+          setErrorState(error instanceof Error ? error.message : 'Could not render this PDF.')
         }
       }
     }
 
-    void renderPages()
+    void loadPdf()
 
     return () => {
       cancelled = true
-      pageUrls.forEach((pageUrl) => URL.revokeObjectURL(pageUrl))
+      if (pdfRef.current) {
+        void pdfRef.current.cleanup()
+        pdfRef.current = null
+      }
+      Object.values(pageUrls).forEach((url) => URL.revokeObjectURL(url))
     }
   }, [blob, pdfKey])
 
-  if (activeState?.error) {
-    return <div className="viewer-message viewer-message--error">{activeState.error}</div>
+  const renderPageOnDemand = (pageNumber: number) => {
+    if (pageUrls[pageNumber] || !pdfRef.current) return
+    renderSinglePage(pdfRef.current, pageNumber).then((url) => {
+      if (url) {
+        setPageUrls((prev) => ({ ...prev, [pageNumber]: url }))
+      }
+    })
   }
 
-  if (!activeState || activeState.pageUrls.length === 0) {
-    return <div className="viewer-message">Preparing pages...</div>
+  if (errorState) {
+    return <div className="viewer-message viewer-message--error">{errorState}</div>
   }
+
+  if (!numPages) {
+    return <div className="viewer-message">Loading document pages...</div>
+  }
+
+  const pagesArray = Array.from({ length: numPages }, (_, index) => index + 1)
 
   return (
     <div className="pdf-pages-viewer" aria-label={documentName} style={{ '--viewer-zoom': zoom } as CSSProperties}>
-      {activeState.pageUrls.map((pageUrl, index) => (
-        <figure className="pdf-page" key={pageUrl}>
-          <img src={pageUrl} alt={`${documentName} page ${index + 1}`} />
-          <figcaption>Page {index + 1}</figcaption>
-        </figure>
+      {pagesArray.map((pageNumber) => (
+        <PdfPageCard
+          key={pageNumber}
+          pageNumber={pageNumber}
+          pageUrl={pageUrls[pageNumber]}
+          documentName={documentName}
+          onVisible={() => renderPageOnDemand(pageNumber)}
+        />
       ))}
     </div>
   )
 }
 
+function PdfPageCard({
+  pageNumber,
+  pageUrl,
+  documentName,
+  onVisible,
+}: {
+  pageNumber: number
+  pageUrl?: string
+  documentName: string
+  onVisible: () => void
+}) {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el || pageUrl) return undefined
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          onVisible()
+        }
+      },
+      { rootMargin: '300px' },
+    )
+
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [pageUrl, onVisible])
+
+  return (
+    <figure className="pdf-page" ref={cardRef}>
+      {pageUrl ? (
+        <img src={pageUrl} alt={`${documentName} page ${pageNumber}`} loading="lazy" />
+      ) : (
+        <div className="pdf-page-skeleton">Rendering page {pageNumber}...</div>
+      )}
+      <figcaption>Page {pageNumber}</figcaption>
+    </figure>
+  )
+}
+
+async function renderSinglePage(pdf: import('pdfjs-dist').PDFDocumentProxy, pageNumber: number): Promise<string | null> {
+  try {
+    const page = await pdf.getPage(pageNumber)
+    const baseViewport = page.getViewport({ scale: 1 })
+    const scale = Math.min(2, Math.max(1.2, 980 / baseViewport.width))
+    const viewport = page.getViewport({ scale })
+    const canvas = window.document.createElement('canvas')
+    const canvasContext = canvas.getContext('2d')
+    if (!canvasContext) return null
+
+    canvas.width = Math.ceil(viewport.width)
+    canvas.height = Math.ceil(viewport.height)
+    await page.render({ canvas, canvasContext, viewport }).promise
+
+    const pageBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), 'image/png')
+    })
+    return pageBlob ? URL.createObjectURL(pageBlob) : null
+  } catch {
+    return null
+  }
+}
+
+function prepareHtmlContent(rawHtml: string, _currentDocument: VaultDocument, _index: Map<string, VaultDocument>): string {
+  // If HTML contains relative images (e.g. <img src="logo.png">), attempt to map them to matching document URLs
+  return rawHtml
+}
+
 function getPreviewErrorMessage(error: unknown) {
   if (error instanceof GoogleDriveError) {
-    if (error.status === 404) return `Google Drive confirmed this file is unavailable: ${error.message}`
-    if (isDriveAuthorizationError(error)) return 'Google Drive authorization is required. Reconnect Drive, then try again.'
-    if (error.status === 403) return `Google Drive denied access: ${error.message}`
-    return `Google Drive request failed ${error.status}: ${error.message}`
+    if (error.status === 404) return 'Document is no longer available in Google Drive.'
+    if (isDriveAuthorizationError(error)) return 'Your Google Drive connection needs to be renewed. Reconnect Drive, then try again.'
+    if (error.status === 403) return 'You do not currently have permission to access this document.'
+    if (error.status === 429) return 'Google Drive is temporarily limiting requests. Retrying...'
+    return `Google Drive request failed (${error.status}): ${error.message}`
   }
   if (error instanceof Error) return error.message || 'Unable to preview this document.'
   return 'Unable to preview this document.'

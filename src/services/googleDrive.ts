@@ -1,4 +1,5 @@
 import type { DriveFile, DriveFolder } from '../types/googleDrive'
+import { saveOfflineBlob, getOfflineBlob } from './offlineStore'
 
 const driveApi = 'https://www.googleapis.com/drive/v3'
 const driveUploadApi = 'https://www.googleapis.com/upload/drive/v3'
@@ -59,8 +60,36 @@ async function parseDriveError(response: Response) {
   }
 }
 
+async function fetchWithRetry(url: string, init: RequestInit = {}, maxRetries = 3): Promise<Response> {
+  let attempt = 0
+  let delay = 500
+
+  while (attempt <= maxRetries) {
+    try {
+      const response = await fetch(url, init)
+      const isTransientError = response.status === 429 || (response.status >= 500 && response.status <= 504)
+      if (isTransientError && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay *= 2
+        attempt += 1
+        continue
+      }
+      return response
+    } catch (err) {
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay *= 2
+        attempt += 1
+        continue
+      }
+      throw err
+    }
+  }
+  return fetch(url, init)
+}
+
 async function driveFetch<T>(accessToken: string, url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -77,6 +106,10 @@ async function driveFetch<T>(accessToken: string, url: string, init: RequestInit
   }
 
   return response.json() as Promise<T>
+}
+
+export function getDriveEmbedPreviewUrl(fileId: string): string {
+  return `${driveApi}/files/${encodeURIComponent(fileId)}/preview`
 }
 
 function escapeDriveQuery(value: string) {
@@ -225,15 +258,31 @@ export async function getDriveFileThumbnail(
   let thumbnailUrl = knownThumbnailUrl
 
   if (!thumbnailUrl) {
-    const metadata = await getDriveFileMetadata(accessToken, fileId)
-    thumbnailUrl = metadata.thumbnailLink
+    try {
+      const metadata = await getDriveFileMetadata(accessToken, fileId)
+      thumbnailUrl = metadata.thumbnailLink
+    } catch {
+      thumbnailUrl = `https://lh3.googleusercontent.com/d/${fileId}=s800`
+    }
   }
 
   if (!thumbnailUrl) {
-    throw new GoogleDriveError(404, 'Google Drive has not generated a thumbnail for this file yet.', 'thumbnailMissing')
+    thumbnailUrl = `https://lh3.googleusercontent.com/d/${fileId}=s800`
+  } else if (thumbnailUrl.includes('=s')) {
+    thumbnailUrl = thumbnailUrl.replace(/=s\d+/, '=s800')
   }
 
-  const response = await fetch(thumbnailUrl, {
+  // Try fetching without Auth header first because Google CDN (lh3.googleusercontent.com) blocks Auth headers
+  try {
+    const directRes = await fetch(thumbnailUrl, { referrerPolicy: 'no-referrer' })
+    if (directRes.ok) {
+      return await directRes.blob()
+    }
+  } catch {
+    // Continue to authenticated retry
+  }
+
+  const response = await fetchWithRetry(thumbnailUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
     credentials: 'omit',
   })
@@ -246,16 +295,27 @@ export async function getDriveFileThumbnail(
 }
 
 export async function getDriveFileContent(accessToken: string, fileId: string) {
-  const response = await fetch(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    credentials: 'omit',
-  })
+  try {
+    const response = await fetchWithRetry(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      credentials: 'omit',
+    })
 
-  if (!response.ok) {
-    throw await parseDriveError(response)
+    if (!response.ok) {
+      throw await parseDriveError(response)
+    }
+
+    const blob = await response.blob()
+    void saveOfflineBlob(fileId, fileId, blob.type || 'application/octet-stream', blob)
+    return blob
+  } catch (error) {
+    // Offline or network error fallback from IndexedDB
+    const offlineItem = await getOfflineBlob(fileId)
+    if (offlineItem?.blob) {
+      return offlineItem.blob
+    }
+    throw error
   }
-
-  return response.blob()
 }
 
 export async function getDriveFileBlob(accessToken: string, fileId: string) {
@@ -279,8 +339,7 @@ function isPotentiallyConvertible(mimeType: string) {
 
 /**
  * Downloads a file from Drive, with an optional pre-fetched mimeType to skip
- * an extra metadata round trip.  Results are cached in memory so reopening
- * the same document is immediate.
+ * an extra metadata round trip. Results are cached in memory & IndexedDB for offline opening.
  */
 export async function downloadDriveFile(
   accessToken: string,
@@ -292,14 +351,27 @@ export async function downloadDriveFile(
   // 1. Resolve the actual MIME type we'll use for the download
   let activeMimeType = knownMimeType ?? mimeType
 
-  // Only fetch metadata when we genuinely don't know the type or it may be
-  // a convertible format whose actual server type we need.
+  // Check in-memory cache
+  const cacheKey = activeMimeType ?? 'unknown'
+  const cached = getBlobFromCache(fileId, cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  // Check offline IndexedDB store if offline or attempting fast load
+  if (!navigator.onLine) {
+    const offlineItem = await getOfflineBlob(fileId)
+    if (offlineItem?.blob) {
+      storeBlobInCache(fileId, cacheKey, offlineItem.blob)
+      return offlineItem.blob
+    }
+  }
+
   if (
     !activeMimeType ||
     (activeMimeType.startsWith('application/vnd.google-apps.') === false &&
       isPotentiallyConvertible(activeMimeType))
   ) {
-    // We still need to check for Google Workspace types — but only then
     try {
       const metadata = await getDriveFileMetadata(accessToken, fileId)
       activeMimeType = metadata.mimeType
@@ -308,34 +380,38 @@ export async function downloadDriveFile(
     }
   }
 
-  // 2. Check the cache before making any download request
-  const cacheKey = activeMimeType ?? 'unknown'
-  const cached = getBlobFromCache(fileId, cacheKey)
-  if (cached) {
-    return cached
-  }
-
   // 3. Download the file
   let blob: Blob
 
-  if (activeMimeType && activeMimeType.startsWith('application/vnd.google-apps.')) {
-    if (activeMimeType === 'application/vnd.google-apps.folder') {
-      throw new Error('Cannot download a folder.')
+  try {
+    if (activeMimeType && activeMimeType.startsWith('application/vnd.google-apps.')) {
+      if (activeMimeType === 'application/vnd.google-apps.folder') {
+        throw new Error('Cannot download a folder.')
+      }
+      blob = await exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType)
+    } else {
+      blob = await getDriveFileContent(accessToken, fileId)
     }
-    blob = await exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType)
-  } else {
-    blob = await getDriveFileContent(accessToken, fileId)
+
+    // Store in memory cache & IndexedDB for offline access
+    storeBlobInCache(fileId, cacheKey, blob)
+    void saveOfflineBlob(fileId, fileId, activeMimeType || blob.type || 'application/octet-stream', blob)
+
+    return blob
+  } catch (downloadError) {
+    // If download fails due to offline state or network failure, load from IndexedDB
+    const offlineItem = await getOfflineBlob(fileId)
+    if (offlineItem?.blob) {
+      storeBlobInCache(fileId, cacheKey, offlineItem.blob)
+      return offlineItem.blob
+    }
+    throw downloadError
   }
-
-  // 4. Store in cache for future opens
-  storeBlobInCache(fileId, cacheKey, blob)
-
-  return blob
 }
 
 export async function exportGoogleWorkspaceFile(accessToken: string, fileId: string, mimeType: string) {
   const exportMimeType = getWorkspaceExportMimeType(mimeType)
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `${driveApi}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMimeType)}`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },

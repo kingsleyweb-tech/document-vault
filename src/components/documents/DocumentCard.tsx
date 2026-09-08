@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { Download, Eye, Folder, Heart, MoreVertical, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { VaultDocument } from '../../types/document'
@@ -118,7 +118,7 @@ export function DocumentCard({
         )}
 
         <div className={`file-icon file-icon--${documentRecord.fileType}`}>
-          <DocumentIcon kind={documentRecord.fileType} />
+          <SmallDocumentThumbnailCard documentRecord={documentRecord} />
         </div>
         <div className="document-copy">
           <h3 title={documentRecord.originalName}>{documentRecord.name}</h3>
@@ -232,16 +232,32 @@ function DocumentThumbnail({
   documentRecord: VaultDocument
   accessToken?: string | null
 }) {
+  const [imgError, setImgError] = useState(false)
   const [previewState, setPreviewState] = useState<{ fileId: string; objectUrl: string | null; failed: boolean } | null>(null)
   const isFolder = documentRecord.fileType === 'folder'
+
+  // High-res Google Drive thumbnail CDN URL (=s800 renders full-resolution Slide 1 / Page 1)
+  const driveThumbnailUrl = useMemo(() => {
+    if (isFolder) return null
+    if (documentRecord.thumbnailUrl) {
+      return documentRecord.thumbnailUrl.replace(/=s\d+/, '=s800')
+    }
+    if (documentRecord.driveFileId) {
+      return `https://lh3.googleusercontent.com/d/${documentRecord.driveFileId}=s800`
+    }
+    return null
+  }, [isFolder, documentRecord.thumbnailUrl, documentRecord.driveFileId])
+
+  const isImage = documentRecord.fileType === 'image'
+  const directImageUrl = (isImage && (documentRecord.thumbnailUrl || (documentRecord as { storageUrl?: string }).storageUrl)) || null
   const canLoadAuthenticatedPreview = !isFolder && Boolean(accessToken && documentRecord.driveFileId)
   const activePreview = previewState?.fileId === documentRecord.driveFileId ? previewState : null
-  const failed = activePreview?.failed ?? false
 
   useEffect(() => {
     let cancelled = false
+    setImgError(false)
 
-    if (!canLoadAuthenticatedPreview || !accessToken) {
+    if (!canLoadAuthenticatedPreview || !accessToken || !documentRecord.driveFileId) {
       return () => {
         cancelled = true
       }
@@ -257,7 +273,7 @@ function DocumentThumbnail({
         setPreviewState({ fileId: documentRecord.driveFileId, objectUrl, failed: false })
       })
       .catch((error) => {
-        console.warn('Unable to load authenticated document thumbnail:', documentRecord.name, error)
+        console.warn('Authenticated thumbnail blob fallback for:', documentRecord.name, error)
         if (!cancelled) setPreviewState({ fileId: documentRecord.driveFileId, objectUrl: null, failed: true })
       })
 
@@ -273,26 +289,153 @@ function DocumentThumbnail({
     documentRecord.thumbnailUrl,
   ])
 
-  if (activePreview?.objectUrl && !failed) {
+  if (isFolder) {
+    return (
+      <div className="document-thumbnail-folder-preview">
+        <DocumentIcon kind="folder" size={54} />
+      </div>
+    )
+  }
+
+  // 1. Render authenticated blob preview (from PDFjs or drive blob) if available
+  if (activePreview?.objectUrl && !activePreview.failed) {
     return (
       <img
         src={activePreview.objectUrl}
-        alt={`Preview of ${documentRecord.name}`}
+        alt={`First page preview of ${documentRecord.name}`}
         loading="eager"
         decoding="async"
         fetchPriority="high"
-        onError={() => setPreviewState({ fileId: documentRecord.driveFileId, objectUrl: null, failed: true })}
+        className="document-thumbnail-img"
       />
     )
   }
 
-  if (canLoadAuthenticatedPreview && !failed) {
-    return <div className="document-thumbnail-loading" aria-label={`Loading preview of ${documentRecord.name}`} />
+  // 2. Direct high-res Google Drive CDN thumbnail (renders real Slide 1 / Page 1 image!)
+  if (driveThumbnailUrl && !imgError) {
+    return (
+      <img
+        src={driveThumbnailUrl}
+        alt={`First page preview of ${documentRecord.name}`}
+        loading="eager"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        className="document-thumbnail-img"
+        onError={() => setImgError(true)}
+      />
+    )
   }
 
+  // 3. Direct image storage URL
+  if (directImageUrl && !imgError) {
+    return (
+      <img
+        src={directImageUrl}
+        alt={`Preview of ${documentRecord.name}`}
+        loading="eager"
+        decoding="async"
+        className="document-thumbnail-img"
+        onError={() => setImgError(true)}
+      />
+    )
+  }
+
+  // Fallback sheet if thumbnail image could not be loaded
+  return <FirstPageDocumentSheet documentRecord={documentRecord} />
+}
+
+function SmallDocumentThumbnailCard({ documentRecord }: { documentRecord: VaultDocument }) {
+  const [imgError, setImgError] = useState(false)
+  const isFolder = documentRecord.fileType === 'folder'
+
+  const driveThumbnailUrl = useMemo(() => {
+    if (isFolder) return null
+    if (documentRecord.thumbnailUrl) {
+      return documentRecord.thumbnailUrl.replace(/=s\d+/, '=s200')
+    }
+    if (documentRecord.driveFileId) {
+      return `https://lh3.googleusercontent.com/d/${documentRecord.driveFileId}=s200`
+    }
+    return null
+  }, [isFolder, documentRecord.thumbnailUrl, documentRecord.driveFileId])
+
+  const isImage = documentRecord.fileType === 'image'
+  const directImageUrl = (isImage && (documentRecord.thumbnailUrl || (documentRecord as { storageUrl?: string }).storageUrl)) || null
+  const targetUrl = driveThumbnailUrl || directImageUrl
+
+  if (targetUrl && !imgError && !isFolder) {
+    return (
+      <div className="small-doc-thumbnail-wrap">
+        <img
+          src={targetUrl}
+          alt={`Thumbnail of ${documentRecord.name}`}
+          className="small-doc-thumbnail-img"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onError={() => setImgError(true)}
+        />
+      </div>
+    )
+  }
+
+  return <DocumentIcon kind={documentRecord.fileType} />
+}
+
+function FirstPageDocumentSheet({ documentRecord }: { documentRecord: VaultDocument }) {
+  const fileType = documentRecord.fileType
+  const name = documentRecord.name || 'Untitled Document'
+
+  const typeConfig: Record<string, { color: string; badge: string; label: string }> = {
+    pdf: { color: '#ef4444', badge: 'PDF', label: 'Page 1' },
+    presentation: { color: '#f97316', badge: 'PPTX', label: 'Slide 1' },
+    document: { color: '#2563eb', badge: 'DOCX', label: 'Page 1' },
+    spreadsheet: { color: '#10b981', badge: 'XLSX', label: 'Sheet 1' },
+    image: { color: '#8b5cf6', badge: 'IMAGE', label: 'Preview' },
+    audio: { color: '#ec4899', badge: 'AUDIO', label: 'Track' },
+    video: { color: '#06b6d4', badge: 'VIDEO', label: 'Clip' },
+    code: { color: '#6366f1', badge: 'CODE', label: 'Source' },
+    other: { color: '#64748b', badge: 'FILE', label: 'Page 1' },
+  }
+
+  const config = typeConfig[fileType] || typeConfig.other
+
   return (
-    <div className="document-thumbnail-placeholder">
-      <DocumentIcon kind={isFolder ? 'folder' : documentRecord.fileType} size={40} />
+    <div className="first-page-sheet-container">
+      <div className="first-page-sheet" style={{ borderTop: `4px solid ${config.color}` }}>
+        <div className="first-page-sheet-header">
+          <div className="first-page-sheet-badge" style={{ backgroundColor: `${config.color}15`, color: config.color }}>
+            {config.badge}
+          </div>
+          <span className="first-page-sheet-label">{config.label}</span>
+        </div>
+        <div className="first-page-sheet-body">
+          <div className="first-page-sheet-icon-wrap" style={{ color: config.color }}>
+            <DocumentIcon kind={fileType} size={28} />
+          </div>
+          <div className="first-page-sheet-title">{name}</div>
+          {fileType === 'presentation' ? (
+            <div className="first-page-slide-frame">
+              <div className="slide-box-header" style={{ backgroundColor: `${config.color}30` }} />
+              <div className="slide-box-line line-long" />
+              <div className="slide-box-line line-med" />
+            </div>
+          ) : fileType === 'spreadsheet' ? (
+            <div className="first-page-sheet-grid">
+              <div className="grid-cell" />
+              <div className="grid-cell" />
+              <div className="grid-cell" />
+              <div className="grid-cell" />
+            </div>
+          ) : (
+            <div className="first-page-sheet-lines">
+              <div className="sheet-line line-h1" style={{ backgroundColor: `${config.color}35` }} />
+              <div className="sheet-line line-p1" />
+              <div className="sheet-line line-p2" />
+              <div className="sheet-line line-p3" />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,6 +1,8 @@
 declare module 'mammoth/mammoth.browser' {
   export interface ConvertToHtmlInput {
     arrayBuffer: ArrayBuffer;
+    styleMap?: string[];
+    includeDefaultStyleMap?: boolean;
   }
   export interface ConvertToHtmlOutput {
     value: string;

@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react'
-import { Search, Archive, Trash2, FolderInput, Heart, Download } from 'lucide-react'
+import { Search, Archive, Trash2, FolderInput, Heart, Download, Grid2X2, List } from 'lucide-react'
 import { DocumentCard } from '../components/documents/DocumentCard'
 import { EmptyState } from '../components/ui/EmptyState'
 import { LoadingState } from '../components/ui/LoadingState'
-import type { VaultDocument, SortMode } from '../types/document'
+import type { VaultDocument, SortMode, ViewMode } from '../types/document'
 import type { VaultUser } from '../types/user'
 
 interface AllFilesProps {
@@ -12,6 +12,8 @@ interface AllFilesProps {
   loading: boolean
   error: string | null
   currentUser: VaultUser
+  viewMode?: ViewMode
+  onViewModeChange?: (mode: ViewMode) => void
   onView: (documentRecord: VaultDocument) => void
   onDownload: (documentRecord: VaultDocument) => void
   onRename: (documentRecord: VaultDocument) => void
@@ -30,6 +32,8 @@ export function AllFiles({
   accessToken,
   loading,
   error,
+  viewMode: propViewMode,
+  onViewModeChange,
   onView,
   onDownload,
   onRename,
@@ -41,6 +45,10 @@ export function AllFiles({
   onBulkFavorite,
   onBulkDownload,
 }: AllFilesProps) {
+  const [internalViewMode, setInternalViewMode] = useState<ViewMode>('grid')
+  const currentViewMode = propViewMode ?? internalViewMode
+  const handleViewModeChange = onViewModeChange ?? setInternalViewMode
+
   const [searchQuery, setSearchQuery] = useState('')
   const [fileTypeFilter, setFileTypeFilter] = useState<string>('All')
   const [folderFilter, setFolderFilter] = useState<string>('All')
@@ -215,6 +223,24 @@ export function AllFiles({
 
         {filteredAndSortedFiles.length > 0 && (
           <div className="toolbar-group">
+            <button
+              type="button"
+              className={currentViewMode === 'grid' ? 'segmented is-active' : 'segmented'}
+              onClick={() => handleViewModeChange('grid')}
+              aria-label="Grid view"
+              title="Grid View"
+            >
+              <Grid2X2 aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={currentViewMode === 'list' ? 'segmented is-active' : 'segmented'}
+              onClick={() => handleViewModeChange('list')}
+              aria-label="List view"
+              title="List View"
+            >
+              <List aria-hidden="true" />
+            </button>
             <button type="button" className="secondary-button" onClick={handleSelectAll}>
               {selectedIds.size === filteredAndSortedFiles.length ? 'Deselect All' : 'Select All'}
             </button>
@@ -234,12 +260,12 @@ export function AllFiles({
       ) : null}
 
       {!loading && filteredAndSortedFiles.length > 0 ? (
-        <div className="documents-list">
+        <div className={currentViewMode === 'grid' ? 'documents-grid' : 'documents-list'}>
           {filteredAndSortedFiles.map((file) => (
             <DocumentCard
               key={file.id}
               documentRecord={file}
-              mode="list"
+              mode={currentViewMode}
               isSelected={selectedIds.has(file.id)}
               onSelectToggle={() => handleSelectToggle(file.id)}
               onMove={onMove}
