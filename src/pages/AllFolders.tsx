@@ -4,15 +4,11 @@ import {
   Search,
   Archive,
   Folder,
-  FileText,
-  HardDrive,
-  Cloud,
   UploadCloud,
   Sparkles,
   LayoutGrid,
   List,
   Filter,
-  ArrowUpRight,
   ChevronDown,
   Trash2,
   FolderInput,
@@ -24,7 +20,6 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { LoadingState } from '../components/ui/LoadingState'
 import type { VaultDocument } from '../types/document'
 import type { VaultUser } from '../types/user'
-import { formatFileSize } from '../utils/formatters'
 
 interface AllFoldersProps {
   documents: VaultDocument[]
@@ -105,25 +100,6 @@ export function AllFolders({
   )
   const allFoldersSelected = folders.length > 0 && folders.every((f) => selectedIds.has(f.id))
 
-  // Total Files count (non-folder active documents)
-  const totalFilesCount = useMemo(() => {
-    return documents.filter((d) => d.fileType !== 'folder' && !d.isDeleted).length
-  }, [documents])
-
-  // Total Storage bytes
-  const totalStorageBytes = useMemo(() => {
-    return documents
-      .filter((d) => d.fileType !== 'folder' && !d.isDeleted)
-      .reduce((sum, doc) => sum + (doc.fileSize || 0), 0)
-  }, [documents])
-
-  const formattedStorage = useMemo(() => {
-    if (totalStorageBytes === 0) return '0 B'
-    return formatFileSize(totalStorageBytes)
-  }, [totalStorageBytes])
-
-  const isDriveConnected = Boolean(accessToken)
-
   return (
     <div className="all-folders-container">
       {/* ── 1. Page Header ── */}
@@ -188,69 +164,6 @@ export function AllFolders({
             >
               <List size={16} />
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 2. Metric Stat Cards Row ── */}
-      <div className="all-folders-stats-grid">
-        {/* Card 1: Total Folders */}
-        <div className="stat-card">
-          <div className="stat-card-header">
-            <div className="stat-icon-chip blue-chip">
-              <Folder size={18} />
-            </div>
-            <span className="stat-label">Total Folders</span>
-          </div>
-          <div className="stat-value">{folders.length}</div>
-          <div className="stat-badge green-badge">
-            <ArrowUpRight size={13} />
-            <span>+2 this month</span>
-          </div>
-        </div>
-
-        {/* Card 2: Total Files */}
-        <div className="stat-card">
-          <div className="stat-card-header">
-            <div className="stat-icon-chip blue-chip">
-              <FileText size={18} />
-            </div>
-            <span className="stat-label">Total Files</span>
-          </div>
-          <div className="stat-value">{totalFilesCount.toLocaleString()}</div>
-          <div className="stat-badge green-badge">
-            <ArrowUpRight size={13} />
-            <span>+88 this month</span>
-          </div>
-        </div>
-
-        {/* Card 3: Storage Used */}
-        <div className="stat-card">
-          <div className="stat-card-header">
-            <div className="stat-icon-chip blue-chip">
-              <HardDrive size={18} />
-            </div>
-            <span className="stat-label">Storage Used</span>
-          </div>
-          <div className="stat-value">{formattedStorage}</div>
-          <div className="stat-progress-bar">
-            <div className="stat-progress-fill" style={{ width: '43%' }} />
-          </div>
-          <span className="stat-progress-text">43% of 100 GB</span>
-        </div>
-
-        {/* Card 4: Google Drive */}
-        <div className="stat-card">
-          <div className="stat-card-header">
-            <div className="stat-icon-chip drive-chip">
-              <Cloud size={18} />
-            </div>
-            <span className="stat-label">Google Drive</span>
-          </div>
-          <div className="stat-value-sm">Google Drive</div>
-          <div className={`stat-status-tag ${isDriveConnected ? 'connected' : 'disconnected'}`}>
-            <span className="status-dot-pulse" />
-            <span>{isDriveConnected ? 'Connected' : 'Disconnected'}</span>
           </div>
         </div>
       </div>

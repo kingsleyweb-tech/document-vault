@@ -260,13 +260,71 @@ export function AppLayout({
             ))}
           </nav>
 
-          {/* Drive Status */}
+          {/* Drive Status & Storage */}
           <div className="mfm-drive-section">
             <div className="mfm-drive-card" onClick={onReconnectDrive}>
               <span className={`mfm-drive-dot ${driveConnected ? 'is-connected' : ''}`} />
               <span className="mfm-drive-label">
                 GOOGLE DRIVE — {driveConnected ? 'CONNECTED' : 'DISCONNECTED'}
               </span>
+            </div>
+
+            {!driveConnected && (
+              <button
+                type="button"
+                className="mfm-connect-drive-btn"
+                onClick={() => {
+                  setMobileNavOpen(false)
+                  onReconnectDrive()
+                }}
+                style={{
+                  marginTop: '8px',
+                  width: '100%',
+                  padding: '10px 14px',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Connect Google Drive
+              </button>
+            )}
+
+            {/* Mobile Storage Widget */}
+            <div className="mfm-storage-widget" style={{ marginTop: '16px', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+              <div className="storage-header" style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
+                <span>Storage Usage</span>
+              </div>
+              {quotaLoading && !driveQuota ? (
+                <div className="storage-skeleton" />
+              ) : driveQuota ? (
+                <>
+                  <div className="storage-progress-bar">
+                    <div
+                      className="storage-progress-fill"
+                      style={{ width: `${Math.min(100, (driveQuota.usageBytes / driveQuota.limitBytes) * 100).toFixed(1)}%` }}
+                    />
+                  </div>
+                  <div className="storage-legend" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '6px', color: 'rgba(255,255,255,0.8)' }}>
+                    <span>{formatFileSize(driveQuota.usageBytes)} of {formatFileSize(driveQuota.limitBytes)}</span>
+                    <span>{Math.min(100, Math.round((driveQuota.usageBytes / driveQuota.limitBytes) * 100))}%</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="storage-progress-bar">
+                    <div className="storage-progress-fill" style={{ width: '0%' }} />
+                  </div>
+                  <div className="storage-legend" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '6px', color: 'rgba(255,255,255,0.8)' }}>
+                    <span>—</span>
+                    <span>—</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -356,6 +414,31 @@ export function AppLayout({
                 </span>
               </div>
             </div>
+            {!driveConnected && (
+              <button
+                type="button"
+                className="sidebar-connect-drive-btn"
+                onClick={onReconnectDrive}
+                style={{
+                  marginTop: '8px',
+                  width: '100%',
+                  padding: '8px 12px',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                Connect Google Drive
+              </button>
+            )}
           </div>
         </div>
 
@@ -603,6 +686,54 @@ export function AppLayout({
             </button>
           </div>
         </header>
+
+        {!driveConnected && (
+          <div
+            className="drive-disconnected-banner"
+            style={{
+              background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.12) 100%)',
+              borderBottom: '1px solid rgba(239, 68, 68, 0.2)',
+              padding: '10px 24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ display: 'inline-flex', padding: '6px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                <HardDrive size={18} />
+              </span>
+              <div>
+                <strong style={{ fontSize: '0.875rem', color: 'var(--text-color, #1e293b)' }}>
+                  Google Drive is disconnected
+                </strong>
+                <p style={{ margin: 0, fontSize: '0.8rem', opacity: 0.85, color: 'var(--text-muted, #64748b)' }}>
+                  Connect your Google Drive account to backup and synchronize your vault documents seamlessly.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onReconnectDrive}
+              style={{
+                padding: '8px 16px',
+                background: '#ef4444',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: 600,
+                fontSize: '0.825rem',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 2px 4px rgba(239, 68, 68, 0.25)',
+              }}
+            >
+              Connect Google Drive
+            </button>
+          </div>
+        )}
 
         <main className="main-content-area">{children}</main>
       </div>
