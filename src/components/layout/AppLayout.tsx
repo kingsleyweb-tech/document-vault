@@ -1,9 +1,5 @@
 import {
   ArrowUp,
-  Clock,
-  FileText,
-  Folder,
-  Star,
   LogOut,
   Menu,
   Search,
@@ -27,6 +23,7 @@ import {
   History,
   Moon,
   Sun,
+  RotateCw,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import React from 'react'
@@ -49,6 +46,7 @@ interface AppLayoutProps {
   onLogout: () => void
   themeMode: ThemeMode
   onThemeModeChange: (themeMode: ThemeMode) => void
+  onRefresh?: () => void
   children: ReactNode
 }
 
@@ -75,12 +73,14 @@ export function AppLayout({
   onLogout,
   themeMode,
   onThemeModeChange,
+  onRefresh,
   children,
 }: AppLayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { stats } = useUploadQueue()
   const navigate = useNavigate()
@@ -163,6 +163,33 @@ export function AppLayout({
         .slice(0, 2)
     : 'JD'
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    // 1. Check Service Worker for updates
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.getRegistration()
+        if (registration) {
+          await registration.update()
+        }
+      } catch (err) {
+        console.error('Service Worker update check failed:', err)
+      }
+    }
+    // 2. Trigger optional onRefresh callback
+    if (onRefresh) {
+      try {
+        onRefresh()
+      } catch (err) {
+        console.error('onRefresh callback error:', err)
+      }
+    }
+    // 3. Smooth page reload
+    setTimeout(() => {
+      window.location.reload()
+    }, 500)
+  }
+
   return (
     <div className="app-shell">
       {/* FULL-SCREEN MOBILE MENU OVERLAY */}
@@ -176,14 +203,26 @@ export function AppLayout({
                 <span className="mfm-brand-title">DOCUMENT VAULT</span>
               </div>
             </div>
-            <button
-              type="button"
-              className="mfm-close-btn"
-              onClick={() => setMobileNavOpen(false)}
-              aria-label="Close menu"
-            >
-              <X size={20} />
-            </button>
+            <div className="mfm-header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                className="mfm-close-btn"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                aria-label="Refresh application"
+                title="Refresh application and check for updates"
+              >
+                <RotateCw size={18} className={isRefreshing ? 'spinning' : ''} />
+              </button>
+              <button
+                type="button"
+                className="mfm-close-btn"
+                onClick={() => setMobileNavOpen(false)}
+                aria-label="Close menu"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Navigation Items */}
@@ -473,6 +512,18 @@ export function AppLayout({
                 </div>
               )}
             </div>
+
+            {/* REFRESH BUTTON */}
+            <button
+              type="button"
+              className="theme-toggle-btn app-refresh-btn"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              aria-label="Refresh application"
+              title="Refresh application and check for updates"
+            >
+              <RotateCw size={18} className={isRefreshing ? 'spinning' : ''} aria-hidden="true" />
+            </button>
 
             {/* DARK / LIGHT MODE TOGGLE */}
             <button
