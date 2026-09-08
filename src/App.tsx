@@ -401,6 +401,7 @@ function AuthenticatedVaultInner() {
         onUploadClick={handleUploadClick}
         onUploadProgressClick={handleUploadProgressClick}
         driveConnected={Boolean(accessToken)}
+        accessToken={accessToken}
         onReconnectDrive={() => void reconnectDrive()}
         onLogout={() => void logout()}
         themeMode={themeMode}

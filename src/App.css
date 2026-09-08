@@ -4637,6 +4637,19 @@ mark {
   color: #94a3b8;
 }
 
+.storage-skeleton {
+  height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #1e293b 25%, #2d3a4f 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeletonShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* 2. TOPBAR HEADER */
 .topbar {
   background: #ffffff !important;

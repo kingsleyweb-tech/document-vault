@@ -542,4 +542,34 @@ export async function findFileInDrive(
   return result.files[0] ?? null
 }
 
+export interface DriveStorageQuota {
+  /** Bytes currently used across all of Drive (including Docs, Sheets, Slides, etc.) */
+  usageBytes: number
+  /** Total quota limit in bytes (e.g. 15 GB for free tier) */
+  limitBytes: number
+}
+
+/**
+ * Fetches the real storage quota from the Google Drive v3 About API.
+ * Returns null if the token is missing or the request fails.
+ */
+export async function getDriveStorageQuota(
+  accessToken: string,
+): Promise<DriveStorageQuota | null> {
+  try {
+    const data = await driveFetch<{
+      storageQuota: { usage: string; limit: string }
+    }>(
+      accessToken,
+      'https://www.googleapis.com/drive/v3/about?fields=storageQuota',
+    )
+    return {
+      usageBytes: parseInt(data.storageQuota.usage, 10),
+      limitBytes: parseInt(data.storageQuota.limit, 10),
+    }
+  } catch {
+    return null
+  }
+}
+
 

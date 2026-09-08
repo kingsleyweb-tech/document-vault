@@ -33,6 +33,8 @@ import { useDeleteQueue } from '../../hooks/useDeleteQueue'
 import dvLogo from '../../assets/dv.png'
 import type { ThemeMode, VaultDocument } from '../../types/document'
 import type { VaultUser } from '../../types/user'
+import { getDriveStorageQuota, type DriveStorageQuota } from '../../services/googleDrive'
+import { formatFileSize } from '../../utils/formatters'
 
 interface AppLayoutProps {
   user: VaultUser
@@ -43,6 +45,7 @@ interface AppLayoutProps {
   onUploadClick: () => void
   onUploadProgressClick: () => void
   driveConnected: boolean
+  accessToken?: string | null
   onReconnectDrive: () => void
   onLogout: () => void
   themeMode: ThemeMode
@@ -70,6 +73,7 @@ export function AppLayout({
   onUploadClick,
   onUploadProgressClick,
   driveConnected,
+  accessToken,
   onReconnectDrive,
   onLogout,
   themeMode,
@@ -82,9 +86,25 @@ export function AppLayout({
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [driveQuota, setDriveQuota] = useState<DriveStorageQuota | null>(null)
+  const [quotaLoading, setQuotaLoading] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { stats } = useUploadQueue()
   const navigate = useNavigate()
+
+  // Fetch real storage quota from Google Drive
+  useEffect(() => {
+    if (!accessToken) return
+    let cancelled = false
+    setQuotaLoading(true)
+    getDriveStorageQuota(accessToken).then((quota) => {
+      if (!cancelled) {
+        setDriveQuota(quota)
+        setQuotaLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [accessToken])
 
   // Real-time dynamic notifications state
   const [notifications, setNotifications] = useState<
@@ -345,13 +365,32 @@ export function AppLayout({
             <div className="storage-header">
               <span>Storage Usage</span>
             </div>
-            <div className="storage-progress-bar">
-              <div className="storage-progress-fill" style={{ width: '43%' }} />
-            </div>
-            <div className="storage-legend">
-              <span>42.6 GB of 100 GB</span>
-              <span>43%</span>
-            </div>
+            {quotaLoading && !driveQuota ? (
+              <div className="storage-skeleton" />
+            ) : driveQuota ? (
+              <>
+                <div className="storage-progress-bar">
+                  <div
+                    className="storage-progress-fill"
+                    style={{ width: `${Math.min(100, (driveQuota.usageBytes / driveQuota.limitBytes) * 100).toFixed(1)}%` }}
+                  />
+                </div>
+                <div className="storage-legend">
+                  <span>{formatFileSize(driveQuota.usageBytes)} of {formatFileSize(driveQuota.limitBytes)}</span>
+                  <span>{Math.min(100, Math.round((driveQuota.usageBytes / driveQuota.limitBytes) * 100))}%</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="storage-progress-bar">
+                  <div className="storage-progress-fill" style={{ width: '0%' }} />
+                </div>
+                <div className="storage-legend">
+                  <span>—</span>
+                  <span>—</span>
+                </div>
+              </>
+            )}
           </div>
 
           <NavLink
