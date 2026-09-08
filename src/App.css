@@ -6492,6 +6492,131 @@ mark {
   color: #0f172a !important;
 }
 
+/* DARK MODE DIALOG OVERRIDES */
+[data-theme='dark'] .prompt-dialog,
+[data-theme='dark'] .upload-dialog,
+[data-theme='dark'] .folder-tree-picker,
+[data-theme='dark'] .confirm-dialog {
+  background: #18181b !important;
+  border-color: #27272a !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7) !important;
+}
+
+[data-theme='dark'] .prompt-dialog header,
+[data-theme='dark'] .upload-dialog header,
+[data-theme='dark'] .folder-tree-picker header,
+[data-theme='dark'] .confirm-dialog header {
+  background: #18181b !important;
+  border-bottom-color: #27272a !important;
+}
+
+[data-theme='dark'] .prompt-dialog header h2,
+[data-theme='dark'] .upload-dialog header h2,
+[data-theme='dark'] .folder-tree-picker header h2,
+[data-theme='dark'] .confirm-dialog header h2 {
+  color: #f4f4f5 !important;
+}
+
+[data-theme='dark'] .prompt-dialog header p,
+[data-theme='dark'] .upload-dialog header p,
+[data-theme='dark'] .folder-tree-picker header p,
+[data-theme='dark'] .confirm-dialog header p,
+[data-theme='dark'] .dialog-body p {
+  color: #a1a1aa !important;
+}
+
+[data-theme='dark'] .prompt-dialog .icon-button,
+[data-theme='dark'] .upload-dialog .icon-button,
+[data-theme='dark'] .folder-tree-picker .icon-button {
+  background: #27272a !important;
+  border-color: #3f3f46 !important;
+  color: #a1a1aa !important;
+}
+
+[data-theme='dark'] .prompt-dialog .icon-button:hover,
+[data-theme='dark'] .upload-dialog .icon-button:hover,
+[data-theme='dark'] .folder-tree-picker .icon-button:hover {
+  background: #3f3f46 !important;
+  color: #ffffff !important;
+}
+
+[data-theme='dark'] .dialog-body,
+[data-theme='dark'] .upload-dialog .dialog-body {
+  color: #e4e4e7 !important;
+}
+
+[data-theme='dark'] .dialog-input {
+  border-color: #3f3f46 !important;
+  background: #27272a !important;
+  color: #ffffff !important;
+}
+
+[data-theme='dark'] .choice-card-button {
+  border-color: #27272a !important;
+  background: #27272a !important;
+}
+
+[data-theme='dark'] .choice-card-button:hover {
+  border-color: #3b82f6 !important;
+  background: #3f3f46 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme='dark'] .choice-card-button strong {
+  color: #f4f4f5 !important;
+}
+
+[data-theme='dark'] .choice-card-button span {
+  color: #a1a1aa !important;
+}
+
+[data-theme='dark'] .prompt-dialog footer,
+[data-theme='dark'] .upload-dialog footer,
+[data-theme='dark'] .folder-tree-picker footer,
+[data-theme='dark'] .confirm-dialog footer {
+  background: #121215 !important;
+  border-top-color: #27272a !important;
+}
+
+[data-theme='dark'] .secondary-button {
+  background: #27272a !important;
+  color: #f4f4f5 !important;
+  border-color: #3f3f46 !important;
+}
+
+[data-theme='dark'] .secondary-button:hover {
+  background: #3f3f46 !important;
+  color: #ffffff !important;
+  border-color: #52525b !important;
+}
+
+[data-theme='dark'] .dropzone {
+  border-color: #3f3f46 !important;
+  background: #1e1e24 !important;
+}
+
+[data-theme='dark'] .dropzone.is-dragging {
+  border-color: #3b82f6 !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+}
+
+[data-theme='dark'] .dropzone strong {
+  color: #f4f4f5 !important;
+}
+
+[data-theme='dark'] .folder-tree-node:hover {
+  background: #27272a !important;
+}
+
+[data-theme='dark'] .folder-tree-node.is-selected {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: #3b82f6 !important;
+}
+
+[data-theme='dark'] .folder-tree-name {
+  color: #f4f4f5 !important;
+}
+
 /* ==========================================================================
    ALL FOLDERS PAGE REDESIGN & STYLES (MATCHING USER DEMO IMAGE 1)
    ========================================================================== */

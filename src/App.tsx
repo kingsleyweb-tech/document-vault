@@ -741,17 +741,17 @@ function AuthenticatedVaultInner() {
           </section>
         </div>
       )}
-      {bulkPermanentDeleteOpen && bulkPermanentDeleteItems.length > 0 && (
+      {bulkPermanentDeleteOpen && (
         <div className="dialog-backdrop" role="presentation">
           <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-permanent-delete-title">
             <header>
-              <h2 id="bulk-permanent-delete-title" style={{ color: '#d92d20' }}>Delete Permanently?</h2>
+              <h2 id="bulk-permanent-delete-title">Permanently Delete Selected Items?</h2>
             </header>
             <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <p style={{ margin: 0, color: '#b42318', fontSize: '14px', fontWeight: 600 }}>
                 Warning: This action is irreversible and cannot be undone.
               </p>
-              <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
+              <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>
                 Permanently delete <strong>{bulkPermanentDeleteItems.length} selected {bulkPermanentDeleteItems.length === 1 ? 'item' : 'items'}</strong> from Google Drive and your vault?
                 Selected folders include their nested files and subfolders.
               </p>
@@ -780,7 +780,7 @@ function AuthenticatedVaultInner() {
               <h2 id="upload-choice-title">Upload Documents</h2>
             </header>
             <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <p style={{ margin: '0 0 4px 0', color: '#475467', fontSize: '14px', lineHeight: '1.4' }}>
+              <p style={{ margin: '0 0 4px 0', fontSize: '14px', lineHeight: '1.4' }}>
                 Where would you like to save these files?
               </p>
               <button
@@ -839,7 +839,7 @@ function AuthenticatedVaultInner() {
               }}
             >
               <div className="dialog-body">
-                <p style={{ margin: '0 0 12px 0', color: '#475467', fontSize: '13px', lineHeight: '1.4' }}>
+                <p style={{ margin: '0 0 12px 0', fontSize: '13px', lineHeight: '1.4' }}>
                   Provide a name for the new folder. All uploaded files will be placed inside this directory.
                 </p>
                 <input
