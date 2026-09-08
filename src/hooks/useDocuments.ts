@@ -100,10 +100,21 @@ export function useDocuments(user: VaultUser | null, accessToken: string | null)
         const docRecord = toValidate[nextIndex++]
         if (!docRecord) return
 
+        // Never auto-delete folders via background existence check.
+        // Google Drive folder propagation delays can trigger false-positive 404s.
+        if (docRecord.fileType === 'folder') return
+
         try {
           const result = await checkFileExists(accessToken, docRecord.driveFileId)
           if (cancelled) return
           if (!result.exists) {
+            // Skip auto-deletion for items created within the last 5 minutes to prevent race conditions during upload
+            const createdMillis = docRecord.uploadedAt?.toMillis() ?? docRecord.createdAt?.toMillis() ?? 0
+            const ageMs = Date.now() - createdMillis
+            if (createdMillis > 0 && ageMs < 5 * 60 * 1000) {
+              console.warn(`File ${docRecord.name} returned 404 on Drive but was recently created (${Math.round(ageMs / 1000)}s ago). Skipping auto-deletion.`)
+              return
+            }
             console.warn(`File ${docRecord.name} not found on Google Drive. Cleaning up local metadata.`)
             await deleteFromVault(docRecord)
           } else if (result.trashed !== undefined) {
