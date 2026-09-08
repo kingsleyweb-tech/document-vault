@@ -224,7 +224,13 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
             </button>
           </div>
           <strong>Drop files or folders here</strong>
-          <span>Drag multiple folders at once, or click to add them one by one.</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted, #64748b)', marginTop: '4px', maxWidth: '420px', textAlign: 'center', lineHeight: '1.4' }}>
+            <strong>How to upload multiple folders:</strong>
+            <br />
+            1. <strong>Drag & Drop</strong>: Select multiple folders in Windows File Explorer and drag them here together.
+            <br />
+            2. <strong>One by One</strong>: Click <strong>Upload Folder</strong> to pick a folder, then click <strong>Add Another Folder</strong> to queue more before uploading.
+          </span>
         </div>
 
         {/* ── QUEUED FOLDERS SUMMARY ── */}
