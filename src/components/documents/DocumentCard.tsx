@@ -267,9 +267,11 @@ function DocumentThumbnail({
   documentRecord: VaultDocument
   accessToken?: string | null
 }) {
-  const [imgError, setImgError] = useState(false)
+  const [imgErrorFileId, setImgErrorFileId] = useState<string | null>(null)
   const [previewState, setPreviewState] = useState<{ fileId: string; objectUrl: string | null; failed: boolean } | null>(null)
   const isFolder = documentRecord.fileType === 'folder'
+  // Error flag is scoped to the current file — resets naturally when documentRecord changes
+  const imgError = imgErrorFileId === documentRecord.driveFileId
 
   // High-res Google Drive thumbnail CDN URL (=s800 renders full-resolution Slide 1 / Page 1)
   const driveThumbnailUrl = useMemo(() => {
@@ -290,7 +292,7 @@ function DocumentThumbnail({
 
   useEffect(() => {
     let cancelled = false
-    setImgError(false)
+    // No synchronous setState here — imgError resets via scoped ID above
 
     if (!canLoadAuthenticatedPreview || !accessToken || !documentRecord.driveFileId) {
       return () => {
@@ -356,7 +358,7 @@ function DocumentThumbnail({
         decoding="async"
         referrerPolicy="no-referrer"
         className="document-thumbnail-img"
-        onError={() => setImgError(true)}
+        onError={() => setImgErrorFileId(documentRecord.driveFileId)}
       />
     )
   }
@@ -370,7 +372,7 @@ function DocumentThumbnail({
         loading="eager"
         decoding="async"
         className="document-thumbnail-img"
-        onError={() => setImgError(true)}
+        onError={() => setImgErrorFileId(documentRecord.driveFileId)}
       />
     )
   }
