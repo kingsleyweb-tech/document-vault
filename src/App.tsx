@@ -7,6 +7,7 @@ import { DocumentViewer } from './components/viewer/DocumentViewer'
 import { useAuth } from './hooks/useAuth'
 import { useDocuments, collectDescendantFolderIds } from './hooks/useDocuments'
 import { UploadQueueProvider, useUploadQueue } from './hooks/useUploadQueue'
+import { DeleteQueueProvider, useDeleteQueue } from './hooks/useDeleteQueue'
 import { Categories } from './pages/Categories'
 import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
@@ -45,9 +46,18 @@ function App() {
 }
 
 function AuthenticatedVault() {
+  return (
+    <DeleteQueueProvider>
+      <AuthenticatedVaultInner />
+    </DeleteQueueProvider>
+  )
+}
+
+function AuthenticatedVaultInner() {
   const { user, driveAccessToken } = useAuth()
   const accessToken = driveAccessToken
   const { documents, loading, error, actions } = useDocuments(user, accessToken)
+  const { enqueueDelete } = useDeleteQueue()
 
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -310,40 +320,12 @@ function AuthenticatedVault() {
     setBulkPermanentDeleteOpen(true)
   }
 
-  const permanentlyDeleteSelectedTrash = async () => {
+  const permanentlyDeleteSelectedTrash = () => {
     const items = bulkPermanentDeleteItems
-    const deleteConcurrency = 5
-    let nextIndex = 0
-    let successCount = 0
-    let failCount = 0
-
-    await withFriendlyErrors(async () => {
-      await ensureAccessToken()
-
-      async function worker() {
-        for (;;) {
-          const item = items[nextIndex++]
-          if (!item) return
-          try {
-            await actions.permanentlyDelete(item)
-            successCount += 1
-          } catch (deleteError) {
-            console.error('Failed permanently deleting trash item:', item.name, deleteError)
-            failCount += 1
-          }
-        }
-      }
-
-      await Promise.all(Array.from({ length: Math.min(deleteConcurrency, items.length) }, worker))
-
-      if (successCount > 0) {
-        addToast(`Permanently deleted ${successCount} ${successCount === 1 ? 'item' : 'items'}.`, 'success')
-      }
-      if (failCount > 0) {
-        addToast(`Could not delete ${failCount} ${failCount === 1 ? 'item' : 'items'}.`, 'error')
-      }
-    }, `Deleting ${items.length} ${items.length === 1 ? 'item' : 'items'} permanently...`)
-
+    if (items.length > 0) {
+      void enqueueDelete(items, 'permanent', accessToken, documents)
+      addToast(`Deleting ${items.length} ${items.length === 1 ? 'item' : 'items'} permanently...`, 'info')
+    }
     setBulkPermanentDeleteOpen(false)
     setBulkPermanentDeleteItems([])
   }
@@ -467,6 +449,10 @@ function AuthenticatedVault() {
             <AllFolders
               {...commonPageProps}
               documents={activeDocuments}
+              onBulkTrash={handleBulkTrash}
+              onBulkMove={handleBulkMove}
+              onBulkFavorite={handleBulkFavorite}
+              onBulkDownload={handleBulkDownload}
             />
           }
         />
@@ -702,11 +688,12 @@ function AuthenticatedVault() {
                 type="button"
                 className="primary-button danger-button"
                 onClick={() => {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    await actions.moveToTrash(confirmTrashTarget)
-                  }, 'Moving document to trash...')
+                  if (confirmTrashTarget) {
+                    void enqueueDelete([confirmTrashTarget], 'trash', accessToken, documents)
+                    addToast(`Moving "${confirmTrashTarget.name}" to trash...`, 'info')
+                  }
                   setConfirmTrashOpen(false)
+                  setConfirmTrashTarget(null)
                 }}
               >
                 Move to Trash
@@ -739,11 +726,12 @@ function AuthenticatedVault() {
                 type="button"
                 className="primary-button danger-button"
                 onClick={() => {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    await actions.permanentlyDelete(confirmDeleteTarget)
-                  }, 'Permanently deleting document...')
+                  if (confirmDeleteTarget) {
+                    void enqueueDelete([confirmDeleteTarget], 'permanent', accessToken, documents)
+                    addToast(`Deleting "${confirmDeleteTarget.name}" permanently...`, 'info')
+                  }
                   setConfirmDeleteOpen(false)
+                  setConfirmDeleteTarget(null)
                 }}
               >
                 Delete Permanently
@@ -966,14 +954,12 @@ function AuthenticatedVault() {
                 type="button"
                 className="primary-button danger-button"
                 onClick={() => {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    for (const item of bulkTrashItems) {
-                      await actions.moveToTrash(item)
-                    }
-                    addToast(`Moved ${bulkTrashItems.length} items to trash.`, 'success')
-                  }, 'Moving items to trash...')
+                  if (bulkTrashItems.length > 0) {
+                    void enqueueDelete(bulkTrashItems, 'trash', accessToken, documents)
+                    addToast(`Moving ${bulkTrashItems.length} items to trash...`, 'info')
+                  }
                   setBulkTrashOpen(false)
+                  setBulkTrashItems([])
                 }}
               >
                 Move to Trash

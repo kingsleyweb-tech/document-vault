@@ -259,6 +259,87 @@ button svg {
   animation: spin 1s linear infinite;
 }
 
+/* ── DELETE PROGRESS INDICATOR PILL ── */
+.delete-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 14px;
+  border-radius: 20px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+[data-theme='dark'] .delete-indicator-pill {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.delete-progress-spinner {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-progress-spinner .circular-chart {
+  width: 22px;
+  height: 22px;
+  transform: rotate(-90deg);
+}
+
+.delete-progress-spinner .circle-bg {
+  fill: none;
+  stroke: rgba(239, 68, 68, 0.2);
+  stroke-width: 3.8;
+}
+
+.delete-progress-spinner .circle {
+  fill: none;
+  stroke: #ef4444;
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.delete-icon-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ef4444;
+}
+
+.delete-indicator-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.delete-indicator-text .delete-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+[data-theme='dark'] .delete-indicator-text .delete-title {
+  color: #fca5a5;
+}
+
+.delete-indicator-text .delete-sub {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 .danger-button {
   background: #d92d20 !important;
   color: #ffffff !important;

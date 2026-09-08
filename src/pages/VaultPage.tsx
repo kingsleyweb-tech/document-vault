@@ -166,85 +166,89 @@ export function VaultPage({
         </header>
       )}
 
-      {!documentOnly ? (
-        <div className="toolbar">
-          <div className="toolbar-group">
-            <select
-              value={category}
-              onChange={(event) => onCategoryChange(event.target.value as DocumentCategory | 'All')}
-              aria-label="Filter by category"
-            >
-              <option>All</option>
-              {categories.map((categoryName) => (
-                <option key={categoryName}>{categoryName}</option>
-              ))}
-            </select>
-            <select
-              value={sortMode}
-              onChange={(event) => onSortModeChange(event.target.value as SortMode)}
-              aria-label="Sort documents"
-            >
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="name-asc">Name A-Z</option>
-              <option value="name-desc">Name Z-A</option>
-              <option value="largest">Largest</option>
-              <option value="smallest">Smallest</option>
-              <option value="updated">Recently updated</option>
-            </select>
-            {currentFolderId ? (
-              <label className="search-box search-box--inline">
-                <Search aria-hidden="true" />
-                <input
-                  value={folderSearch}
-                  onChange={(e) => setFolderSearch(e.target.value)}
-                  placeholder="Search this folder…"
-                  type="search"
-                  aria-label="Search within current folder"
-                />
-              </label>
-            ) : null}
-            {visibleDocuments.length > 0 ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleDocuments.map((documentRecord) => documentRecord.id)))
-                }}
+      <div className="toolbar">
+        <div className="toolbar-group">
+          {!documentOnly ? (
+            <>
+              <select
+                value={category}
+                onChange={(event) => onCategoryChange(event.target.value as DocumentCategory | 'All')}
+                aria-label="Filter by category"
               >
-                {allVisibleSelected ? 'Clear Selection' : 'Select All'}
-              </button>
-            ) : null}
-          </div>
-          <div className="toolbar-group">
+                <option>All</option>
+                {categories.map((categoryName) => (
+                  <option key={categoryName}>{categoryName}</option>
+                ))}
+              </select>
+              <select
+                value={sortMode}
+                onChange={(event) => onSortModeChange(event.target.value as SortMode)}
+                aria-label="Sort documents"
+              >
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="name-asc">Name A-Z</option>
+                <option value="name-desc">Name Z-A</option>
+                <option value="largest">Largest</option>
+                <option value="smallest">Smallest</option>
+                <option value="updated">Recently updated</option>
+              </select>
+            </>
+          ) : null}
+          {currentFolderId ? (
+            <label className="search-box search-box--inline">
+              <Search aria-hidden="true" />
+              <input
+                value={folderSearch}
+                onChange={(e) => setFolderSearch(e.target.value)}
+                placeholder="Search this folder…"
+                type="search"
+                aria-label="Search within current folder"
+              />
+            </label>
+          ) : null}
+          {visibleDocuments.length > 0 ? (
             <button
               type="button"
-              className={viewMode === 'grid' ? 'segmented is-active' : 'segmented'}
-              onClick={() => onViewModeChange('grid')}
-              aria-label="Grid view"
+              className="secondary-button"
+              onClick={() => {
+                setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleDocuments.map((documentRecord) => documentRecord.id)))
+              }}
             >
-              <Grid2X2 aria-hidden="true" />
+              {allVisibleSelected ? 'Clear Selection' : 'Select All'}
             </button>
-            <button
-              type="button"
-              className={viewMode === 'list' ? 'segmented is-active' : 'segmented'}
-              onClick={() => onViewModeChange('list')}
-              aria-label="List view"
-            >
-              <List aria-hidden="true" />
+          ) : null}
+        </div>
+        <div className="toolbar-group">
+          <button
+            type="button"
+            className={viewMode === 'grid' ? 'segmented is-active' : 'segmented'}
+            onClick={() => onViewModeChange('grid')}
+            aria-label="Grid view"
+          >
+            <Grid2X2 aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={viewMode === 'list' ? 'segmented is-active' : 'segmented'}
+            onClick={() => onViewModeChange('list')}
+            aria-label="List view"
+          >
+            <List aria-hidden="true" />
+          </button>
+          {onCreateFolder && !inTrash && !documentOnly && (
+            <button type="button" className="secondary-button" onClick={onCreateFolder} aria-label="New folder">
+              <FolderPlus aria-hidden="true" />
+              <span>New Folder</span>
             </button>
-            {onCreateFolder && !inTrash && (
-              <button type="button" className="secondary-button" onClick={onCreateFolder} aria-label="New folder">
-                <FolderPlus aria-hidden="true" />
-                <span>New Folder</span>
-              </button>
-            )}
+          )}
+          {!documentOnly && (
             <button type="button" className="secondary-button" onClick={() => setCategoryStatsOpen((open) => !open)}>
               Categories
             </button>
-          </div>
+          )}
         </div>
-      ) : null}
+      </div>
 
       {categoryStatsOpen && !documentOnly ? (
         <div className="category-stats">

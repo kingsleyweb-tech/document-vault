@@ -29,6 +29,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import React from 'react'
 import { NavLink, useNavigate, useMatch, useResolvedPath } from 'react-router-dom'
 import { useUploadQueue } from '../../hooks/useUploadQueue'
+import { useDeleteQueue } from '../../hooks/useDeleteQueue'
 import dvLogo from '../../assets/dv.png'
 import type { ThemeMode, VaultDocument } from '../../types/document'
 import type { VaultUser } from '../../types/user'
@@ -390,6 +391,7 @@ export function AppLayout({
           </label>
 
           <div className="topbar-actions">
+            <DeleteIndicator />
             {stats.total > 0 ? <UploadIndicator onOpen={onUploadProgressClick} /> : null}
 
             {/* UPLOAD BUTTON */}
@@ -653,6 +655,52 @@ function UploadIndicator({ onOpen }: { onOpen: () => void }) {
       )}
       {stats.failed > 0 ? <em>{stats.failed.toLocaleString()} failed</em> : null}
     </button>
+  )
+}
+
+function DeleteIndicator() {
+  const { stats } = useDeleteQueue()
+  if (stats.total === 0) return null
+
+  const progressPercent = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0
+  const isPermanent = stats.mode === 'permanent'
+
+  return (
+    <div
+      className="delete-indicator-pill"
+      title={`${isPermanent ? 'Deleting permanently' : 'Moving to trash'}: ${stats.completed}/${stats.total}${stats.currentItemName ? ` (${stats.currentItemName})` : ''}`}
+    >
+      <div className="delete-progress-spinner">
+        <svg viewBox="0 0 36 36" className="circular-chart">
+          <path
+            className="circle-bg"
+            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          />
+          <path
+            className="circle"
+            strokeDasharray={`${progressPercent}, 100`}
+            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          />
+        </svg>
+        {stats.running ? (
+          <Trash2 size={13} className="delete-icon-inner" />
+        ) : (
+          <CheckCircle2 size={13} className="delete-icon-inner text-emerald" />
+        )}
+      </div>
+      <div className="delete-indicator-text">
+        <span className="delete-title">
+          {stats.running
+            ? isPermanent
+              ? 'Deleting permanently...'
+              : 'Moving to trash...'
+            : 'Deletion complete'}
+        </span>
+        <span className="delete-sub">
+          {stats.completed}/{stats.total} items
+        </span>
+      </div>
+    </div>
   )
 }
 

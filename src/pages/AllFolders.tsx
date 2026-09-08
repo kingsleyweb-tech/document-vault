@@ -14,6 +14,10 @@ import {
   Filter,
   ArrowUpRight,
   ChevronDown,
+  Trash2,
+  FolderInput,
+  Heart,
+  Download,
 } from 'lucide-react'
 import { DocumentCard } from '../components/documents/DocumentCard'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -36,6 +40,10 @@ interface AllFoldersProps {
   onFavorite: (documentRecord: VaultDocument) => void
   onTrash: (documentRecord: VaultDocument) => void
   onMove: (documentRecord: VaultDocument) => void
+  onBulkTrash?: (selectedItems: VaultDocument[]) => void
+  onBulkMove?: (selectedItems: VaultDocument[]) => void
+  onBulkFavorite?: (selectedItems: VaultDocument[]) => void
+  onBulkDownload?: (selectedItems: VaultDocument[]) => void
 }
 
 export function AllFolders({
@@ -51,10 +59,27 @@ export function AllFolders({
   onFavorite,
   onTrash,
   onMove,
+  onBulkTrash,
+  onBulkMove,
+  onBulkFavorite,
+  onBulkDownload,
 }: AllFoldersProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [sortBy, setSortBy] = useState<'name' | 'items' | 'date'>('name')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const handleSelectToggle = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
 
   // Filter & sort folders
   const folders = useMemo(() => {
@@ -73,6 +98,12 @@ export function AllFolders({
       return 0
     })
   }, [documents, searchQuery, sortBy])
+
+  const selectedFolders = useMemo(
+    () => folders.filter((f) => selectedIds.has(f.id)),
+    [folders, selectedIds],
+  )
+  const allFoldersSelected = folders.length > 0 && folders.every((f) => selectedIds.has(f.id))
 
   // Total Files count (non-folder active documents)
   const totalFilesCount = useMemo(() => {
@@ -110,6 +141,18 @@ export function AllFolders({
         </div>
 
         <div className="all-folders-header-actions">
+          {folders.length > 0 && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setSelectedIds(allFoldersSelected ? new Set() : new Set(folders.map((f) => f.id)))
+              }}
+            >
+              {allFoldersSelected ? 'Clear Selection' : 'Select All'}
+            </button>
+          )}
+
           <button type="button" className="all-folders-new-btn" onClick={onCreateFolder}>
             <FolderPlus size={16} />
             <span>New Folder</span>
@@ -269,6 +312,8 @@ export function AllFolders({
                 mode={viewMode}
                 itemCount={itemCount}
                 accessToken={accessToken}
+                isSelected={selectedIds.has(folder.id)}
+                onSelectToggle={() => handleSelectToggle(folder.id)}
                 onView={onView}
                 onDownload={onDownload}
                 onRename={onRename}
@@ -301,6 +346,65 @@ export function AllFolders({
           </button>
         )}
       </div>
+
+      {selectedFolders.length > 0 && (
+        <div className="bulk-toolbar-spacer" aria-hidden="true" />
+      )}
+
+      {selectedFolders.length > 0 && (
+        <div className="bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+          <span className="bulk-toolbar-info">
+            <strong>{selectedFolders.length}</strong> {selectedFolders.length === 1 ? 'folder' : 'folders'} selected
+          </span>
+          <div className="bulk-toolbar-actions">
+            {onBulkDownload && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkDownload(selectedFolders); setSelectedIds(new Set()) }}
+              >
+                <Download size={14} />
+                Download
+              </button>
+            )}
+            {onBulkFavorite && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkFavorite(selectedFolders); setSelectedIds(new Set()) }}
+              >
+                <Heart size={14} />
+                Favorite
+              </button>
+            )}
+            {onBulkMove && (
+              <button
+                type="button"
+                className="bulk-action-btn"
+                onClick={() => { onBulkMove(selectedFolders); setSelectedIds(new Set()) }}
+              >
+                <FolderInput size={14} />
+                Move
+              </button>
+            )}
+            <div className="bulk-toolbar-divider" />
+            {onBulkTrash && (
+              <button
+                type="button"
+                className="bulk-action-btn danger"
+                onClick={() => { onBulkTrash(selectedFolders); setSelectedIds(new Set()) }}
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            )}
+            <div className="bulk-toolbar-divider" />
+            <button type="button" className="bulk-action-cancel" onClick={() => setSelectedIds(new Set())}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
