@@ -102,6 +102,20 @@ export type ThemeMode = 'light' | 'dark'
 
 export type UploadStatus = 'PENDING' | 'COMPRESSING' | 'UPLOADING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'PAUSED'
 
+export interface FolderUploadStats {
+  folderName: string
+  completedFiles: number
+  totalFiles: number
+  failedFiles: number
+  remainingFiles: number
+  progress: number
+  bytesUploaded: number
+  totalBytes: number
+  speedBps: number
+  currentFileName?: string
+  status: 'UPLOADING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'PENDING'
+}
+
 export interface UploadItem {
   id: string
   file: File
@@ -110,6 +124,7 @@ export interface UploadItem {
   category: DocumentCategory
   description: string
   relativePath?: string
+  rootFolderName?: string
   error?: string
   errorStatus?: number
   attempts?: number

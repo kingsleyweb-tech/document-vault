@@ -6958,6 +6958,181 @@ mark {
   background: rgba(16, 185, 129, 0.15) !important;
 }
 
+/* ── PER-FOLDER UPLOAD PROGRESS CARDS (.folder-progress-card) ── */
+.folder-upload-section {
+  margin: 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.folder-upload-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+[data-theme='dark'] .folder-upload-section-header {
+  color: #f4f4f5 !important;
+}
+
+.folder-upload-section-icon {
+  color: #2563eb;
+}
+
+[data-theme='dark'] .folder-upload-section-icon {
+  color: #60a5fa !important;
+}
+
+.folder-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.folder-progress-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+  transition: all 0.2s ease;
+}
+
+[data-theme='dark'] .folder-progress-card {
+  background: #27272a !important;
+  border-color: #3f3f46 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.folder-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.folder-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-card-icon {
+  color: #eab308;
+}
+
+.folder-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+[data-theme='dark'] .folder-card-title {
+  color: #ffffff !important;
+}
+
+.folder-card-status-badge .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.badge-completed { background: rgba(16, 185, 129, 0.15); color: #059669; }
+.badge-uploading { background: rgba(37, 99, 235, 0.15);  color: #2563eb; }
+.badge-paused    { background: rgba(245, 158, 11, 0.15); color: #d97706; }
+.badge-failed    { background: rgba(239, 68, 68, 0.15);   color: #dc2626; }
+.badge-pending   { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+
+[data-theme='dark'] .badge-completed { color: #34d399 !important; }
+[data-theme='dark'] .badge-uploading { color: #60a5fa !important; }
+[data-theme='dark'] .badge-paused    { color: #fbbf24 !important; }
+[data-theme='dark'] .badge-failed    { color: #f87171 !important; }
+[data-theme='dark'] .badge-pending   { color: #94a3b8 !important; }
+
+.folder-card-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+[data-theme='dark'] .folder-card-bar-track {
+  background: #3f3f46 !important;
+}
+
+.folder-card-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.fill-uploading { background: linear-gradient(90deg, #3b82f6, #1d4ed8); }
+.fill-completed { background: linear-gradient(90deg, #10b981, #047857); }
+.fill-paused    { background: linear-gradient(90deg, #f59e0b, #d97706); }
+.fill-failed    { background: linear-gradient(90deg, #ef4444, #b91c1c); }
+.fill-pending   { background: #94a3b8; }
+
+.folder-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #64748b;
+  flex-wrap: wrap;
+}
+
+[data-theme='dark'] .folder-card-meta {
+  color: #a1a1aa !important;
+}
+
+.folder-card-counts strong {
+  color: #0f172a;
+}
+
+[data-theme='dark'] .folder-card-counts strong {
+  color: #ffffff !important;
+}
+
+.folder-card-speed {
+  font-weight: 600;
+  color: #2563eb;
+}
+
+[data-theme='dark'] .folder-card-speed {
+  color: #60a5fa !important;
+}
+
+.folder-card-remaining {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.folder-card-active-file {
+  font-size: 12px;
+  color: #475467;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-theme='dark'] .folder-card-active-file {
+  color: #a1a1aa !important;
+}
+
 /* ==========================================================================
    ALL FOLDERS PAGE REDESIGN & STYLES (MATCHING USER DEMO IMAGE 1)
    ========================================================================== */

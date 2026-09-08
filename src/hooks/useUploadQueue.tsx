@@ -11,7 +11,7 @@ import {
 } from '../services/googleDrive'
 import { getUserProfile, updateUserDriveConnection } from '../services/users'
 import { clearDriveAccessToken } from '../services/auth'
-import type { DocumentCategory, NewDocumentMetadata, UploadItem, VaultDocument } from '../types/document'
+import type { DocumentCategory, FolderUploadStats, NewDocumentMetadata, UploadItem, VaultDocument } from '../types/document'
 import type { VaultUser } from '../types/user'
 import { compressFile } from '../utils/compressor'
 import { getDocumentKind, normalizeRelativePath, stripExtension } from '../utils/fileUtils'
@@ -28,6 +28,7 @@ interface StoredQueueItem {
   category: DocumentCategory
   description: string
   relativePath?: string
+  rootFolderName?: string
   error?: string
   errorStatus?: number
   attempts?: number
@@ -63,12 +64,19 @@ interface UploadQueueStats {
   running: boolean
   pausedForAuth: boolean
   lastError?: string
+  folders: Record<string, FolderUploadStats>
 }
 
 interface UploadQueueContextValue {
   items: UploadItem[]
   stats: UploadQueueStats
-  enqueueFiles: (files: FileList | File[], category: DocumentCategory, description: string, destinationFolderId: string | null) => void
+  enqueueFiles: (
+    files: FileList | File[],
+    category: DocumentCategory,
+    description: string,
+    destinationFolderId: string | null,
+    rootFolderName?: string,
+  ) => void
   start: () => void
   retryFailed: () => void
   retryItem: (id: string) => void
@@ -88,6 +96,7 @@ const emptyStats: UploadQueueStats = {
   progress: 0,
   running: false,
   pausedForAuth: false,
+  folders: {},
 }
 
 const UploadQueueContext = createContext<UploadQueueContextValue | null>(null)
@@ -128,6 +137,12 @@ export function UploadQueueProvider({
   const folderCacheRef = useRef(new Map<string, ManagedFolderCacheEntry>())
   const abortControllersRef = useRef(new Map<string, AbortController>())
 
+  const lastSpeedRef = useRef<{ bytes: number; time: number; speedBps: number }>({
+    bytes: 0,
+    time: Date.now(),
+    speedBps: 0,
+  })
+
   const [visibleItems, setVisibleItems] = useState<UploadItem[]>([])
   const [stats, setStats] = useState<UploadQueueStats>(emptyStats)
 
@@ -142,6 +157,29 @@ export function UploadQueueProvider({
     let currentFile: string | undefined
     let lastError: string | undefined
     const prioritized: QueueRecord[] = []
+
+    // 1. Calculate overall metrics & speed
+    const now = Date.now()
+    const dt = (now - lastSpeedRef.current.time) / 1000
+    let currentSpeedBps = lastSpeedRef.current.speedBps
+
+    let grandTotalBytesUploaded = 0
+    for (const id of orderRef.current) {
+      const item = itemsRef.current.get(id)
+      if (!item) continue
+      const size = item.file?.size || item.originalSize || 0
+      if (item.status === 'COMPLETED') {
+        grandTotalBytesUploaded += size
+      } else if (item.status === 'UPLOADING' || item.status === 'COMPRESSING') {
+        grandTotalBytesUploaded += (size * (item.progress || 0)) / 100
+      }
+    }
+
+    if (dt >= 0.8) {
+      const deltaBytes = Math.max(0, grandTotalBytesUploaded - lastSpeedRef.current.bytes)
+      currentSpeedBps = Math.round(deltaBytes / dt)
+      lastSpeedRef.current = { bytes: grandTotalBytesUploaded, time: now, speedBps: currentSpeedBps }
+    }
 
     for (const id of orderRef.current) {
       const item = itemsRef.current.get(id)
@@ -177,6 +215,81 @@ export function UploadQueueProvider({
       prioritized.push(item)
     }
 
+    // 2. Calculate per-folder upload stats
+    const folderStatsMap: Record<string, FolderUploadStats> = {}
+    const folderItemGroups = new Map<string, QueueRecord[]>()
+
+    for (const id of orderRef.current) {
+      const item = itemsRef.current.get(id)
+      if (!item) continue
+      const relPath = item.relativePath ? normalizeRelativePath(item.relativePath) : ''
+      const rootName = item.rootFolderName || (relPath.includes('/') ? relPath.split('/')[0] : null)
+      if (rootName) {
+        const list = folderItemGroups.get(rootName) ?? []
+        list.push(item)
+        folderItemGroups.set(rootName, list)
+      }
+    }
+
+    folderItemGroups.forEach((folderItems, folderName) => {
+      let fCompleted = 0
+      let fFailed = 0
+      let fUploading = 0
+      let fPending = 0
+      let fBytesUploaded = 0
+      let fTotalBytes = 0
+      let activeFileName: string | undefined
+
+      for (const item of folderItems) {
+        const itemSize = item.file?.size || item.originalSize || 0
+        fTotalBytes += itemSize
+
+        if (item.status === 'COMPLETED') {
+          fCompleted += 1
+          fBytesUploaded += itemSize
+        } else if (item.status === 'FAILED') {
+          fFailed += 1
+        } else if (item.status === 'UPLOADING' || item.status === 'COMPRESSING' || item.status === 'RETRYING') {
+          fUploading += 1
+          fBytesUploaded += (itemSize * (item.progress || 0)) / 100
+          activeFileName ??= item.file.name
+        } else {
+          fPending += 1
+        }
+      }
+
+      const totalFiles = folderItems.length
+      const remainingFiles = totalFiles - fCompleted
+      const progress = totalFiles > 0 ? Math.round(((fCompleted + (fFailed > 0 ? fFailed * 0.5 : 0)) / totalFiles) * 100) : 0
+
+      let folderStatus: FolderUploadStats['status'] = 'PENDING'
+      if (pausedForAuthRef.current) {
+        folderStatus = 'PAUSED'
+      } else if (fUploading > 0) {
+        folderStatus = 'UPLOADING'
+      } else if (fCompleted === totalFiles && totalFiles > 0) {
+        folderStatus = 'COMPLETED'
+      } else if (fFailed > 0 && fUploading === 0 && fPending === 0) {
+        folderStatus = 'FAILED'
+      } else if (fPending > 0) {
+        folderStatus = 'PENDING'
+      }
+
+      folderStatsMap[folderName] = {
+        folderName,
+        completedFiles: fCompleted,
+        totalFiles,
+        failedFiles: fFailed,
+        remainingFiles,
+        progress: Math.min(100, progress),
+        bytesUploaded: fBytesUploaded,
+        totalBytes: fTotalBytes,
+        speedBps: fUploading > 0 ? currentSpeedBps : 0,
+        currentFileName: activeFileName,
+        status: folderStatus,
+      }
+    })
+
     const total = orderRef.current.length
     setStats({
       total,
@@ -191,6 +304,7 @@ export function UploadQueueProvider({
       running: runningRef.current,
       pausedForAuth: pausedForAuthRef.current,
       lastError,
+      folders: folderStatsMap,
     })
     setVisibleItems(prioritized.map(toUploadItem))
   }, [])
@@ -217,6 +331,7 @@ export function UploadQueueProvider({
         category: item.category,
         description: item.description,
         relativePath: item.relativePath,
+        rootFolderName: item.rootFolderName,
         error: item.error,
         errorStatus: item.errorStatus,
         attempts: item.attempts,
@@ -271,6 +386,7 @@ export function UploadQueueProvider({
             category: item.category,
             description: item.description,
             relativePath: item.relativePath,
+            rootFolderName: item.rootFolderName,
             destinationFolderId: item.destinationFolderId,
             error: item.error,
             errorStatus: item.errorStatus,
@@ -305,10 +421,13 @@ export function UploadQueueProvider({
     documentsRef.current = documents
   }, [documents])
 
-  const enqueueFiles = useCallback<UploadQueueContextValue['enqueueFiles']>((files, category, description, destinationFolderId) => {
+  const enqueueFiles = useCallback<UploadQueueContextValue['enqueueFiles']>((files, category, description, destinationFolderId, rootFolderName) => {
     const nextItems = Array.from(files).map((file): QueueRecord | null => {
       const error = validateUploadFile(file)
       const relativePath = getRelativePath(file)
+      const derivedRoot =
+        rootFolderName ||
+        (relativePath && relativePath.includes('/') ? relativePath.split('/')[0] : undefined)
 
       // Look for a matching non-completed item in itemsRef
       let existingId: string | null = null
@@ -326,6 +445,7 @@ export function UploadQueueProvider({
           ...existing,
           file,
           status: error ? 'FAILED' : 'PENDING',
+          rootFolderName: derivedRoot || existing.rootFolderName,
           error: error ?? undefined,
         })
         return null
@@ -339,6 +459,7 @@ export function UploadQueueProvider({
         category,
         description,
         relativePath,
+        rootFolderName: derivedRoot,
         destinationFolderId,
         attempts: 0,
         error: error ?? undefined,

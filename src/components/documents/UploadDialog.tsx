@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, FileText, FileUp, FolderOpen, FolderUp, Loader2, Plus, RotateCcw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import type { DocumentCategory, UploadItem } from '../../types/document'
+import type { DocumentCategory, FolderUploadStats, UploadItem } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
 import { getDocumentKind } from '../../utils/fileUtils'
 import { validateUploadFile } from '../../utils/validators'
@@ -29,7 +29,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
 
   /** Queue files and record the root folder name for the summary panel */
   function queueFiles(files: FileList | File[], rootFolderName?: string) {
-    enqueueFiles(files, defaultCategory, defaultDescription, destinationFolderId)
+    enqueueFiles(files, defaultCategory, defaultDescription, destinationFolderId, rootFolderName)
     if (rootFolderName) {
       setQueuedFolders((prev) => {
         const next = new Map(prev)
@@ -39,13 +39,22 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
     }
   }
 
-  /** Handle folder input change — derive root folder name from relativePath */
+  /** Handle folder input change — derive root folder names from relativePath */
   function handleFolderInput(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
-    // The first file's webkitRelativePath is "FolderName/..."
-    const firstPath = fileList[0].webkitRelativePath
-    const rootName = firstPath ? firstPath.split('/')[0] : 'Folder'
-    queueFiles(fileList, rootName)
+    const filesByFolder = new Map<string, File[]>()
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i]
+      const relPath = file.webkitRelativePath
+      const rootName = relPath ? relPath.split('/')[0] : 'Folder'
+      const existing = filesByFolder.get(rootName) ?? []
+      existing.push(file)
+      filesByFolder.set(rootName, existing)
+    }
+
+    filesByFolder.forEach((files, rootName) => {
+      queueFiles(files, rootName)
+    })
   }
 
   /** Handle drag-drop: support multiple folders via webkitGetAsEntry */
@@ -64,7 +73,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
           queueFiles(files, entry.name)
         } else if (entry.isFile) {
           const file = await new Promise<File>((resolve, reject) =>
-            (entry as FileSystemFileEntry).file(resolve, reject)
+            (entry as FileSystemFileEntry).file(resolve, reject),
           )
           queueFiles([file])
         }
@@ -169,6 +178,21 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
                   {failedCount} failed
                 </span>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── PER-FOLDER UPLOAD PROGRESS CARDS ── */}
+        {Object.keys(stats.folders || {}).length > 0 && (
+          <div className="folder-upload-section">
+            <div className="folder-upload-section-header">
+              <FolderOpen size={16} className="folder-upload-section-icon" />
+              <strong>Uploading Folders ({Object.keys(stats.folders).length})</strong>
+            </div>
+            <div className="folder-cards-list">
+              {Object.values(stats.folders).map((folderStat) => (
+                <FolderUploadCard key={folderStat.folderName} folderStats={folderStat} />
+              ))}
             </div>
           </div>
         )}
@@ -468,10 +492,72 @@ function StatusIcon({ status }: { status: UploadItem['status'] }) {
   return <span className="uq-queued-dot" aria-label="Queued" />
 }
 
+function FolderUploadCard({ folderStats }: { folderStats: FolderUploadStats }) {
+  const speedText = folderStats.speedBps > 0 ? `${formatFileSize(folderStats.speedBps)}/s` : null
+  const statusLower = folderStats.status.toLowerCase()
+
+  return (
+    <div className={`folder-progress-card status-${statusLower}`}>
+      <div className="folder-card-top">
+        <div className="folder-card-info">
+          <FolderOpen size={18} className="folder-card-icon" />
+          <strong className="folder-card-title">{folderStats.folderName}</strong>
+        </div>
+        <div className="folder-card-status-badge">
+          {folderStats.status === 'COMPLETED' ? (
+            <span className="badge badge-completed">
+              <CheckCircle2 size={13} /> Completed
+            </span>
+          ) : folderStats.status === 'UPLOADING' ? (
+            <span className="badge badge-uploading">
+              <Loader2 size={13} className="uq-btn-spin" /> {folderStats.progress}%
+            </span>
+          ) : folderStats.status === 'PAUSED' ? (
+            <span className="badge badge-paused">Paused</span>
+          ) : folderStats.status === 'FAILED' ? (
+            <span className="badge badge-failed">
+              <AlertCircle size={13} /> Failed
+            </span>
+          ) : (
+            <span className="badge badge-pending">Queued</span>
+          )}
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="folder-card-bar-track">
+        <div
+          className={`folder-card-bar-fill fill-${statusLower}`}
+          style={{ width: `${folderStats.progress}%` }}
+        />
+      </div>
+
+      {/* Stats row */}
+      <div className="folder-card-meta">
+        <span className="folder-card-counts">
+          <strong>{folderStats.completedFiles.toLocaleString()}</strong> / {folderStats.totalFiles.toLocaleString()} files
+        </span>
+        {speedText && <span className="folder-card-speed">{speedText}</span>}
+        {folderStats.remainingFiles > 0 && folderStats.status === 'UPLOADING' && (
+          <span className="folder-card-remaining">{folderStats.remainingFiles} remaining</span>
+        )}
+      </div>
+
+      {/* Active File */}
+      {folderStats.currentFileName && folderStats.status === 'UPLOADING' && (
+        <div className="folder-card-active-file" title={folderStats.currentFileName}>
+          Uploading "{folderStats.currentFileName}"...
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Recursively reads all files inside a directory entry (for drag-drop multi-folder support) */
-async function readDirectoryEntry(dir: FileSystemDirectoryEntry): Promise<File[]> {
+async function readDirectoryEntry(dir: FileSystemDirectoryEntry, pathPrefix = ''): Promise<File[]> {
   const files: File[] = []
   const reader = dir.createReader()
+  const currentPath = pathPrefix ? `${pathPrefix}/${dir.name}` : dir.name
 
   const readBatch = () =>
     new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
@@ -482,11 +568,21 @@ async function readDirectoryEntry(dir: FileSystemDirectoryEntry): Promise<File[]
     for (const entry of batch) {
       if (entry.isFile) {
         const file = await new Promise<File>((resolve, reject) =>
-          (entry as FileSystemFileEntry).file(resolve, reject)
+          (entry as FileSystemFileEntry).file(resolve, reject),
         )
+        const relPath = `${currentPath}/${file.name}`
+        try {
+          Object.defineProperty(file, 'webkitRelativePath', {
+            value: relPath,
+            writable: false,
+            configurable: true,
+          })
+        } catch {
+          // ignore if non-configurable
+        }
         files.push(file)
       } else if (entry.isDirectory) {
-        const subFiles = await readDirectoryEntry(entry as FileSystemDirectoryEntry)
+        const subFiles = await readDirectoryEntry(entry as FileSystemDirectoryEntry, currentPath)
         files.push(...subFiles)
       }
     }
