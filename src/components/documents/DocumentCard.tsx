@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Download, Eye, Folder, Heart, MoreVertical, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { VaultDocument } from '../../types/document'
@@ -49,20 +50,49 @@ export function DocumentCard({
 }: DocumentCardProps) {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const className = mode === 'grid' ? 'document-card' : 'document-row'
 
-  // Close menu when clicking outside
+  // Recompute portal position on open (and on scroll/resize while open)
+  const computePosition = useCallback(() => {
+    if (!triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    setMenuPos({
+      top: rect.bottom + 6,
+      right: window.innerWidth - rect.right,
+    })
+  }, [])
+
+  const openMenu = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    computePosition()
+    setMenuOpen(true)
+  }, [computePosition])
+
+  // Close menu when clicking outside (portal listens on document)
   useEffect(() => {
     if (!menuOpen) return
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (
+        menuRef.current && !menuRef.current.contains(target) &&
+        triggerRef.current && !triggerRef.current.contains(target)
+      ) {
         setMenuOpen(false)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [menuOpen])
+    const handleScroll = () => { computePosition() }
+    document.addEventListener('mousedown', handleClickOutside, true)
+    document.addEventListener('scroll', handleScroll, true)
+    window.addEventListener('resize', handleScroll)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside, true)
+      document.removeEventListener('scroll', handleScroll, true)
+      window.removeEventListener('resize', handleScroll)
+    }
+  }, [menuOpen, computePosition])
 
   const handleView = () => {
     if (documentRecord.fileType === 'folder') {
@@ -141,86 +171,91 @@ export function DocumentCard({
         </div>
       </div>
 
-      {/* Three-dot menu */}
-      <div className="document-menu-wrapper" ref={menuRef}>
+      {/* Three-dot menu trigger */}
+      <div className="document-menu-wrapper">
         <button
+          ref={triggerRef}
           type="button"
           className="document-menu-trigger"
-          onClick={(e) => {
-            e.stopPropagation()
-            setMenuOpen(!menuOpen)
-          }}
+          onClick={menuOpen ? (e) => { e.stopPropagation(); setMenuOpen(false) } : openMenu}
           aria-label="More actions"
           aria-expanded={menuOpen}
         >
           <MoreVertical size={18} />
         </button>
-
-        {menuOpen && (
-          <div className="document-context-menu" role="menu">
-            {!inTrash ? (
-              <>
-                <button type="button" role="menuitem" onClick={() => closeAndRun(handleView)}>
-                  <Eye size={16} />
-                  <span>{isFolder ? 'Open' : 'Preview'}</span>
-                </button>
-                {!isFolder && (
-                  <button type="button" role="menuitem" onClick={() => closeAndRun(() => onDownload(documentRecord))}>
-                    <Download size={16} />
-                    <span>Download</span>
-                  </button>
-                )}
-                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRename(documentRecord))}>
-                  <Pencil size={16} />
-                  <span>Rename</span>
-                </button>
-                {onMove && (
-                  <button type="button" role="menuitem" onClick={() => closeAndRun(() => onMove(documentRecord))}>
-                    <Folder size={16} />
-                    <span>Move</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={documentRecord.isFavorite ? 'is-active' : ''}
-                  onClick={() => closeAndRun(() => onFavorite(documentRecord))}
-                >
-                  <Heart size={16} />
-                  <span>{documentRecord.isFavorite ? 'Unfavorite' : 'Favorite'}</span>
-                </button>
-                <div className="context-menu-divider" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="danger"
-                  onClick={() => closeAndRun(() => onTrash(documentRecord))}
-                >
-                  <Trash2 size={16} />
-                  <span>Move to Trash</span>
-                </button>
-              </>
-            ) : (
-              <>
-                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRestore(documentRecord))}>
-                  <RotateCcw size={16} />
-                  <span>Restore</span>
-                </button>
-                <div className="context-menu-divider" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="danger"
-                  onClick={() => closeAndRun(() => onPermanentDelete(documentRecord))}
-                >
-                  <X size={16} />
-                  <span>Delete Permanently</span>
-                </button>
-              </>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* Context menu rendered as portal at body level — never clipped by overflow:hidden parents */}
+      {menuOpen && menuPos && createPortal(
+        <div
+          ref={menuRef}
+          className="document-context-menu"
+          role="menu"
+          style={{ top: menuPos.top, right: menuPos.right }}
+        >
+          {!inTrash ? (
+            <>
+              <button type="button" role="menuitem" onClick={() => closeAndRun(handleView)}>
+                <Eye size={16} />
+                <span>{isFolder ? 'Open' : 'Preview'}</span>
+              </button>
+              {!isFolder && (
+                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onDownload(documentRecord))}>
+                  <Download size={16} />
+                  <span>Download</span>
+                </button>
+              )}
+              <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRename(documentRecord))}>
+                <Pencil size={16} />
+                <span>Rename</span>
+              </button>
+              {onMove && (
+                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onMove(documentRecord))}>
+                  <Folder size={16} />
+                  <span>Move</span>
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                className={documentRecord.isFavorite ? 'is-active' : ''}
+                onClick={() => closeAndRun(() => onFavorite(documentRecord))}
+              >
+                <Heart size={16} />
+                <span>{documentRecord.isFavorite ? 'Unfavorite' : 'Favorite'}</span>
+              </button>
+              <div className="context-menu-divider" />
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => closeAndRun(() => onTrash(documentRecord))}
+              >
+                <Trash2 size={16} />
+                <span>Move to Trash</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRestore(documentRecord))}>
+                <RotateCcw size={16} />
+                <span>Restore</span>
+              </button>
+              <div className="context-menu-divider" />
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => closeAndRun(() => onPermanentDelete(documentRecord))}
+              >
+                <X size={16} />
+                <span>Delete Permanently</span>
+              </button>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
     </article>
   )
 }
