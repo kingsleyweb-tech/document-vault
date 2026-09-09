@@ -6197,17 +6197,17 @@ mark {
   max-height: calc(100vh - 48px) !important;
   display: flex !important;
   flex-direction: column !important;
+  padding-bottom: 24px !important;
 }
 
 .folder-tree-picker {
   max-width: 560px !important;
 }
 
-/* The queue list scrolls inside the dialog */
+/* The queue list inside the dialog */
 .upload-list {
-  flex: 1 1 auto !important;
-  overflow-y: auto !important;
-  min-height: 0 !important;
+  flex: 0 0 auto !important;
+  overflow: visible !important;
   display: flex !important;
   flex-direction: column !important;
   gap: 8px !important;
@@ -6233,6 +6233,7 @@ mark {
 /* Defaults row must not shrink */
 .upload-defaults {
   flex-shrink: 0 !important;
+  padding: 0 24px 16px !important;
 }
 
 /* DIALOG HEADERS */
@@ -6246,6 +6247,12 @@ mark {
   align-items: center !important;
   justify-content: space-between !important;
   background: #ffffff !important;
+}
+
+.upload-dialog header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 20 !important;
 }
 
 .prompt-dialog header h2,
@@ -9768,10 +9775,411 @@ html[data-theme='dark'],
   position: relative;
   overflow: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   background: #09090b;
   padding: 24px;
+}
+
+.viewer-main-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Thumbnails Sidebar Drawer ────────────────────────────────────────── */
+.viewer-thumbnail-sidebar {
+  width: 240px;
+  background: #121215;
+  border-right: 1px solid #27272a;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, margin-left 0.2s ease;
+}
+
+.viewer-thumbnail-sidebar.is-collapsed {
+  margin-left: -240px;
+}
+
+.thumbnail-sidebar-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #27272a;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e4e4e7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.thumbnail-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thumbnail-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #27272a;
+  background: #18181b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.thumbnail-card:hover {
+  border-color: #3b82f6;
+  background: #27272a;
+}
+
+.thumbnail-card.is-active {
+  border-color: #2563eb;
+  background: #1e293b;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+}
+
+.thumbnail-preview-box {
+  width: 100%;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #09090b;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.thumbnail-preview-box img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.thumbnail-card span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a1a1aa;
+}
+
+.thumbnail-card.is-active span {
+  color: #60a5fa;
+}
+
+/* ── Main Stage Content Box ─────────────────────────────────────────── */
+.viewer-content-stage {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px;
+  position: relative;
+}
+
+/* ── Page Navigation & Toolbar Inputs ───────────────────────────────── */
+.page-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #27272a;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid #3f3f46;
+}
+
+.page-number-input {
+  width: 48px;
+  height: 28px;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  outline: none;
+}
+
+.page-number-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+.page-total-label {
+  font-size: 13px;
+  color: #a1a1aa;
+  font-weight: 500;
+}
+
+/* ── Virtualized PDF Document Viewer Container ───────────────────────── */
+.pdf-virtual-wrapper {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pdf-virtual-container {
+  width: 100%;
+  position: relative;
+}
+
+.pdf-virtual-page-wrapper {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.pdf-page-card {
+  width: 100%;
+  max-width: 900px;
+  background: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24px;
+  overflow: hidden;
+  border: 1px solid #27272a;
+}
+
+.pdf-page-card-header {
+  width: 100%;
+  padding: 6px 12px;
+  background: #18181b;
+  color: #a1a1aa;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #27272a;
+}
+
+.pdf-page-render-area {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #ffffff;
+  min-height: 400px;
+}
+
+.pdf-page-render-area img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.pdf-page-skeleton {
+  width: 100%;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: linear-gradient(135deg, #18181b 0%, #09090b 100%);
+  color: #a1a1aa;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pdf-page-skeleton-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.pdf-page-error {
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: #18181b;
+  color: #f87171;
+  text-align: center;
+  width: 100%;
+}
+
+.pdf-page-error p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ── PDF Text Selection Layer ────────────────────────────────────────── */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.25;
+  line-height: 1;
+  user-select: text;
+  pointer-events: auto;
+}
+
+.pdf-text-layer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer span::selection {
+  background: rgba(37, 99, 235, 0.6);
+  color: transparent;
+}
+
+/* ── Document Search Drawer / Overlay ───────────────────────────────── */
+.pdf-search-panel {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  z-index: 100;
+  width: 340px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pdf-search-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #09090b;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.pdf-search-input-wrapper input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 13px;
+  outline: none;
+}
+
+.pdf-search-results-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pdf-search-result-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  color: #e4e4e7;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.pdf-search-result-item:hover {
+  background: #3f3f46;
+  border-color: #3b82f6;
+}
+
+.pdf-search-result-item strong {
+  color: #60a5fa;
+  font-size: 11px;
+}
+
+/* ── "Continue from Page X" Resume Banner ────────────────────────────── */
+.resume-reading-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid #3b82f6;
+  padding: 10px 18px;
+  border-radius: 30px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-size: 13px;
+  animation: slideDown 0.25s ease-out;
+}
+
+.resume-reading-banner strong {
+  font-weight: 700;
+  color: #60a5fa;
+}
+
+.resume-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-banner-btn {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.resume-banner-btn--primary {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.resume-banner-btn--primary:hover {
+  background: #1d4ed8;
+}
+
+.resume-banner-btn--secondary {
+  background: #334155;
+  color: #cbd5e1;
+}
+
+.resume-banner-btn--secondary:hover {
+  background: #475569;
+  color: #ffffff;
 }
 
 .viewer-message {
@@ -9785,6 +10193,17 @@ html[data-theme='dark'],
   font-weight: 600;
   text-align: center;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 
 
 
