@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import type { VaultDocument } from '../types/document'
-import { deleteDriveFile, GoogleDriveError } from '../services/googleDrive'
+import { deleteDriveFile, GoogleDriveError, trashDriveFile } from '../services/googleDrive'
 import { deleteDocumentRecord, deleteFolderRecord, updateDocumentRecord, updateFolderRecord } from '../services/firestore'
 
 export interface DeleteQueueStats {
@@ -83,7 +83,16 @@ export function DeleteQueueProvider({ children }: { children: ReactNode }) {
 
         try {
           if (mode === 'trash') {
-            // Move to trash (isDeleted: true) in Firestore
+            // Trash in Drive as well; otherwise the Drive sync check sees a live
+            // file and restores the record on the next visit. Drive trashes a
+            // folder's contents with it.
+            if (accessToken && record.driveFileId) {
+              try {
+                await trashDriveFile(accessToken, record.driveFileId)
+              } catch (err) {
+                if (!(err instanceof GoogleDriveError && err.status === 404)) throw err
+              }
+            }
             if (record.fileType === 'folder' && record.isFolderRecord) {
               await updateFolderRecord(record.id, { isDeleted: true })
             } else {

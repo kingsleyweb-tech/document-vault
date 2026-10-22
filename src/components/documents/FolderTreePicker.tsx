@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { Folder, ChevronRight, ChevronDown, X, FolderTree } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight, FolderInput, Home } from 'lucide-react'
 import type { VaultDocument } from '../../types/document'
+import { Dialog } from '../ui/Dialog'
+import { DocumentIcon } from './DocumentIcon'
 
 interface FolderTreePickerProps {
   open: boolean
@@ -11,127 +13,106 @@ interface FolderTreePickerProps {
   title: string
 }
 
-export function FolderTreePicker({
-  open,
-  documents,
-  disabledFolderIds,
-  onClose,
-  onMoveHere,
-  title,
-}: FolderTreePickerProps) {
+export function FolderTreePicker({ open, documents, disabledFolderIds, onClose, onMoveHere, title }: FolderTreePickerProps) {
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
-  if (!open) return null
+  const childrenOf = useMemo(() => {
+    const map = new Map<string | null, VaultDocument[]>()
+    for (const record of documents) {
+      if (record.fileType !== 'folder' || record.isDeleted) continue
+      const key = record.parentId ?? null
+      map.set(key, [...(map.get(key) ?? []), record])
+    }
+    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+    return map
+  }, [documents])
 
-  // Get active folders
-  const allFolders = documents.filter((d) => d.fileType === 'folder' && !d.isDeleted)
-
-  const toggleExpand = (folderId: string) => {
+  const toggleExpand = (folderId: string) =>
     setExpandedFolders((current) => {
       const next = new Set(current)
-      if (next.has(folderId)) {
-        next.delete(folderId)
-      } else {
-        next.add(folderId)
-      }
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
       return next
     })
-  }
 
-  const renderFolderNode = (folder: VaultDocument, depth: number) => {
-    const subfolders = allFolders.filter((f) => f.parentId === folder.id)
-    const hasSubfolders = subfolders.length > 0
+  const renderNode = (folder: VaultDocument, depth: number) => {
+    const subfolders = childrenOf.get(folder.id) ?? []
     const isExpanded = expandedFolders.has(folder.id)
     const isDisabled = disabledFolderIds.has(folder.id)
-    const isSelected = selectedFolderId === folder.id
 
     return (
-      <div key={folder.id} className="folder-tree-node-wrapper">
+      <div key={folder.id} role="treeitem" aria-expanded={subfolders.length ? isExpanded : undefined} aria-selected={selectedFolderId === folder.id}>
         <div
-          className={`folder-tree-node ${isSelected ? 'is-selected' : ''} ${isDisabled ? 'is-disabled' : ''}`}
-          style={{ paddingLeft: `${depth * 20 + 8}px` }}
-          onClick={() => {
-            if (!isDisabled) {
-              setSelectedFolderId(folder.id)
-            }
-          }}
+          className={`folder-tree-node${selectedFolderId === folder.id ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
+          style={{ paddingLeft: depth * 18 + 6 }}
         >
-          <span
-            className="folder-tree-arrow"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (hasSubfolders) toggleExpand(folder.id)
-            }}
+          {subfolders.length ? (
+            <button
+              type="button"
+              className="folder-tree-arrow"
+              onClick={() => toggleExpand(folder.id)}
+              aria-label={isExpanded ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
+            >
+              {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+          ) : (
+            <span className="folder-tree-spacer" />
+          )}
+          <button
+            type="button"
+            className="folder-tree-label"
+            disabled={isDisabled}
+            onClick={() => setSelectedFolderId(folder.id)}
+            onDoubleClick={() => subfolders.length && toggleExpand(folder.id)}
           >
-            {hasSubfolders ? (
-              isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />
-            ) : (
-              <span style={{ width: 16, display: 'inline-block' }} />
-            )}
-          </span>
-          <Folder size={18} className="folder-tree-icon" />
-          <span className="folder-tree-name">{folder.name}</span>
+            <DocumentIcon kind="folder" size={15} />
+            <span className="folder-tree-name">{folder.name}</span>
+          </button>
         </div>
-        {hasSubfolders && isExpanded && (
-          <div className="folder-tree-children">
-            {subfolders.map((sub) => renderFolderNode(sub, depth + 1))}
-          </div>
-        )}
+        {isExpanded ? subfolders.map((child) => renderNode(child, depth + 1)) : null}
       </div>
     )
   }
 
-  // Root folders (parentId is null)
-  const rootFolders = allFolders.filter((f) => f.parentId === null)
+  const rootFolders = childrenOf.get(null) ?? []
+  const destination = selectedFolderId ? documents.find((record) => record.id === selectedFolderId)?.name : 'My Vault'
 
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <section className="folder-tree-picker" role="dialog" aria-modal="true" aria-labelledby="picker-title">
-        <header>
-          <div>
-            <h2 id="picker-title">{title}</h2>
-            <p>Select a destination folder in your library.</p>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
-            <X aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="dialog-body folder-tree-body">
-          {/* Root Selection */}
-          <div
-            className={`folder-tree-node root-node ${selectedFolderId === null ? 'is-selected' : ''}`}
-            onClick={() => setSelectedFolderId(null)}
-          >
-            <FolderTree size={18} className="folder-tree-icon" />
-            <strong>Document Vault (Root)</strong>
-          </div>
-
-          <div className="folder-tree-scroll">
-            {rootFolders.length > 0 ? (
-              rootFolders.map((rootFolder) => renderFolderNode(rootFolder, 0))
-            ) : (
-              <div className="notice" style={{ padding: '20px 0', textAlign: 'center', fontSize: '13px' }}>
-                No subfolders created yet.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <footer>
+    <Dialog
+      open={open}
+      title={title}
+      description="Choose where to move it."
+      icon={<FolderInput aria-hidden="true" />}
+      onClose={onClose}
+      footer={
+        <>
           <button type="button" className="secondary-button" onClick={onClose}>
             Cancel
           </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => onMoveHere(selectedFolderId)}
-          >
-            Move Here
+          <button type="button" className="primary-button" onClick={() => onMoveHere(selectedFolderId)}>
+            Move to {destination}
           </button>
-        </footer>
-      </section>
-    </div>
+        </>
+      }
+    >
+      <div className="folder-tree" role="tree" aria-label="Folders">
+        <div className={`folder-tree-node${selectedFolderId === null ? ' is-selected' : ''}`}>
+          <button type="button" className="folder-tree-label" onClick={() => setSelectedFolderId(null)}>
+            <span className="kind-icon kind-icon--folder" aria-hidden="true">
+              <Home size={15} />
+            </span>
+            <strong className="folder-tree-name">My Vault</strong>
+          </button>
+        </div>
+        <div className="folder-tree-scroll">
+          {rootFolders.length > 0 ? (
+            rootFolders.map((folder) => renderNode(folder, 1))
+          ) : (
+            <p className="folder-tree-empty">No folders yet.</p>
+          )}
+        </div>
+      </div>
+    </Dialog>
   )
 }

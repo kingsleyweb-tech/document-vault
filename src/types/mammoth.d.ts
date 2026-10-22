@@ -9,4 +9,5 @@ declare module 'mammoth/mammoth.browser' {
     messages: unknown[];
   }
   export function convertToHtml(input: ConvertToHtmlInput): Promise<ConvertToHtmlOutput>;
+  export function extractRawText(input: { arrayBuffer: ArrayBuffer }): Promise<ConvertToHtmlOutput>;
 }

@@ -1,6 +1,8 @@
 import type { VaultDocument } from '../types/document'
-import { downloadDriveFile, getDriveFileMetadata, GoogleDriveError, isDriveAuthorizationError } from './googleDrive'
-import { saveOfflinePreview, getOfflinePreview, getOfflineBlob } from './offlineStore'
+import { downloadDriveFile, getDriveFileMetadata, GoogleDriveError, invalidateBlobCache, isDriveAuthorizationError } from './googleDrive'
+import { deleteOfflineEntries, saveOfflinePreview, getOfflinePreview, getOfflineBlob } from './offlineStore'
+import { invalidateThumbnail } from './thumbnails'
+import { stripRtf } from './contentIndex'
 
 export type PreviewKind =
   | 'pdf'
@@ -10,20 +12,16 @@ export type PreviewKind =
   | 'word'
   | 'spreadsheet'
   | 'presentation'
+  | 'epub'
   | 'office'
   | 'embed'
+  | 'media'
+  | 'archive'
   | 'fallback'
 
 export interface SpreadsheetSheet {
   name: string
   html: string
-}
-
-export interface PresentationSlide {
-  index: number
-  title: string
-  text: string[]
-  images?: string[]
 }
 
 export interface DocumentPreview {
@@ -34,9 +32,16 @@ export interface DocumentPreview {
   text?: string
   html?: string
   sheets?: SpreadsheetSheet[]
-  slides?: PresentationSlide[]
   downloadable: boolean
 }
+
+/**
+ * Bump when the shape of cached previews changes so stale entries saved in
+ * IndexedDB by an older build are ignored. Version 2 drops cached slide lists,
+ * which older builds stored in file-name order rather than presentation order.
+ * Version 3 drops spreadsheet HTML cached before it was sanitised as a fragment.
+ */
+export const PREVIEW_FORMAT_VERSION = 3
 
 // ─── Parsed-content cache ─────────────────────────────────────────────────────
 // Stores the expensive render results (Word HTML, spreadsheet sheets, slide
@@ -50,7 +55,6 @@ interface ParsedCacheEntry {
   text?: string
   html?: string
   sheets?: SpreadsheetSheet[]
-  slides?: PresentationSlide[]
   createdAt: number
 }
 
@@ -84,31 +88,86 @@ function storeParsedInCache(fileId: string, entry: ParsedCacheEntry) {
   parsedCache.set(fileId, entry)
 }
 
+// Dispatched by services/auth.ts at sign-out.
+const SESSION_ENDED_EVENT = 'documentVault.sessionEnded'
+
+// Rendered previews must not survive into another user's session.
+if (typeof window !== 'undefined') {
+  window.addEventListener(SESSION_ENDED_EVENT, () => parsedCache.clear())
+}
+
 /** Call this when a file is updated so stale rendered content is evicted. */
 export function invalidateParsedCache(fileId: string) {
   parsedCache.delete(fileId)
+}
+
+// Caches are keyed by Drive file id, which stays the same when a new version
+// replaces a file's contents. The version each cached file belongs to is
+// remembered here, so a browser that cached an older version (this one or
+// another device) drops it before opening the document.
+const CACHED_VERSIONS_KEY = 'documentVault.cachedVersions'
+
+function readCachedVersions(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(CACHED_VERSIONS_KEY) ?? '{}') as Record<string, number>
+  } catch {
+    return {}
+  }
+}
+
+/** Removes every cached copy of a file: rendered preview, file contents and thumbnail. */
+export async function forgetCachedFile(fileId: string) {
+  invalidateParsedCache(fileId)
+  invalidateBlobCache(fileId)
+  invalidateThumbnail(fileId)
+  await deleteOfflineEntries(fileId)
+}
+
+/** Drops cached copies made from an older version of this document. */
+export async function ensureCacheMatchesVersion(documentRecord: Pick<VaultDocument, 'driveFileId' | 'version'>) {
+  const fileId = documentRecord.driveFileId
+  const version = documentRecord.version ?? 1
+  const versions = readCachedVersions()
+  if ((versions[fileId] ?? 1) === version) return
+  await forgetCachedFile(fileId)
+  try {
+    localStorage.setItem(CACHED_VERSIONS_KEY, JSON.stringify({ ...versions, [fileId]: version }))
+  } catch {
+    // Without storage the check simply runs again next time.
+  }
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── Eager library warm-up ────────────────────────────────────────────────────
 let mammothPromise: Promise<unknown> | null = null
 let xlsxPromise:    Promise<unknown> | null = null
-let jszipPromise:   Promise<unknown> | null = null
 
 function warmUpRenderers() {
   if (!mammothPromise) mammothPromise = import('mammoth/mammoth.browser').catch(() => null)
   if (!xlsxPromise)    xlsxPromise    = import('xlsx').catch(() => null)
-  if (!jszipPromise)   jszipPromise   = import('jszip').catch(() => null)
 }
 
 warmUpRenderers()
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface LoadPreviewOptions {
+  signal?: AbortSignal
+  /** Download progress: bytes received and the total (0 when Drive does not say). */
+  onProgress?: (loaded: number, total: number) => void
+}
+
+/**
+ * Loads a document for viewing: from memory, then this browser's offline copy,
+ * then Google Drive. Without a Drive token only cached copies can open; other
+ * documents throw a 'tokenMissing' authorization error.
+ */
 export async function loadDocumentPreview(
-  accessToken: string,
+  accessToken: string | null,
   documentRecord: VaultDocument,
+  options: LoadPreviewOptions = {},
 ): Promise<DocumentPreview> {
   const fileId = documentRecord.driveFileId || documentRecord.id
+  if (documentRecord.driveFileId) await ensureCacheMatchesVersion(documentRecord)
 
   // ── 1. Return memory-cached result instantly ──────────────────────────────────────
   const cached = getParsedFromCache(fileId)
@@ -122,16 +181,14 @@ export async function loadDocumentPreview(
       text: cached.text,
       html: cached.html,
       sheets: cached.sheets,
-      slides: cached.slides,
       downloadable: true,
     }
   }
 
   // ── 2. Check IndexedDB offline preview store for instant 0ms offline load ─────────
-  const offlinePreview = await getOfflinePreview(fileId)
-  const offlineBlobItem = await getOfflineBlob(fileId)
+  const [offlinePreview, offlineBlobItem] = await Promise.all([getOfflinePreview(fileId), getOfflineBlob(fileId)])
 
-  if (offlinePreview && offlineBlobItem?.blob) {
+  if (offlinePreview && offlinePreview.formatVersion === PREVIEW_FORMAT_VERSION && offlineBlobItem?.blob) {
     const freshUrl = URL.createObjectURL(offlineBlobItem.blob)
     const result: DocumentPreview = {
       kind: offlinePreview.kind as PreviewKind,
@@ -140,7 +197,6 @@ export async function loadDocumentPreview(
       text: offlinePreview.text,
       html: offlinePreview.html,
       sheets: offlinePreview.sheets,
-      slides: offlinePreview.slides,
       downloadable: true,
     }
 
@@ -151,7 +207,6 @@ export async function loadDocumentPreview(
       text: result.text,
       html: result.html,
       sheets: result.sheets,
-      slides: result.slides,
       createdAt: Date.now(),
     })
 
@@ -166,7 +221,26 @@ export async function loadDocumentPreview(
 
   let resolvedMimeType = localMimeType
 
-  if (isGoogleWorkspace && navigator.onLine) {
+  // Legacy binary Office formats (.doc, .ppt) and others the browser cannot
+  // render (OpenDocument text and slides, TIFF) use Google Drive's own
+  // preview, which loads itself. Downloading the file first only delayed it;
+  // the Download button fetches the original when asked.
+  if (getPreviewKind(documentRecord) === 'embed') {
+    return {
+      kind: 'embed',
+      blob: new Blob([], { type: localMimeType }),
+      objectUrl: '',
+      embedUrl: driveEmbedUrl,
+      downloadable: true,
+    }
+  }
+
+  if (!accessToken) {
+    // An offline copy without a current parsed preview can still be rendered.
+    if (!offlineBlobItem?.blob) {
+      throw new GoogleDriveError(401, 'Google Drive authorization is required to open this document.', 'tokenMissing')
+    }
+  } else if (isGoogleWorkspace && navigator.onLine) {
     try {
       const metadata = await getDriveFileMetadata(accessToken, documentRecord.driveFileId)
       if (metadata.trashed) {
@@ -178,52 +252,20 @@ export async function loadDocumentPreview(
     }
   }
 
-  // Legacy binary Office formats (.doc, .xls, .ppt)
-  if (/\.(doc|xls|ppt)$/i.test(fileName)) {
-    try {
-      const blob = await downloadDriveFile(accessToken, documentRecord.driveFileId, resolvedMimeType, resolvedMimeType)
-      const typedBlob = blob.type ? blob : new Blob([blob], { type: resolvedMimeType })
-      const objectUrl = URL.createObjectURL(typedBlob)
-      const result: DocumentPreview = {
-        kind: 'embed',
-        blob: typedBlob,
-        objectUrl,
-        embedUrl: driveEmbedUrl,
-        downloadable: true,
-      }
-      storeParsedInCache(documentRecord.driveFileId, {
-        kind: result.kind,
-        blob: typedBlob,
-        objectUrl,
-        embedUrl: driveEmbedUrl,
-        createdAt: Date.now(),
-      })
-      return result
-    } catch {
-      const emptyBlob = new Blob([], { type: resolvedMimeType })
-      return {
-        kind: 'embed',
-        blob: emptyBlob,
-        objectUrl: '',
-        embedUrl: driveEmbedUrl,
-        downloadable: true,
-      }
-    }
-  }
-
-  // ── 4. Download blob for client-side rendering or fetch from IndexedDB ──────────────
-  const blob = await downloadDriveFile(
-    accessToken,
-    documentRecord.driveFileId,
-    resolvedMimeType,
-    resolvedMimeType,
-  )
+  // ── 4. Use this device's copy, or download it ──────────────────────────────
+  // A stored copy belongs to the record's current version: older ones were
+  // dropped by ensureCacheMatchesVersion above.
+  const blob = offlineBlobItem?.blob
+    ?? await downloadDriveFile(accessToken!, documentRecord.driveFileId, resolvedMimeType, resolvedMimeType, options)
 
   const typedBlob = blob.type ? blob : new Blob([blob], { type: resolvedMimeType || localMimeType })
   const objectUrl = URL.createObjectURL(typedBlob)
   const kind = getPreviewKind({ ...documentRecord, mimeType: resolvedMimeType })
+  const isDocx = /\.docx$/i.test(fileName) || resolvedMimeType.includes('wordprocessingml') || resolvedMimeType === 'application/vnd.google-apps.document'
+  const isSheet = /\.(xlsx|xlsm|xls|ods|csv|tsv)$/i.test(fileName) || resolvedMimeType.includes('spreadsheetml') || resolvedMimeType === 'application/vnd.google-apps.spreadsheet'
+  const isPptx = /\.pptx$/i.test(fileName) || resolvedMimeType.includes('presentationml') || resolvedMimeType === 'application/vnd.google-apps.presentation'
 
-  // ── 5. Parse / render content with concurrent slide processing ───────────────────
+  // ── 5. Parse / render content ─────────────────────────────────────────────────────
   let result: DocumentPreview
 
   if (kind === 'text') {
@@ -231,7 +273,7 @@ export async function loadDocumentPreview(
       kind,
       blob: typedBlob,
       objectUrl,
-      text: await typedBlob.text(),
+      text: /\.rtf$/i.test(fileName) ? stripRtf(await typedBlob.text()) : await typedBlob.text(),
       downloadable: true,
     }
   } else if (kind === 'html') {
@@ -242,7 +284,7 @@ export async function loadDocumentPreview(
       html: sanitizeHtml(await typedBlob.text()),
       downloadable: true,
     }
-  } else if (kind === 'office' && /\.docx$/i.test(fileName)) {
+  } else if (kind === 'office' && isDocx) {
     try {
       result = {
         kind: 'word',
@@ -254,7 +296,7 @@ export async function loadDocumentPreview(
     } catch {
       result = { kind: 'embed', blob: typedBlob, objectUrl, embedUrl: driveEmbedUrl, downloadable: true }
     }
-  } else if (kind === 'office' && /\.(xlsx|csv)$/i.test(fileName)) {
+  } else if (kind === 'office' && isSheet) {
     try {
       result = {
         kind: 'spreadsheet',
@@ -266,18 +308,10 @@ export async function loadDocumentPreview(
     } catch {
       result = { kind: 'embed', blob: typedBlob, objectUrl, embedUrl: driveEmbedUrl, downloadable: true }
     }
-  } else if (kind === 'office' && /\.pptx$/i.test(fileName)) {
-    try {
-      result = {
-        kind: 'presentation',
-        blob: typedBlob,
-        objectUrl,
-        slides: await renderPresentation(typedBlob),
-        downloadable: true,
-      }
-    } catch {
-      result = { kind: 'embed', blob: typedBlob, objectUrl, embedUrl: driveEmbedUrl, downloadable: true }
-    }
+  } else if (kind === 'office' && isPptx) {
+    // Slides are parsed on demand by the presentation viewer, so only the
+    // original file is kept here.
+    result = { kind: 'presentation', blob: typedBlob, objectUrl, downloadable: true }
   } else if (kind === 'office') {
     result = { kind: 'embed', blob: typedBlob, objectUrl, embedUrl: driveEmbedUrl, downloadable: true }
   } else {
@@ -293,21 +327,36 @@ export async function loadDocumentPreview(
     text: result.text,
     html: result.html,
     sheets: result.sheets,
-    slides: result.slides,
     createdAt: Date.now(),
   })
 
-  void saveOfflinePreview(fileId, result.kind, {
+  void saveOfflinePreview(fileId, result.kind, PREVIEW_FORMAT_VERSION, {
     text: result.text,
     html: result.html,
     sheets: result.sheets,
-    slides: result.slides,
   })
 
   return result
 }
 
+// Formats decided by extension before the stored kind, since older uploads
+// recorded several of them as 'word', 'image' or 'other'.
+const kindByExtension: Array<[RegExp, PreviewKind]> = [
+  [/\.(doc|ppt|pps|odt|odp|tiff?|heic)$/, 'embed'],
+  // Scripts are shown as escaped text; nothing in the vault is ever run.
+  [/\.(rtf|json|xml|md|markdown|log|ya?ml|ini|cfg|url|tex|srt|vtt|bat|cmd|ps1|vbs|js|ts|py|sh|sql)$/, 'text'],
+  [/\.(xlsx|xlsm|xls|ods|csv|tsv)$/, 'office'],
+  [/\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|mp4|m4v|webm|ogv|mov)$/, 'media'],
+  [/\.zip$/, 'archive'],
+  [/\.epub$/, 'epub'],
+  [/\.(lnk|exe|msi|dll|jar|scr|com)$/, 'fallback'],
+]
+
 export function getPreviewKind(documentRecord: Pick<VaultDocument, 'fileType' | 'mimeType' | 'originalName'>): PreviewKind {
+  const lowerName = (documentRecord.originalName ?? '').toLowerCase()
+  for (const [pattern, kind] of kindByExtension) if (pattern.test(lowerName)) return kind
+  if (/^(audio|video)\//.test(documentRecord.mimeType)) return 'media'
+  if (documentRecord.mimeType === 'application/epub+zip') return 'epub'
   if (documentRecord.fileType === 'pdf') return 'pdf'
   if (documentRecord.fileType === 'image') return 'image'
   if (documentRecord.fileType === 'html') return 'html'
@@ -332,13 +381,29 @@ export function buildDownloadName(documentRecord: VaultDocument) {
   return documentRecord.originalName || documentRecord.name
 }
 
-export function sanitizeHtml(html: string) {
+/**
+ * Content Security Policy injected into every previewed HTML or Word document.
+ * Previews are shown in sandboxed frames without script permission; the policy
+ * additionally stops remote requests (tracking images, web fonts, stylesheets)
+ * that would tell a third party a private document was opened.
+ */
+const PREVIEW_CSP =
+  "default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'"
+
+/**
+ * Strips active content from untrusted HTML. Full documents (shown in sandboxed
+ * frames) get the preview CSP; `fragment` output is for inline use, where a
+ * <meta> policy would be ignored, so it returns the styles and body only.
+ */
+export function sanitizeHtml(html: string, { fragment = false }: { fragment?: boolean } = {}) {
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
 
-  doc.querySelectorAll('script, object, embed, applet, base, form, input, button, textarea, select').forEach((node) => {
-    node.remove()
-  })
+  doc
+    .querySelectorAll('script, object, embed, applet, base, form, input, button, textarea, select, iframe, frame, frameset, link, meta[http-equiv]')
+    .forEach((node) => {
+      node.remove()
+    })
 
   doc.querySelectorAll('*').forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
@@ -347,20 +412,30 @@ export function sanitizeHtml(html: string) {
       if (name.startsWith('on')) {
         element.removeAttribute(attribute.name)
       }
-      if (name === 'href' || name === 'src') {
-        if (/^javascript:/i.test(value)) {
+      if (name === 'href' || name === 'src' || name === 'xlink:href' || name === 'action' || name === 'formaction') {
+        if (/^\s*(javascript|vbscript):/i.test(value)) {
           element.removeAttribute(attribute.name)
-        } else if (/^data:/i.test(value) && !/^data:image\//i.test(value)) {
+        } else if (/^data:/i.test(value) && !/^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(value)) {
           element.removeAttribute(attribute.name)
         }
       }
     }
   })
 
+  if (fragment) {
+    const styles = Array.from(doc.head.querySelectorAll('style'), (style) => style.outerHTML).join('')
+    return styles + doc.body.innerHTML
+  }
+
+  const csp = doc.createElement('meta')
+  csp.setAttribute('http-equiv', 'Content-Security-Policy')
+  csp.setAttribute('content', PREVIEW_CSP)
+  doc.head.prepend(csp)
+
   return `<!doctype html>${doc.documentElement.outerHTML}`
 }
 
-async function renderDocx(blob: Blob) {
+export async function renderDocx(blob: Blob) {
   const mammoth = mammothPromise
     ? (await mammothPromise as typeof import('mammoth/mammoth.browser') | null) ?? await import('mammoth/mammoth.browser')
     : await import('mammoth/mammoth.browser')
@@ -389,29 +464,29 @@ async function renderDocx(blob: Blob) {
           body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
             line-height: 1.65;
-            color: #1e293b;
+            color: #2a2119;
             background-color: #ffffff;
             padding: 40px 48px;
             max-width: 850px;
             margin: 20px auto;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
             border-radius: 8px;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #ebe1d4;
           }
-          h1, h2, h3, h4, h5, h6 { color: #0f172a; margin-top: 1.5em; margin-bottom: 0.5em; line-height: 1.3; font-weight: 700; }
-          h1 { font-size: 2em; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.3em; }
+          h1, h2, h3, h4, h5, h6 { color: #2a2119; margin-top: 1.5em; margin-bottom: 0.5em; line-height: 1.3; font-weight: 700; }
+          h1 { font-size: 2em; border-bottom: 2px solid #ebe1d4; padding-bottom: 0.3em; }
           h2 { font-size: 1.5em; }
           h3 { font-size: 1.25em; }
           p { margin-bottom: 1em; }
           img { max-width: 100%; height: auto; display: block; margin: 16px auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
           table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 0.95em; }
-          th, td { border: 1px solid #cbd5e1; padding: 10px 14px; text-align: left; vertical-align: top; }
-          th { background-color: #f1f5f9; font-weight: 600; color: #334155; }
-          tr:nth-child(even) td { background-color: #f8fafc; }
-          blockquote { border-left: 4px solid #3b82f6; padding-left: 16px; margin: 16px 0; color: #475569; font-style: italic; }
+          th, td { border: 1px solid #ddd0bf; padding: 10px 14px; text-align: left; vertical-align: top; }
+          th { background-color: #f4ebe1; font-weight: 600; color: #4a3c2e; }
+          tr:nth-child(even) td { background-color: #fbf8f4; }
+          blockquote { border-left: 4px solid #a67c52; padding-left: 16px; margin: 16px 0; color: #6b5a48; font-style: italic; }
           ul, ol { padding-left: 24px; margin-bottom: 1em; }
           li { margin-bottom: 0.3em; }
-          a { color: #2563eb; text-decoration: underline; }
+          a { color: #8a5a2b; text-decoration: underline; }
         </style>
       </head>
       <body>
@@ -422,7 +497,7 @@ async function renderDocx(blob: Blob) {
   return sanitizeHtml(styledHtml)
 }
 
-async function renderSpreadsheet(blob: Blob): Promise<SpreadsheetSheet[]> {
+export async function renderSpreadsheet(blob: Blob): Promise<SpreadsheetSheet[]> {
   const XLSX = xlsxPromise
     ? (await xlsxPromise as typeof import('xlsx') | null) ?? await import('xlsx')
     : await import('xlsx')
@@ -446,113 +521,35 @@ async function renderSpreadsheet(blob: Blob): Promise<SpreadsheetSheet[]> {
           width: 100%;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
           font-size: 13px;
-          color: #1e293b;
+          color: #2a2119;
           background-color: #ffffff;
         }
         #sheet-${cssSafeId(name)} td, #sheet-${cssSafeId(name)} th {
-          border: 1px solid #cbd5e1;
+          border: 1px solid #ddd0bf;
           padding: 8px 12px;
           white-space: nowrap;
           min-width: 60px;
         }
         #sheet-${cssSafeId(name)} th {
-          background-color: #f1f5f9;
+          background-color: #f4ebe1;
           font-weight: 600;
-          color: #475569;
+          color: #6b5a48;
           text-align: center;
         }
         #sheet-${cssSafeId(name)} tr:nth-child(even) td {
-          background-color: #f8fafc;
+          background-color: #fbf8f4;
         }
         #sheet-${cssSafeId(name)} tr:hover td {
-          background-color: #e2e8f0;
+          background-color: #ebe1d4;
         }
       </style>
       ${rawHtml}
     `
     return {
       name,
-      html: sanitizeHtml(styledSheet),
+      html: sanitizeHtml(styledSheet, { fragment: true }),
     }
   })
-}
-
-async function renderPresentation(blob: Blob): Promise<PresentationSlide[]> {
-  const JSZipModule = jszipPromise
-    ? (await jszipPromise as { default: typeof import('jszip') } | null) ?? await import('jszip')
-    : await import('jszip')
-  if (!JSZipModule) throw new Error('jszip failed to load')
-  const JSZip = (JSZipModule as { default: typeof import('jszip') }).default ?? JSZipModule
-  const zip = await (JSZip as unknown as { loadAsync(data: ArrayBuffer): Promise<import('jszip')> }).loadAsync(await blob.arrayBuffer())
-
-  // Extract images map (path -> dataUrl) in parallel
-  const mediaFiles = Object.keys(zip.files).filter((name) => /^ppt\/media\//i.test(name))
-  const mediaMap = new Map<string, string>()
-
-  await Promise.all(
-    mediaFiles.map(async (mediaPath) => {
-      const file = zip.file(mediaPath)
-      if (file) {
-        const base64 = await file.async('base64')
-        const ext = mediaPath.split('.').pop()?.toLowerCase() ?? 'png'
-        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'svg' ? 'image/svg+xml' : 'image/png'
-        mediaMap.set(mediaPath, `data:${mime};base64,${base64}`)
-      }
-    }),
-  )
-
-  const slideNames = Object.keys(zip.files)
-    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-    .sort((first, second) => getSlideNumber(first) - getSlideNumber(second))
-
-  // Parse all slide XMLs & relationship files concurrently in parallel
-  const slides = await Promise.all(
-    slideNames.map(async (slideName, idx) => {
-      const slideNum = getSlideNumber(slideName)
-      const relsPath = `ppt/slides/_rels/slide${slideNum}.xml.rels`
-
-      const [xml, relsXml] = await Promise.all([
-        zip.file(slideName)?.async('text'),
-        zip.file(relsPath)?.async('text'),
-      ])
-
-      const text = xml ? extractSlideText(xml) : []
-      const slideImages: string[] = []
-
-      if (relsXml) {
-        const parser = new DOMParser()
-        const doc = parser.parseFromString(relsXml, 'application/xml')
-        Array.from(doc.getElementsByTagName('Relationship')).forEach((rel) => {
-          const target = rel.getAttribute('Target') ?? ''
-          const fullPath = target.startsWith('../') ? target.replace('../', 'ppt/') : `ppt/slides/${target}`
-          if (mediaMap.has(fullPath)) {
-            slideImages.push(mediaMap.get(fullPath)!)
-          }
-        })
-      }
-
-      return {
-        index: slideNum,
-        title: text[0] ?? `Slide ${idx + 1}`,
-        text,
-        images: slideImages.length > 0 ? slideImages : Array.from(mediaMap.values()).slice(0, 2),
-      }
-    }),
-  )
-
-  return slides
-}
-
-function extractSlideText(xml: string) {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(xml, 'application/xml')
-  return Array.from(doc.getElementsByTagName('a:t'))
-    .map((node) => node.textContent?.trim() ?? '')
-    .filter(Boolean)
-}
-
-function getSlideNumber(path: string) {
-  return Number(path.match(/slide(\d+)\.xml$/)?.[1] ?? 0)
 }
 
 function cssSafeId(value: string) {

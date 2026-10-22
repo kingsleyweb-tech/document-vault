@@ -48,6 +48,14 @@ export interface VaultDocument {
   folderId?: string | null
   folderPath?: string
   isFolderRecord?: boolean
+  /** Set when Google Drive no longer has the file. The record is kept so nothing is lost silently. */
+  driveMissing?: boolean
+  /** Lower-case labels chosen by the owner. */
+  tags?: string[]
+  /** SHA-256 of the file's bytes, used to spot the same file uploaded twice. */
+  contentHash?: string
+  /** 1 for the original upload, raised each time a new version replaces the contents. */
+  version?: number
 }
 
 export interface NewDocumentMetadata {
@@ -66,6 +74,8 @@ export interface NewDocumentMetadata {
   parentId?: string | null
   folderId?: string | null
   folderPath?: string
+  tags?: string[]
+  contentHash?: string
 }
 
 export interface VaultFolder {
@@ -102,6 +112,20 @@ export type ThemeMode = 'light' | 'dark'
 
 export type UploadStatus = 'PENDING' | 'COMPRESSING' | 'UPLOADING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'PAUSED'
 
+/**
+ * Why a PAUSED upload is waiting: Drive needs reconnecting, the connection
+ * dropped (resumes by itself), or the file's contents are gone after a reload
+ * and it must be added again.
+ */
+export type UploadPauseReason = 'auth' | 'offline' | 'needsFile' | 'duplicate'
+
+/** An existing vault document with the same contents as a file being uploaded. */
+export interface DuplicateMatch {
+  id: string
+  name: string
+  folderPath: string
+}
+
 export interface FolderUploadStats {
   folderName: string
   completedFiles: number
@@ -120,6 +144,7 @@ export interface UploadItem {
   id: string
   file: File
   status: UploadStatus
+  pauseReason?: UploadPauseReason
   progress: number
   category: DocumentCategory
   description: string
@@ -135,4 +160,7 @@ export interface UploadItem {
   originalSize?: number
   compressedSize?: number
   savedPercentage?: number
+  contentHash?: string
+  /** Set while the upload waits for the owner to decide about a duplicate. */
+  duplicateOf?: DuplicateMatch
 }

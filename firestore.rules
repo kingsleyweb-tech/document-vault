@@ -1,58 +1,158 @@
 rules_version = '2';
 
+// Every record belongs to one user and only that user can read or change it.
+// Writes may only use the fields the app knows (a field allow-list), the
+// fields that tie a record to its owner and its Google Drive file never
+// change, and every field a write touches must have the expected type. Fields
+// a write leaves alone are not re-checked, so records written by older
+// versions of the app stay editable.
+
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Keys this write adds, removes or changes.
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function optionalString(data, key, maxLength) {
+      return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxLength);
+    }
+
+    function optionalBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    // Timestamps are always set by the server (serverTimestamp()), never by the client.
+    function serverTime(data, key) {
+      return !(key in data) || data[key] == null || data[key] == request.time;
+    }
+
     match /users/{userId} {
-      allow read: if request.auth != null
-        && userId == request.auth.uid;
+      function userFields() {
+        return ['email', 'displayName', 'photoURL', 'driveFolderId', 'driveConnected', 'driveConnectedAt', 'updatedAt'];
+      }
 
-      allow create: if request.auth != null
-        && userId == request.auth.uid;
+      function validUser(data, keys) {
+        return (!('email' in keys) || optionalString(data, 'email', 320))
+          && (!('displayName' in keys) || optionalString(data, 'displayName', 200))
+          && (!('photoURL' in keys) || optionalString(data, 'photoURL', 2048))
+          && (!('driveFolderId' in keys) || optionalString(data, 'driveFolderId', 256))
+          && (!('driveConnected' in keys) || optionalBool(data, 'driveConnected'))
+          && (!('driveConnectedAt' in keys) || serverTime(data, 'driveConnectedAt'))
+          && (!('updatedAt' in keys) || serverTime(data, 'updatedAt'));
+      }
 
-      allow update: if request.auth != null
-        && userId == request.auth.uid;
+      allow read: if signedIn() && userId == request.auth.uid;
+
+      allow create: if signedIn()
+        && userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(userFields())
+        && validUser(request.resource.data, request.resource.data.keys());
+
+      allow update: if signedIn()
+        && userId == request.auth.uid
+        && changedKeys().hasOnly(userFields())
+        && validUser(request.resource.data, changedKeys());
 
       allow delete: if false;
     }
 
     match /documents/{documentId} {
-      allow read: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
+      function documentFields() {
+        return [
+          'ownerId', 'name', 'originalName', 'mimeType', 'fileType', 'fileSize', 'category', 'description',
+          'driveFileId', 'driveFolderId', 'driveWebViewLink', 'thumbnailUrl', 'parentId', 'folderId', 'folderPath',
+          'tags', 'contentHash', 'version', 'searchText', 'isFavorite', 'isDeleted', 'driveMissing',
+          'uploadedAt', 'createdAt', 'updatedAt', 'lastViewedAt'
+        ];
+      }
 
-      allow create: if request.auth != null
+      // Checks only the given keys, so untouched legacy values never block a write.
+      function validDocument(data, keys) {
+        return (!('name' in keys) || (data.name is string && data.name.size() > 0 && data.name.size() <= 512))
+          && (!('originalName' in keys) || (data.originalName is string && data.originalName.size() <= 512))
+          && (!('mimeType' in keys) || (data.mimeType is string && data.mimeType.size() <= 255))
+          && (!('fileType' in keys) || (data.fileType is string && data.fileType.size() <= 32))
+          && (!('fileSize' in keys) || (data.fileSize is number && data.fileSize >= 0))
+          && (!('category' in keys) || (data.category is string && data.category.size() <= 64))
+          && (!('description' in keys) || (data.description is string && data.description.size() <= 4000))
+          && (!('driveFolderId' in keys) || (data.driveFolderId is string && data.driveFolderId.size() <= 256))
+          && (!('driveWebViewLink' in keys) || optionalString(data, 'driveWebViewLink', 2048))
+          && (!('thumbnailUrl' in keys) || optionalString(data, 'thumbnailUrl', 2048))
+          && (!('parentId' in keys) || optionalString(data, 'parentId', 128))
+          && (!('folderId' in keys) || optionalString(data, 'folderId', 128))
+          && (!('folderPath' in keys) || optionalString(data, 'folderPath', 2048))
+          && (!('tags' in keys) || (data.tags is list && data.tags.size() <= 20))
+          && (!('contentHash' in keys) || (data.contentHash is string && data.contentHash.matches('^[0-9a-f]{64}$')))
+          && (!('version' in keys) || (data.version is int && data.version >= 1))
+          && (!('searchText' in keys) || optionalString(data, 'searchText', 20000))
+          && (!('isFavorite' in keys) || data.isFavorite is bool)
+          && (!('isDeleted' in keys) || data.isDeleted is bool)
+          && (!('driveMissing' in keys) || data.driveMissing is bool)
+          && (!('uploadedAt' in keys) || serverTime(data, 'uploadedAt'))
+          && (!('createdAt' in keys) || serverTime(data, 'createdAt'))
+          && (!('updatedAt' in keys) || serverTime(data, 'updatedAt'))
+          && (!('lastViewedAt' in keys) || serverTime(data, 'lastViewedAt'));
+      }
+
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasOnly(documentFields())
         && request.resource.data.driveFileId is string
+        && request.resource.data.driveFileId.size() > 0
         && request.resource.data.driveFolderId is string
-        && (!('folderId' in request.resource.data)
-          || request.resource.data.folderId == null
-          || request.resource.data.folderId is string);
+        && validDocument(request.resource.data, request.resource.data.keys());
 
-      allow update: if request.auth != null
+      // ownerId and driveFileId are the record's identity and never change.
+      // Rewriting a record with the same identity is allowed: an upload whose
+      // first write's reply was lost writes the same record again.
+      allow update: if signedIn()
         && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == resource.data.ownerId;
+        && changedKeys().hasOnly(documentFields())
+        && !changedKeys().hasAny(['ownerId', 'driveFileId'])
+        && validDocument(request.resource.data, changedKeys());
 
-      allow delete: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
     match /folders/{folderId} {
-      allow read: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
+      function folderFields() {
+        return ['ownerId', 'name', 'parentFolderId', 'driveFolderId', 'searchText', 'isFavorite', 'isDeleted', 'createdAt', 'updatedAt'];
+      }
 
-      allow create: if request.auth != null
+      function validFolder(data, keys) {
+        return (!('name' in keys) || (data.name is string && data.name.size() > 0 && data.name.size() <= 255))
+          && (!('parentFolderId' in keys) || optionalString(data, 'parentFolderId', 128))
+          && (!('searchText' in keys) || optionalString(data, 'searchText', 20000))
+          && (!('isFavorite' in keys) || data.isFavorite is bool)
+          && (!('isDeleted' in keys) || data.isDeleted is bool)
+          && (!('createdAt' in keys) || serverTime(data, 'createdAt'))
+          && (!('updatedAt' in keys) || serverTime(data, 'updatedAt'));
+      }
+
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasOnly(folderFields())
         && request.resource.data.driveFolderId is string
+        && request.resource.data.driveFolderId.size() > 0
         && request.resource.data.name is string
-        && (!('parentFolderId' in request.resource.data)
-          || request.resource.data.parentFolderId == null
-          || request.resource.data.parentFolderId is string);
+        && validFolder(request.resource.data, request.resource.data.keys());
 
-      allow update: if request.auth != null
+      allow update: if signedIn()
         && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == resource.data.ownerId;
+        && changedKeys().hasOnly(folderFields())
+        && !changedKeys().hasAny(['ownerId', 'driveFolderId'])
+        && validFolder(request.resource.data, changedKeys());
 
-      allow delete: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
   }
 }

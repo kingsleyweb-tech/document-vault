@@ -1,575 +1,422 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, Eye, Folder, Heart, MoreVertical, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
+import { Copy, Download, Eye, FolderInput, History, MoreHorizontal, Pencil, RotateCcw, Star, Tag, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { VaultDocument } from '../../types/document'
-import { getDriveFileContent, getDriveFileThumbnail } from '../../services/googleDrive'
+import { loadThumbnailObjectUrl } from '../../services/thumbnails'
 import { formatDate, formatFileSize } from '../../utils/formatters'
+import { kindLabel } from '../../utils/kinds'
 import { DocumentIcon } from './DocumentIcon'
+import { usePreviewStatus } from '../../hooks/usePreviewStatus'
 
-const THUMBNAIL_CACHE_MAX = 160
-const thumbnailCache = new Map<string, { objectUrl: string; accessedAt: number }>()
-const thumbnailRequests = new Map<string, Promise<string>>()
-
-interface DocumentCardProps {
-  documentRecord: VaultDocument
-  mode: 'grid' | 'list'
-  inTrash?: boolean
-  itemCount?: number
-  pathLabel?: string
-  accessToken?: string | null
-  isSelected?: boolean
-  onSelectToggle?: () => void
-  onMove?: (documentRecord: VaultDocument) => void
+export interface ItemActions {
   onView: (documentRecord: VaultDocument) => void
   onDownload: (documentRecord: VaultDocument) => void
   onRename: (documentRecord: VaultDocument) => void
   onFavorite: (documentRecord: VaultDocument) => void
   onTrash: (documentRecord: VaultDocument) => void
-  onRestore: (documentRecord: VaultDocument) => void
-  onPermanentDelete: (documentRecord: VaultDocument) => void
+  onMove?: (documentRecord: VaultDocument) => void
+  onEditDetails?: (documentRecord: VaultDocument) => void
+  onCopy?: (documentRecord: VaultDocument) => void
+  onVersions?: (documentRecord: VaultDocument) => void
+  onRestore?: (documentRecord: VaultDocument) => void
+  onPermanentDelete?: (documentRecord: VaultDocument) => void
 }
 
-export function DocumentCard({
-  documentRecord,
-  mode,
-  inTrash,
-  itemCount,
-  pathLabel,
-  accessToken,
-  isSelected = false,
-  onSelectToggle,
-  onMove,
-  onView,
-  onDownload,
-  onRename,
-  onFavorite,
-  onTrash,
-  onRestore,
-  onPermanentDelete,
-}: DocumentCardProps) {
+interface ItemProps {
+  documentRecord: VaultDocument
+  actions: ItemActions
+  inTrash?: boolean
+  itemCount?: number
+  location?: string
+  accessToken?: string | null
+  isSelected?: boolean
+  onSelectToggle?: () => void
+}
+
+function useOpenItem(documentRecord: VaultDocument, actions: ItemActions, inTrash?: boolean) {
   const navigate = useNavigate()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const className = mode === 'grid' ? 'document-card' : 'document-row'
-
-  // Recompute portal position on open (and on scroll/resize while open)
-  const computePosition = useCallback(() => {
-    if (!triggerRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
-    setMenuPos({
-      top: rect.bottom + 6,
-      right: window.innerWidth - rect.right,
-    })
-  }, [])
-
-  const openMenu = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation()
-    computePosition()
-    setMenuOpen(true)
-  }, [computePosition])
-
-  // Close menu when clicking outside (portal listens on document)
-  useEffect(() => {
-    if (!menuOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (
-        menuRef.current && !menuRef.current.contains(target) &&
-        triggerRef.current && !triggerRef.current.contains(target)
-      ) {
-        setMenuOpen(false)
-      }
-    }
-    const handleScroll = () => { computePosition() }
-    document.addEventListener('mousedown', handleClickOutside, true)
-    document.addEventListener('scroll', handleScroll, true)
-    window.addEventListener('resize', handleScroll)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside, true)
-      document.removeEventListener('scroll', handleScroll, true)
-      window.removeEventListener('resize', handleScroll)
-    }
-  }, [menuOpen, computePosition])
-
-  const handleView = () => {
-    if (documentRecord.fileType === 'folder') {
-      if (!inTrash) {
-        navigate(`/folders/${documentRecord.id}`)
-      }
-    } else {
-      onView(documentRecord)
-    }
+  return () => {
+    if (inTrash) return
+    if (documentRecord.fileType === 'folder') navigate(`/folders/${documentRecord.id}`)
+    else actions.onView(documentRecord)
   }
+}
 
-  const closeAndRun = (action: () => void) => {
-    setMenuOpen(false)
-    action()
+function describe(documentRecord: VaultDocument, itemCount?: number) {
+  if (documentRecord.fileType === 'folder') {
+    const count = itemCount ?? 0
+    return `${count} ${count === 1 ? 'item' : 'items'}`
   }
+  return `${formatFileSize(documentRecord.fileSize)} · ${formatDate(documentRecord.updatedAt)}`
+}
 
+const missingHint = 'Google Drive no longer has this file. It may have been deleted in Drive. The vault keeps its details so you know what is missing.'
+
+function TagChips({ tags }: { tags?: string[] }) {
+  if (!tags || tags.length === 0) return null
+  const shown = tags.slice(0, 3)
+  return (
+    <span className="doc-tags" title={tags.map((tag) => `#${tag}`).join(' ')}>
+      {shown.map((tag) => (
+        <span key={tag} className="doc-tag">
+          #{tag}
+        </span>
+      ))}
+      {tags.length > shown.length ? <span className="doc-tag doc-tag--more">+{tags.length - shown.length}</span> : null}
+    </span>
+  )
+}
+
+function MissingBadge({ documentRecord }: { documentRecord: VaultDocument }) {
+  return documentRecord.driveMissing ? (
+    <span className="chip chip--danger doc-missing" title={missingHint}>
+      Missing from Drive
+    </span>
+  ) : null
+}
+
+const preparationLabels: Record<string, { label: string; className: string }> = {
+  queued: { label: 'Queued', className: 'chip' },
+  processing: { label: 'Preparing', className: 'chip chip--accent' },
+  ready: { label: 'Ready', className: 'chip chip--success' },
+  partial: { label: 'Partly ready', className: 'chip' },
+  failed: { label: 'Preview failed', className: 'chip chip--danger' },
+}
+
+/** Whether this device has prepared the file for fast opening (services/previewQueue.ts). */
+function PreparationBadge({ documentRecord }: { documentRecord: VaultDocument }) {
+  const meta = usePreviewStatus(documentRecord.fileType === 'folder' ? undefined : documentRecord.driveFileId)
+  if (!meta || meta.version !== (documentRecord.version ?? 1)) return null
+  const shown = preparationLabels[meta.status]
+  if (!shown) return null
+  const waiting = meta.status === 'queued' && meta.waitingFor
+    ? meta.waitingFor === 'drive' ? 'Waiting for Google Drive' : 'Waiting for the internet'
+    : null
+  const title = meta.status === 'ready'
+    ? 'Prepared on this device: opens at once, also offline'
+    : waiting ?? meta.error ?? 'Being prepared on this device for fast opening'
+  return (
+    <span className={`${shown.className} doc-preparation`} title={title} data-status={meta.status}>
+      {waiting ? 'Waiting' : shown.label}
+    </span>
+  )
+}
+
+export function DocumentCard({ documentRecord, actions, inTrash, itemCount, location, accessToken, isSelected, onSelectToggle }: ItemProps) {
+  const open = useOpenItem(documentRecord, actions, inTrash)
   const isFolder = documentRecord.fileType === 'folder'
 
   return (
-    <article className={`${className} ${isFolder ? 'is-folder' : ''} ${isSelected ? 'is-selected' : ''}`}>
-      {/* Checkbox overlay for grid mode */}
-      {mode === 'grid' && onSelectToggle && (
-        <div className={`document-select-checkbox-wrapper ${isSelected ? 'is-selected' : ''}`} onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            className="document-select-checkbox"
-            checked={isSelected}
-            onChange={onSelectToggle}
-            aria-label={`Select ${documentRecord.name}`}
-          />
-        </div>
-      )}
+    <article className={`doc-card${isFolder ? ' is-folder' : ''}${isSelected ? ' is-selected' : ''}`}>
+      {onSelectToggle ? (
+        <label className="doc-card__check" title="Select">
+          <input type="checkbox" checked={Boolean(isSelected)} onChange={onSelectToggle} aria-label={`Select ${documentRecord.name}`} />
+        </label>
+      ) : null}
+      {documentRecord.isFavorite && !inTrash ? (
+        <span className="doc-card__star" title="Favorite">
+          <Star aria-hidden="true" />
+        </span>
+      ) : null}
 
-      {/* Thumbnail preview for grid mode */}
-      {mode === 'grid' && (
-        <div className="document-thumbnail" onClick={handleView} style={{ cursor: 'pointer' }}>
-          <DocumentThumbnail documentRecord={documentRecord} accessToken={accessToken} />
-        </div>
-      )}
-
-      <div className="document-main" onClick={handleView} style={{ cursor: 'pointer' }}>
-        {/* Checkbox for list mode */}
-        {mode === 'list' && onSelectToggle && (
-          <div className={`document-select-checkbox-wrapper ${isSelected ? 'is-selected' : ''}`} onClick={(e) => e.stopPropagation()}>
-            <input
-              type="checkbox"
-              className="document-select-checkbox"
-              checked={isSelected}
-              onChange={onSelectToggle}
-              aria-label={`Select ${documentRecord.name}`}
-            />
-          </div>
-        )}
-
-        <div className={`file-icon file-icon--${documentRecord.fileType}`}>
-          <SmallDocumentThumbnailCard documentRecord={documentRecord} />
-        </div>
-        <div className="document-copy">
-          <h3 title={documentRecord.originalName}>{documentRecord.name}</h3>
-          <p className="document-meta-inline">
-            {isFolder ? (
-              <>
-                Folder · {itemCount !== undefined ? `${itemCount} ${itemCount === 1 ? 'item' : 'items'}` : '0 items'}
-              </>
-            ) : (
-              <>
-                Modified: {formatDate(documentRecord.updatedAt)}
-                <span className="meta-separator">|</span>
-                {formatFileSize(documentRecord.fileSize)}
-                <span className="meta-separator">|</span>
-                {documentRecord.category}
-              </>
-            )}
-          </p>
-          {pathLabel ? <p className="document-path-label">Folder: {pathLabel}</p> : null}
-        </div>
-      </div>
-
-      {/* Three-dot menu trigger */}
-      <div className="document-menu-wrapper">
-        <button
-          ref={triggerRef}
-          type="button"
-          className="document-menu-trigger"
-          onClick={menuOpen ? (e) => { e.stopPropagation(); setMenuOpen(false) } : openMenu}
-          aria-label="More actions"
-          aria-expanded={menuOpen}
-        >
-          <MoreVertical size={18} />
+      {isFolder ? (
+        <button type="button" className="doc-card__folder" onClick={open} disabled={inTrash} aria-label={`Open ${documentRecord.name}`}>
+          <DocumentIcon kind="folder" size={26} />
         </button>
-      </div>
-
-      {/* Context menu rendered as portal at body level — never clipped by overflow:hidden parents */}
-      {menuOpen && menuPos && createPortal(
-        <div
-          ref={menuRef}
-          className="document-context-menu"
-          role="menu"
-          style={{ top: menuPos.top, right: menuPos.right }}
-        >
-          {!inTrash ? (
-            <>
-              <button type="button" role="menuitem" onClick={() => closeAndRun(handleView)}>
-                <Eye size={16} />
-                <span>{isFolder ? 'Open' : 'Preview'}</span>
-              </button>
-              {!isFolder && (
-                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onDownload(documentRecord))}>
-                  <Download size={16} />
-                  <span>Download</span>
-                </button>
-              )}
-              <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRename(documentRecord))}>
-                <Pencil size={16} />
-                <span>Rename</span>
-              </button>
-              {onMove && (
-                <button type="button" role="menuitem" onClick={() => closeAndRun(() => onMove(documentRecord))}>
-                  <Folder size={16} />
-                  <span>Move</span>
-                </button>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                className={documentRecord.isFavorite ? 'is-active' : ''}
-                onClick={() => closeAndRun(() => onFavorite(documentRecord))}
-              >
-                <Heart size={16} />
-                <span>{documentRecord.isFavorite ? 'Unfavorite' : 'Favorite'}</span>
-              </button>
-              <div className="context-menu-divider" />
-              <button
-                type="button"
-                role="menuitem"
-                className="danger"
-                onClick={() => closeAndRun(() => onTrash(documentRecord))}
-              >
-                <Trash2 size={16} />
-                <span>Move to Trash</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" role="menuitem" onClick={() => closeAndRun(() => onRestore(documentRecord))}>
-                <RotateCcw size={16} />
-                <span>Restore</span>
-              </button>
-              <div className="context-menu-divider" />
-              <button
-                type="button"
-                role="menuitem"
-                className="danger"
-                onClick={() => closeAndRun(() => onPermanentDelete(documentRecord))}
-              >
-                <X size={16} />
-                <span>Delete Permanently</span>
-              </button>
-            </>
-          )}
-        </div>,
-        document.body
+      ) : (
+        <button type="button" className="doc-card__preview" onClick={open} disabled={inTrash} aria-label={`Open ${documentRecord.name}`}>
+          <DocumentThumbnail documentRecord={documentRecord} accessToken={accessToken} />
+          <span className={`doc-card__kind kind-text--${documentRecord.fileType}`}>{kindLabel(documentRecord.fileType)}</span>
+        </button>
       )}
+
+      <div className="doc-card__body">
+        <div className="doc-card__text">
+          <h3 title={documentRecord.originalName || documentRecord.name}>
+            {isFolder ? (
+              documentRecord.name
+            ) : (
+              <button type="button" className="link-reset" onClick={open} disabled={inTrash}>
+                {documentRecord.name}
+              </button>
+            )}
+          </h3>
+          <p>{describe(documentRecord, itemCount)}</p>
+          <TagChips tags={documentRecord.tags} />
+          <MissingBadge documentRecord={documentRecord} />
+          <PreparationBadge documentRecord={documentRecord} />
+          {location ? <p className="doc-card__location" title={location}>{inTrash ? `From ${location}` : location}</p> : null}
+        </div>
+        <ItemMenu documentRecord={documentRecord} actions={actions} inTrash={inTrash} />
+      </div>
     </article>
   )
 }
 
-function DocumentThumbnail({
-  documentRecord,
-  accessToken,
-}: {
-  documentRecord: VaultDocument
-  accessToken?: string | null
-}) {
-  const [imgErrorFileId, setImgErrorFileId] = useState<string | null>(null)
-  const [previewState, setPreviewState] = useState<{ fileId: string; objectUrl: string | null; failed: boolean } | null>(null)
+export function DocumentRow({ documentRecord, actions, inTrash, itemCount, location, accessToken, isSelected, onSelectToggle }: ItemProps) {
+  const open = useOpenItem(documentRecord, actions, inTrash)
   const isFolder = documentRecord.fileType === 'folder'
-  // Error flag is scoped to the current file — resets naturally when documentRecord changes
-  const imgError = imgErrorFileId === documentRecord.driveFileId
-
-  // High-res Google Drive thumbnail CDN URL (=s800 renders full-resolution Slide 1 / Page 1)
-  const driveThumbnailUrl = useMemo(() => {
-    if (isFolder) return null
-    if (documentRecord.thumbnailUrl) {
-      return documentRecord.thumbnailUrl.replace(/=s\d+/, '=s800')
-    }
-    if (documentRecord.driveFileId) {
-      return `https://lh3.googleusercontent.com/d/${documentRecord.driveFileId}=s800`
-    }
-    return null
-  }, [isFolder, documentRecord.thumbnailUrl, documentRecord.driveFileId])
-
-  const isImage = documentRecord.fileType === 'image'
-  const directImageUrl = (isImage && (documentRecord.thumbnailUrl || (documentRecord as { storageUrl?: string }).storageUrl)) || null
-  const canLoadAuthenticatedPreview = !isFolder && Boolean(accessToken && documentRecord.driveFileId)
-  const activePreview = previewState?.fileId === documentRecord.driveFileId ? previewState : null
-
-  useEffect(() => {
-    let cancelled = false
-    // No synchronous setState here — imgError resets via scoped ID above
-
-    if (!canLoadAuthenticatedPreview || !accessToken || !documentRecord.driveFileId) {
-      return () => {
-        cancelled = true
-      }
-    }
-
-    loadThumbnailObjectUrl(accessToken, {
-      driveFileId: documentRecord.driveFileId,
-      fileType: documentRecord.fileType,
-      thumbnailUrl: documentRecord.thumbnailUrl,
-    })
-      .then((objectUrl) => {
-        if (cancelled) return
-        setPreviewState({ fileId: documentRecord.driveFileId, objectUrl, failed: false })
-      })
-      .catch((error) => {
-        console.warn('Authenticated thumbnail blob fallback for:', documentRecord.name, error)
-        if (!cancelled) setPreviewState({ fileId: documentRecord.driveFileId, objectUrl: null, failed: true })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    accessToken,
-    canLoadAuthenticatedPreview,
-    documentRecord.driveFileId,
-    documentRecord.fileType,
-    documentRecord.name,
-    documentRecord.thumbnailUrl,
-  ])
-
-  if (isFolder) {
-    return (
-      <div className="document-thumbnail-folder-preview">
-        <DocumentIcon kind="folder" size={54} />
-      </div>
-    )
-  }
-
-  // 1. Render authenticated blob preview (from PDFjs or drive blob) if available
-  if (activePreview?.objectUrl && !activePreview.failed) {
-    return (
-      <img
-        src={activePreview.objectUrl}
-        alt={`First page preview of ${documentRecord.name}`}
-        loading="eager"
-        decoding="async"
-        fetchPriority="high"
-        className="document-thumbnail-img"
-      />
-    )
-  }
-
-  // 2. Direct high-res Google Drive CDN thumbnail (renders real Slide 1 / Page 1 image!)
-  if (driveThumbnailUrl && !imgError) {
-    return (
-      <img
-        src={driveThumbnailUrl}
-        alt={`First page preview of ${documentRecord.name}`}
-        loading="eager"
-        decoding="async"
-        referrerPolicy="no-referrer"
-        className="document-thumbnail-img"
-        onError={() => setImgErrorFileId(documentRecord.driveFileId)}
-      />
-    )
-  }
-
-  // 3. Direct image storage URL
-  if (directImageUrl && !imgError) {
-    return (
-      <img
-        src={directImageUrl}
-        alt={`Preview of ${documentRecord.name}`}
-        loading="eager"
-        decoding="async"
-        className="document-thumbnail-img"
-        onError={() => setImgErrorFileId(documentRecord.driveFileId)}
-      />
-    )
-  }
-
-  // Fallback sheet if thumbnail image could not be loaded
-  return <FirstPageDocumentSheet documentRecord={documentRecord} />
-}
-
-function SmallDocumentThumbnailCard({ documentRecord }: { documentRecord: VaultDocument }) {
-  const [imgError, setImgError] = useState(false)
-  const isFolder = documentRecord.fileType === 'folder'
-
-  const driveThumbnailUrl = useMemo(() => {
-    if (isFolder) return null
-    if (documentRecord.thumbnailUrl) {
-      return documentRecord.thumbnailUrl.replace(/=s\d+/, '=s200')
-    }
-    if (documentRecord.driveFileId) {
-      return `https://lh3.googleusercontent.com/d/${documentRecord.driveFileId}=s200`
-    }
-    return null
-  }, [isFolder, documentRecord.thumbnailUrl, documentRecord.driveFileId])
-
-  const isImage = documentRecord.fileType === 'image'
-  const directImageUrl = (isImage && (documentRecord.thumbnailUrl || (documentRecord as { storageUrl?: string }).storageUrl)) || null
-  const targetUrl = driveThumbnailUrl || directImageUrl
-
-  if (targetUrl && !imgError && !isFolder) {
-    return (
-      <div className="small-doc-thumbnail-wrap">
-        <img
-          src={targetUrl}
-          alt={`Thumbnail of ${documentRecord.name}`}
-          className="small-doc-thumbnail-img"
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          onError={() => setImgError(true)}
-        />
-      </div>
-    )
-  }
-
-  return <DocumentIcon kind={documentRecord.fileType} />
-}
-
-function FirstPageDocumentSheet({ documentRecord }: { documentRecord: VaultDocument }) {
-  const fileType = documentRecord.fileType
-  const name = documentRecord.name || 'Untitled Document'
-
-  const typeConfig: Record<string, { color: string; badge: string; label: string }> = {
-    pdf: { color: '#ef4444', badge: 'PDF', label: 'Page 1' },
-    presentation: { color: '#f97316', badge: 'PPTX', label: 'Slide 1' },
-    document: { color: '#2563eb', badge: 'DOCX', label: 'Page 1' },
-    spreadsheet: { color: '#10b981', badge: 'XLSX', label: 'Sheet 1' },
-    image: { color: '#8b5cf6', badge: 'IMAGE', label: 'Preview' },
-    audio: { color: '#ec4899', badge: 'AUDIO', label: 'Track' },
-    video: { color: '#06b6d4', badge: 'VIDEO', label: 'Clip' },
-    code: { color: '#6366f1', badge: 'CODE', label: 'Source' },
-    other: { color: '#64748b', badge: 'FILE', label: 'Page 1' },
-  }
-
-  const config = typeConfig[fileType] || typeConfig.other
+  void accessToken
 
   return (
-    <div className="first-page-sheet-container">
-      <div className="first-page-sheet" style={{ borderTop: `4px solid ${config.color}` }}>
-        <div className="first-page-sheet-header">
-          <div className="first-page-sheet-badge" style={{ backgroundColor: `${config.color}15`, color: config.color }}>
-            {config.badge}
-          </div>
-          <span className="first-page-sheet-label">{config.label}</span>
-        </div>
-        <div className="first-page-sheet-body">
-          <div className="first-page-sheet-icon-wrap" style={{ color: config.color }}>
-            <DocumentIcon kind={fileType} size={28} />
-          </div>
-          <div className="first-page-sheet-title">{name}</div>
-          {fileType === 'presentation' ? (
-            <div className="first-page-slide-frame">
-              <div className="slide-box-header" style={{ backgroundColor: `${config.color}30` }} />
-              <div className="slide-box-line line-long" />
-              <div className="slide-box-line line-med" />
-            </div>
-          ) : fileType === 'spreadsheet' ? (
-            <div className="first-page-sheet-grid">
-              <div className="grid-cell" />
-              <div className="grid-cell" />
-              <div className="grid-cell" />
-              <div className="grid-cell" />
-            </div>
-          ) : (
-            <div className="first-page-sheet-lines">
-              <div className="sheet-line line-h1" style={{ backgroundColor: `${config.color}35` }} />
-              <div className="sheet-line line-p1" />
-              <div className="sheet-line line-p2" />
-              <div className="sheet-line line-p3" />
-            </div>
-          )}
-        </div>
-      </div>
+    <div className={`doc-row${isSelected ? ' is-selected' : ''}`} role="row">
+      <span className="doc-row__check" role="cell">
+        {onSelectToggle ? (
+          <input type="checkbox" checked={Boolean(isSelected)} onChange={onSelectToggle} aria-label={`Select ${documentRecord.name}`} />
+        ) : null}
+      </span>
+      <span className="doc-row__name" role="cell">
+        <SmallThumbnail documentRecord={documentRecord} />
+        <span className="doc-row__title">
+          <button type="button" className="link-reset" onClick={open} disabled={inTrash} title={documentRecord.originalName || documentRecord.name}>
+            {documentRecord.name}
+          </button>
+          {location ? <small title={location}>{inTrash ? `From ${location}` : location}</small> : null}
+          <TagChips tags={documentRecord.tags} />
+          <MissingBadge documentRecord={documentRecord} />
+          <PreparationBadge documentRecord={documentRecord} />
+        </span>
+        {documentRecord.isFavorite && !inTrash ? <Star className="doc-row__star" aria-label="Favorite" /> : null}
+      </span>
+      <span className="doc-row__kind" role="cell">{kindLabel(documentRecord.fileType)}</span>
+      <span className="doc-row__date" role="cell">{formatDate(documentRecord.updatedAt)}</span>
+      <span className="doc-row__size" role="cell">
+        {isFolder ? `${itemCount ?? 0} ${itemCount === 1 ? 'item' : 'items'}` : formatFileSize(documentRecord.fileSize)}
+      </span>
+      <span className="doc-row__actions" role="cell">
+        {inTrash && actions.onRestore ? (
+          <button type="button" className="ghost-button button--small doc-row__restore" onClick={() => actions.onRestore?.(documentRecord)}>
+            <RotateCcw aria-hidden="true" />
+            <span>Restore</span>
+          </button>
+        ) : null}
+        <ItemMenu documentRecord={documentRecord} actions={actions} inTrash={inTrash} />
+      </span>
     </div>
   )
 }
 
-async function loadThumbnailObjectUrl(
-  accessToken: string,
-  documentRecord: Pick<VaultDocument, 'driveFileId' | 'fileType' | 'thumbnailUrl'>,
-) {
-  const cached = thumbnailCache.get(documentRecord.driveFileId)
-  if (cached) {
-    cached.accessedAt = Date.now()
-    return cached.objectUrl
-  }
+function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultDocument; actions: ItemActions; inTrash?: boolean }) {
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const open = useOpenItem(documentRecord, actions, inTrash)
+  const isFolder = documentRecord.fileType === 'folder'
 
-  const pending = thumbnailRequests.get(documentRecord.driveFileId)
-  if (pending) return pending
+  const place = useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const width = 210
+    const height = menuRef.current?.offsetHeight ?? 260
+    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+    const below = rect.bottom + 6
+    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below
+    setPosition({ top, left })
+  }, [])
 
-  const request = loadThumbnailBlob(accessToken, documentRecord)
-    .then((blob) => {
-      const objectUrl = URL.createObjectURL(blob)
-      storeThumbnailObjectUrl(documentRecord.driveFileId, objectUrl)
-      return objectUrl
-    })
-    .finally(() => {
-      thumbnailRequests.delete(documentRecord.driveFileId)
-    })
+  const close = useCallback(() => setPosition(null), [])
 
-  thumbnailRequests.set(documentRecord.driveFileId, request)
-  return request
-}
-
-async function loadThumbnailBlob(
-  accessToken: string,
-  documentRecord: Pick<VaultDocument, 'driveFileId' | 'fileType' | 'thumbnailUrl'>,
-) {
-  try {
-    return await getDriveFileThumbnail(accessToken, documentRecord.driveFileId, documentRecord.thumbnailUrl)
-  } catch (error) {
-    if (documentRecord.fileType === 'image') {
-      return getDriveFileContent(accessToken, documentRecord.driveFileId)
+  useEffect(() => {
+    if (!position) return undefined
+    const handlePointer = (event: globalThis.MouseEvent) => {
+      const target = event.target as Node
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close()
     }
-    if (documentRecord.fileType === 'pdf') {
-      const pdfBlob = await getDriveFileContent(accessToken, documentRecord.driveFileId)
-      return renderPdfFirstPageThumbnail(pdfBlob)
-    }
-    throw error
-  }
-}
-
-async function renderPdfFirstPageThumbnail(pdfBlob: Blob) {
-  const pdfjs = await import('pdfjs-dist')
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
-
-  const pdf = await pdfjs.getDocument({ data: await pdfBlob.arrayBuffer() }).promise
-  try {
-    const page = await pdf.getPage(1)
-    const baseViewport = page.getViewport({ scale: 1 })
-    const scale = Math.min(1, 420 / baseViewport.width)
-    const viewport = page.getViewport({ scale })
-    const canvas = document.createElement('canvas')
-    const canvasContext = canvas.getContext('2d')
-    if (!canvasContext) throw new Error('Could not render PDF preview.')
-
-    canvas.width = Math.ceil(viewport.width)
-    canvas.height = Math.ceil(viewport.height)
-    await page.render({ canvas, canvasContext, viewport }).promise
-
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(blob)
-        } else {
-          reject(new Error('Could not create PDF preview image.'))
-        }
-      }, 'image/png')
-    })
-  } finally {
-    await pdf.cleanup()
-  }
-}
-
-function storeThumbnailObjectUrl(fileId: string, objectUrl: string) {
-  if (thumbnailCache.size >= THUMBNAIL_CACHE_MAX) {
-    let oldestKey = ''
-    let oldestTime = Infinity
-    for (const [key, entry] of thumbnailCache) {
-      if (entry.accessedAt < oldestTime) {
-        oldestKey = key
-        oldestTime = entry.accessedAt
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        close()
+        triggerRef.current?.focus()
       }
     }
-    const oldest = thumbnailCache.get(oldestKey)
-    if (oldest) {
-      URL.revokeObjectURL(oldest.objectUrl)
-      thumbnailCache.delete(oldestKey)
+    document.addEventListener('mousedown', handlePointer, true)
+    document.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    document.addEventListener('keydown', handleKey)
+    menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    return () => {
+      document.removeEventListener('mousedown', handlePointer, true)
+      document.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+      document.removeEventListener('keydown', handleKey)
     }
+  }, [position, close])
+
+  const run = (action: () => void) => (event: MouseEvent) => {
+    event.stopPropagation()
+    close()
+    action()
   }
 
-  thumbnailCache.set(fileId, { objectUrl, accessedAt: Date.now() })
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="icon-button item-menu-trigger"
+        onClick={(event) => {
+          event.stopPropagation()
+          if (position) close()
+          else place()
+        }}
+        aria-label={`Actions for ${documentRecord.name}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(position)}
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </button>
+      {position
+        ? createPortal(
+            <div ref={menuRef} className="menu" role="menu" style={{ top: position.top, left: position.left }}>
+              {inTrash ? (
+                <>
+                  {actions.onRestore ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onRestore?.(documentRecord))}>
+                      <RotateCcw aria-hidden="true" />
+                      <span>Restore</span>
+                    </button>
+                  ) : null}
+                  {actions.onPermanentDelete ? (
+                    <>
+                      <div className="menu-divider" />
+                      <button type="button" role="menuitem" className="is-danger" onClick={run(() => actions.onPermanentDelete?.(documentRecord))}>
+                        <X aria-hidden="true" />
+                        <span>Delete permanently</span>
+                      </button>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <button type="button" role="menuitem" onClick={run(open)}>
+                    <Eye aria-hidden="true" />
+                    <span>{isFolder ? 'Open' : 'Preview'}</span>
+                  </button>
+                  {!isFolder ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onDownload(documentRecord))}>
+                      <Download aria-hidden="true" />
+                      <span>Download</span>
+                    </button>
+                  ) : null}
+                  <button type="button" role="menuitem" onClick={run(() => actions.onRename(documentRecord))}>
+                    <Pencil aria-hidden="true" />
+                    <span>Rename</span>
+                  </button>
+                  {!isFolder && actions.onEditDetails ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onEditDetails?.(documentRecord))}>
+                      <Tag aria-hidden="true" />
+                      <span>Edit details</span>
+                    </button>
+                  ) : null}
+                  {!isFolder && actions.onCopy ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onCopy?.(documentRecord))}>
+                      <Copy aria-hidden="true" />
+                      <span>Make a copy</span>
+                    </button>
+                  ) : null}
+                  {!isFolder && actions.onVersions ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onVersions?.(documentRecord))}>
+                      <History aria-hidden="true" />
+                      <span>Version history</span>
+                    </button>
+                  ) : null}
+                  {actions.onMove ? (
+                    <button type="button" role="menuitem" onClick={run(() => actions.onMove?.(documentRecord))}>
+                      <FolderInput aria-hidden="true" />
+                      <span>Move to folder</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={documentRecord.isFavorite ? 'is-active' : undefined}
+                    onClick={run(() => actions.onFavorite(documentRecord))}
+                  >
+                    <Star aria-hidden="true" />
+                    <span>{documentRecord.isFavorite ? 'Remove from favorites' : 'Add to favorites'}</span>
+                  </button>
+                  <div className="menu-divider" />
+                  <button type="button" role="menuitem" className="is-danger" onClick={run(() => actions.onTrash(documentRecord))}>
+                    <Trash2 aria-hidden="true" />
+                    <span>Move to Trash</span>
+                  </button>
+                </>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  )
+}
+
+function driveThumbnailUrl(documentRecord: VaultDocument, size: number) {
+  if (documentRecord.thumbnailUrl) return documentRecord.thumbnailUrl.replace(/=s\d+/, `=s${size}`)
+  if (documentRecord.driveFileId) return `https://lh3.googleusercontent.com/d/${documentRecord.driveFileId}=s${size}`
+  return null
+}
+
+export function DocumentThumbnail({ documentRecord, accessToken }: { documentRecord: VaultDocument; accessToken?: string | null }) {
+  const [failedFileId, setFailedFileId] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ fileId: string; objectUrl: string | null } | null>(null)
+  const fileId = documentRecord.driveFileId
+  const version = documentRecord.version ?? 1
+  const previewKey = `${fileId}@${version}`
+  const cdnUrl = useMemo(() => driveThumbnailUrl(documentRecord, 600), [documentRecord])
+  const canLoadAuthenticated = Boolean(accessToken && fileId) && documentRecord.fileType !== 'folder'
+  const activePreview = preview?.fileId === previewKey ? preview : null
+
+  useEffect(() => {
+    if (!canLoadAuthenticated || !accessToken) return undefined
+    let cancelled = false
+    loadThumbnailObjectUrl(accessToken, { driveFileId: fileId, fileType: documentRecord.fileType, thumbnailUrl: documentRecord.thumbnailUrl, version })
+      .then((objectUrl) => {
+        if (!cancelled) setPreview({ fileId: previewKey, objectUrl })
+      })
+      .catch(() => {
+        if (!cancelled) setPreview({ fileId: previewKey, objectUrl: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, canLoadAuthenticated, fileId, previewKey, version, documentRecord.fileType, documentRecord.thumbnailUrl])
+
+  if (activePreview?.objectUrl) {
+    return <img className="doc-thumb" src={activePreview.objectUrl} alt="" decoding="async" />
+  }
+
+  if (cdnUrl && failedFileId !== fileId) {
+    return (
+      <img
+        className="doc-thumb"
+        src={cdnUrl}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setFailedFileId(fileId)}
+      />
+    )
+  }
+
+  return (
+    <span className={`doc-thumb-fallback kind-bg--${documentRecord.fileType}`}>
+      <DocumentIcon kind={documentRecord.fileType} size={30} />
+    </span>
+  )
+}
+
+function SmallThumbnail({ documentRecord }: { documentRecord: VaultDocument }) {
+  const [failed, setFailed] = useState(false)
+  const url = documentRecord.fileType === 'image' && !failed ? driveThumbnailUrl(documentRecord, 96) : null
+
+  if (url) {
+    return (
+      <span className="small-thumb">
+        <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      </span>
+    )
+  }
+  return <DocumentIcon kind={documentRecord.fileType} size={18} />
 }

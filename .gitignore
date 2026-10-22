@@ -25,3 +25,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Companion test folders
+companion/.test-sandbox
+
+# Firebase emulator logs
+*-debug.log

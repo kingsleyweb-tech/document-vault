@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { HashRouter, Navigate, Route, Routes, useMatch } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Navigate, Route, Routes, useMatch } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, FolderPlus, HardDrive, Info, Pencil, Tag, Trash2, Upload, X } from 'lucide-react'
 import { UploadDialog } from './components/documents/UploadDialog'
 import { AppLayout } from './components/layout/AppLayout'
 import { DashboardView } from './components/dashboard/DashboardView'
@@ -9,18 +10,25 @@ import { useDocuments, collectDescendantFolderIds } from './hooks/useDocuments'
 import { UploadQueueProvider, useUploadQueue } from './hooks/useUploadQueue'
 import { DeleteQueueProvider, useDeleteQueue } from './hooks/useDeleteQueue'
 import { Categories } from './pages/Categories'
-import { Login } from './pages/Login'
 import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
 import { AllFiles } from './pages/AllFiles'
 import { AllFolders } from './pages/AllFolders'
+import { DesktopFiles } from './pages/DesktopFiles'
 import { FolderTreePicker } from './components/documents/FolderTreePicker'
+import { TagEditor } from './components/documents/TagEditor'
+import { VersionHistoryDialog } from './components/documents/VersionHistoryDialog'
+import type { ItemActions } from './components/documents/DocumentCard'
+import type { BulkActions } from './components/documents/DocumentCollection'
+import { Dialog } from './components/ui/Dialog'
+import { partitionLibrary } from './utils/trash'
 import { ProtectedRoute } from './routes/ProtectedRoute'
 import { logout, reconnectGoogleDrive, clearDriveAccessToken } from './services/auth'
 import { downloadDriveFile, isDriveAuthorizationError } from './services/googleDrive'
-import { buildDownloadName } from './services/documentViewer'
+import { buildDownloadName, ensureCacheMatchesVersion, getPreviewKind } from './services/documentViewer'
+import { hasStoredOriginal } from './services/offlineStore'
+import { notifyDriveAccessChanged, startPreviewQueue, syncLibrary } from './services/previewQueue'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
-import './App.css'
 
 const categories: DocumentCategory[] = [
   'Personal',
@@ -32,16 +40,15 @@ const categories: DocumentCategory[] = [
   'Other',
 ]
 
+// Rendered inside the workspace router (basename /app); sign-in lives on the
+// public site at /login.
 function App() {
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route element={<ProtectedRoute />}>
-          <Route path="/*" element={<AuthenticatedVault />} />
-        </Route>
-      </Routes>
-    </HashRouter>
+    <Routes>
+      <Route element={<ProtectedRoute />}>
+        <Route path="/*" element={<AuthenticatedVault />} />
+      </Route>
+    </Routes>
   )
 }
 
@@ -56,8 +63,21 @@ function AuthenticatedVault() {
 function AuthenticatedVaultInner() {
   const { user, driveAccessToken } = useAuth()
   const accessToken = driveAccessToken
-  const { documents, loading, error, actions } = useDocuments(user, accessToken)
+  const { documents, loading, libraryComplete, error, actions } = useDocuments(user, accessToken)
   const { enqueueDelete } = useDeleteQueue()
+
+  // Background preparation of previews on this device (services/previewQueue.ts).
+  const accessTokenRef = useRef(accessToken)
+  useEffect(() => {
+    accessTokenRef.current = accessToken
+    notifyDriveAccessChanged()
+  }, [accessToken])
+  useEffect(() => {
+    if (user) void startPreviewQueue({ getAccessToken: () => accessTokenRef.current })
+  }, [user])
+  useEffect(() => {
+    if (user && !loading) syncLibrary(documents, { complete: libraryComplete })
+  }, [user, documents, loading, libraryComplete])
 
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -82,6 +102,8 @@ function AuthenticatedVaultInner() {
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameTarget, setRenameTarget] = useState<VaultDocument | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [detailsTarget, setDetailsTarget] = useState<{ record: VaultDocument; category: DocumentCategory; description: string; tags: string[] } | null>(null)
+  const [versionsTargetId, setVersionsTargetId] = useState<string | null>(null)
 
   const [folderModalOpen, setFolderModalOpen] = useState(false)
   const [folderNameValue, setFolderNameValue] = useState('')
@@ -172,27 +194,10 @@ function AuthenticatedVaultInner() {
     localStorage.setItem('documentVault.theme', themeMode)
   }, [themeMode])
 
-  const activeDocuments = useMemo(
-    () => documents.filter((documentRecord) => !documentRecord.isDeleted),
-    [documents],
-  )
-  const trashDocuments = useMemo(
-    () => documents.filter((documentRecord) => documentRecord.isDeleted),
-    [documents],
-  )
-  const favoriteDocuments = useMemo(
-    () => activeDocuments.filter((documentRecord) => documentRecord.isFavorite),
-    [activeDocuments],
-  )
-  const recentDocuments = useMemo(
-    () =>
-      [...activeDocuments].sort((first, second) => {
-        const firstDate = first.lastViewedAt ?? first.updatedAt ?? first.uploadedAt
-        const secondDate = second.lastViewedAt ?? second.updatedAt ?? second.uploadedAt
-        return secondDate.toMillis() - firstDate.toMillis()
-      }),
-    [activeDocuments],
-  )
+  const { active: activeDocuments, trash: trashDocuments } = useMemo(() => partitionLibrary(documents), [documents])
+  const allTags = useMemo(() => [...new Set(documents.flatMap((record) => record.tags ?? []))].sort(), [documents])
+  // Looked up live, so the dialog always sees the record's current version number.
+  const versionsTarget = useMemo(() => documents.find((record) => record.id === versionsTargetId) ?? null, [documents, versionsTargetId])
 
   if (!user) {
     return null
@@ -234,6 +239,7 @@ function AuthenticatedVaultInner() {
   async function downloadDocument(documentRecord: VaultDocument) {
     await withFriendlyErrors(async () => {
       const token = await ensureAccessToken()
+      await ensureCacheMatchesVersion(documentRecord)
       const blob = await downloadDriveFile(token, documentRecord.driveFileId, documentRecord.mimeType)
       const link = document.createElement('a')
       const url = URL.createObjectURL(blob)
@@ -290,6 +296,7 @@ function AuthenticatedVaultInner() {
     for (const file of filesToDownload) {
       try {
         const token = await ensureAccessToken()
+        await ensureCacheMatchesVersion(file)
         const blob = await downloadDriveFile(token, file.driveFileId, file.mimeType)
         const link = document.createElement('a')
         const url = URL.createObjectURL(blob)
@@ -330,57 +337,196 @@ function AuthenticatedVaultInner() {
     setBulkPermanentDeleteItems([])
   }
 
-  const commonPageProps = {
+  const openDocument = (documentRecord: VaultDocument) => {
+    // The viewer opens at once. It shows cached copies without Drive and asks
+    // to reconnect otherwise. Recording the view is a Firestore write that
+    // waits for the network, so it must not hold the document back.
+    setViewerDocument(documentRecord)
+    void actions.viewed(documentRecord).catch((error: unknown) => console.warn('Could not record the view:', error))
+    // Without a Drive token, a document not stored on this device cannot open.
+    // Renewing here, inside the click, lets the browser allow Google's window;
+    // with access already granted it closes by itself without questions. The
+    // viewer reloads when the token arrives.
+    if (
+      !accessToken &&
+      navigator.onLine &&
+      documentRecord.driveFileId &&
+      !hasStoredOriginal(documentRecord.driveFileId) &&
+      getPreviewKind(documentRecord) !== 'embed'
+    ) {
+      void reconnectGoogleDrive().catch((error: unknown) => {
+        // Closed or blocked: the viewer offers "Reconnect Google Drive".
+        console.warn('Google Drive was not reconnected:', error)
+      })
+    }
+  }
+
+  const restoreDocuments = (items: VaultDocument[]) => {
+    if (items.length === 0) return
+    void withFriendlyErrors(
+      async () => {
+        await ensureAccessToken()
+        for (const item of items) {
+          await actions.restore(item)
+        }
+        addToast(items.length === 1 ? `Restored "${items[0].name}".` : `Restored ${items.length} items.`, 'success')
+      },
+      items.length === 1 ? 'Restoring...' : `Restoring ${items.length} items...`,
+    )
+  }
+
+  const itemActions: ItemActions = {
+    onView: openDocument,
+    onDownload: (documentRecord) => void downloadDocument(documentRecord),
+    onRename: renameDocument,
+    onFavorite: (documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord)),
+    onTrash: (documentRecord) => {
+      setConfirmTrashTarget(documentRecord)
+      setConfirmTrashOpen(true)
+    },
+    onMove: (documentRecord) => {
+      setIndividualMoveTarget(documentRecord)
+      setIndividualMoveOpen(true)
+    },
+    onEditDetails: (documentRecord) =>
+      setDetailsTarget({
+        record: documentRecord,
+        category: documentRecord.category,
+        description: documentRecord.description ?? '',
+        tags: documentRecord.tags ?? [],
+      }),
+    onCopy: (documentRecord) =>
+      void withFriendlyErrors(async () => {
+        await ensureAccessToken()
+        const copyName = await actions.copy(documentRecord)
+        addToast(`Made a copy: "${copyName}".`, 'success')
+      }, 'Copying...'),
+    onVersions: (documentRecord) => setVersionsTargetId(documentRecord.id),
+    onRestore: (documentRecord) => restoreDocuments([documentRecord]),
+    onPermanentDelete: (documentRecord) => {
+      setConfirmDeleteTarget(documentRecord)
+      setConfirmDeleteOpen(true)
+    },
+  }
+
+  const bulkActions: BulkActions = {
+    onBulkTrash: handleBulkTrash,
+    onBulkMove: handleBulkMove,
+    onBulkFavorite: (items) => void handleBulkFavorite(items),
+    onBulkDownload: (items) => void handleBulkDownload(items),
+    onBulkRestore: restoreDocuments,
+    onBulkPermanentDelete: handleBulkPermanentDelete,
+  }
+
+  const libraryProps = {
+    documents: activeDocuments,
+    allDocuments: documents,
+    accessToken,
     loading,
     error: operationError ?? error,
-    accessToken,
     search,
     viewMode,
     sortMode,
     category,
     categories,
-    currentUser: user,
     onViewModeChange: setViewMode,
     onSortModeChange: setSortMode,
     onCategoryChange: setCategory,
+    actions: itemActions,
+    bulk: bulkActions,
     onUploadClick: handleUploadClick,
-    onView: (documentRecord: VaultDocument) => {
-      void withFriendlyErrors(async () => {
-        await ensureAccessToken()
-        await actions.viewed(documentRecord)
-        setViewerDocument(documentRecord)
-      })
-    },
-    onDownload: (documentRecord: VaultDocument) => void downloadDocument(documentRecord),
-    onRename: renameDocument,
     onCreateFolder: createNewFolder,
-    currentFolderId,
-    folderPath,
-    onFavorite: (documentRecord: VaultDocument) =>
-      void withFriendlyErrors(() => actions.toggleFavorite(documentRecord)),
-    onTrash: (documentRecord: VaultDocument) => {
-      setConfirmTrashTarget(documentRecord)
-      setConfirmTrashOpen(true)
-    },
-    onRestore: (documentRecord: VaultDocument) =>
+  }
+
+  const moveBlockedIds = (items: VaultDocument[]) => {
+    const blocked = new Set<string>()
+    for (const item of items) {
+      if (item.fileType !== 'folder') continue
+      blocked.add(item.id)
+      collectDescendantFolderIds(documents, item.id).forEach((id) => blocked.add(id))
+    }
+    return blocked
+  }
+
+  const closeRename = () => setRenameOpen(false)
+  const submitRename = () => {
+    const nextName = renameValue.trim()
+    if (renameTarget && nextName && nextName !== renameTarget.name) {
+      const target = renameTarget
       void withFriendlyErrors(async () => {
         await ensureAccessToken()
-        await actions.restore(documentRecord)
-      }),
-    onPermanentDelete: (documentRecord: VaultDocument) => {
-      setConfirmDeleteTarget(documentRecord)
-      setConfirmDeleteOpen(true)
-    },
-    onMove: (documentRecord: VaultDocument) => {
-      setIndividualMoveTarget(documentRecord)
-      setIndividualMoveOpen(true)
-    },
-    onBulkTrash: handleBulkTrash,
-    onBulkMove: handleBulkMove,
-    onBulkFavorite: handleBulkFavorite,
-    onBulkDownload: handleBulkDownload,
-    onBulkPermanentDelete: handleBulkPermanentDelete,
+        await actions.rename(target, nextName)
+      })
+    }
+    setRenameOpen(false)
   }
+
+  const submitDetails = () => {
+    const target = detailsTarget
+    setDetailsTarget(null)
+    if (!target) return
+    const description = target.description.trim().slice(0, 4000)
+    const tagsChanged = target.tags.join() !== (target.record.tags ?? []).join()
+    if (target.category === target.record.category && description === (target.record.description ?? '') && !tagsChanged) return
+    void withFriendlyErrors(async () => {
+      await actions.updateDetails(target.record, { category: target.category, description, tags: target.tags })
+      addToast(`Saved details for "${target.record.name}".`, 'success')
+    })
+  }
+
+  const submitNewFolder = () => {
+    const name = folderNameValue.trim()
+    if (name) {
+      void withFriendlyErrors(async () => {
+        await ensureAccessToken()
+        await actions.createFolder(name, currentFolderId)
+        addToast(`Created folder "${name}".`, 'success')
+      })
+    }
+    setFolderModalOpen(false)
+  }
+
+  const submitNewFolderUpload = () => {
+    const name = uploadNewFolderName.trim()
+    if (!name) return
+    void withFriendlyErrors(async () => {
+      await ensureAccessToken()
+      const newFolderId = await actions.createFolder(name, currentFolderId)
+      setUploadDestinationFolderId(newFolderId)
+      setUploadNewFolderName('')
+      setNewFolderUploadOpen(false)
+      setUploadOpen(true)
+    })
+  }
+
+  const confirmTrash = () => {
+    if (confirmTrashTarget) {
+      void enqueueDelete([confirmTrashTarget], 'trash', accessToken, documents)
+      addToast(`Moving "${confirmTrashTarget.name}" to Trash...`, 'info')
+    }
+    setConfirmTrashOpen(false)
+    setConfirmTrashTarget(null)
+  }
+
+  const confirmPermanentDelete = () => {
+    if (confirmDeleteTarget) {
+      void enqueueDelete([confirmDeleteTarget], 'permanent', accessToken, documents)
+      addToast(`Deleting "${confirmDeleteTarget.name}" permanently...`, 'info')
+    }
+    setConfirmDeleteOpen(false)
+    setConfirmDeleteTarget(null)
+  }
+
+  const confirmBulkTrash = () => {
+    if (bulkTrashItems.length > 0) {
+      void enqueueDelete(bulkTrashItems, 'trash', accessToken, documents)
+      addToast(`Moving ${bulkTrashItems.length} items to Trash...`, 'info')
+    }
+    setBulkTrashOpen(false)
+    setBulkTrashItems([])
+  }
+
+  const isEmptyingTrash = bulkPermanentDeleteItems.length > 0 && bulkPermanentDeleteItems.length === trashDocuments.length
 
   return (
     <UploadQueueProvider user={user} accessToken={accessToken} documents={documents}>
@@ -394,9 +540,9 @@ function AuthenticatedVaultInner() {
       />
       <AppLayout
         user={user}
-        documents={documents}
+        trashCount={trashDocuments.length}
         search={search}
-        searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search all documents'}
+        searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search your vault'}
         onSearchChange={setSearch}
         onUploadClick={handleUploadClick}
         onUploadProgressClick={handleUploadProgressClick}
@@ -407,577 +553,456 @@ function AuthenticatedVaultInner() {
         themeMode={themeMode}
         onThemeModeChange={setThemeMode}
       >
-      <Routes>
-        <Route
-          index
-          element={
-            <DashboardView
-              user={user}
-              documents={activeDocuments}
-              driveConnected={Boolean(accessToken)}
-              onUploadClick={handleUploadClick}
-              onCreateFolder={createNewFolder}
-              onSearchFocus={() => {
-                const searchInput = document.querySelector<HTMLInputElement>('.search-box input')
-                searchInput?.focus()
-              }}
-              onView={commonPageProps.onView}
-              onDownload={commonPageProps.onDownload}
-              onRename={commonPageProps.onRename}
-              onFavorite={commonPageProps.onFavorite}
-              onTrash={commonPageProps.onTrash}
-              onMove={commonPageProps.onMove}
-              onReconnectDrive={() => void reconnectDrive()}
-            />
-          }
-        />
-        <Route
-          path="files"
-          element={
-            <AllFiles
-              {...commonPageProps}
-              documents={activeDocuments}
-              onBulkTrash={handleBulkTrash}
-              onBulkMove={handleBulkMove}
-              onBulkFavorite={handleBulkFavorite}
-              onBulkDownload={handleBulkDownload}
-            />
-          }
-        />
-        <Route
-          path="folders"
-          element={
-            <AllFolders
-              {...commonPageProps}
-              documents={activeDocuments}
-              onBulkTrash={handleBulkTrash}
-              onBulkMove={handleBulkMove}
-              onBulkFavorite={handleBulkFavorite}
-              onBulkDownload={handleBulkDownload}
-            />
-          }
-        />
-        <Route
-          path="folders/:folderId"
-          element={
-            <VaultPage
-              {...commonPageProps}
-              title={currentFolder?.name ?? 'Folder'}
-              description="Review and manage files stored inside this folder."
-              documents={activeDocuments}
-              emptyTitle="This folder is empty."
-              emptyMessage="Upload documents or create subfolders to organize your files."
-            />
-          }
-        />
-        <Route
-          path="recent"
-          element={
-            <VaultPage
-              {...commonPageProps}
-              title="Recent"
-              description="Documents you uploaded, viewed, or changed most recently."
-              documents={recentDocuments}
-              emptyTitle="No recent documents yet."
-              emptyMessage="Viewed and updated documents will appear here."
-              documentOnly
-            />
-          }
-        />
-        <Route
-          path="favorites"
-          element={
-            <VaultPage
-              {...commonPageProps}
-              title="Favorites"
-              description="Keep your most-used documents within easy reach."
-              documents={favoriteDocuments}
-              emptyTitle="No favorite documents yet."
-              emptyMessage="Mark important documents as favorites to find them quickly."
-              documentOnly
-            />
-          }
-        />
-        <Route
-          path="categories"
-          element={
-            <Categories
-              categories={categories}
-              documents={activeDocuments}
-              onView={(doc) => {
-                void withFriendlyErrors(async () => {
-                  await ensureAccessToken()
-                  await actions.viewed(doc)
-                  setViewerDocument(doc)
-                })
-              }}
-              onDownload={(doc) => void downloadDocument(doc)}
-              onRename={renameDocument}
-              onFavorite={(doc) => void withFriendlyErrors(() => actions.toggleFavorite(doc))}
-              onTrash={(doc) => {
-                setConfirmTrashTarget(doc)
-                setConfirmTrashOpen(true)
-              }}
-            />
-          }
-        />
-        <Route
-          path="trash"
-          element={
-            <VaultPage
-              {...commonPageProps}
-              title="Trash"
-              description="Restore documents or permanently remove them from Drive and your vault."
-              documents={trashDocuments}
-              emptyTitle="Your trash is empty."
-              emptyMessage="Deleted documents will appear here before permanent removal."
-              inTrash
-            />
-          }
-        />
-        <Route
-          path="settings"
-          element={
-            <Settings
-              themeMode={themeMode}
-              viewMode={viewMode}
-              sortMode={sortMode}
-              category={category}
-              categories={categories}
-              onThemeModeChange={setThemeMode}
-              onViewModeChange={setViewMode}
-              onSortModeChange={setSortMode}
-              onCategoryChange={setCategory}
-              onSearchClear={() => setSearch('')}
-              onUploadClick={handleUploadClick}
-            />
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        <Routes>
+          <Route
+            index
+            element={
+              <DashboardView
+                user={user}
+                documents={activeDocuments}
+                allDocuments={documents}
+                trashCount={trashDocuments.length}
+                loading={loading}
+                error={operationError ?? error}
+                accessToken={accessToken}
+                driveConnected={Boolean(accessToken)}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                actions={itemActions}
+                bulk={bulkActions}
+                onUploadClick={handleUploadClick}
+                onUploadProgressClick={handleUploadProgressClick}
+                onCreateFolder={createNewFolder}
+                onSearchFocus={() => document.querySelector<HTMLInputElement>('.topbar__search input')?.focus()}
+                onReconnectDrive={() => void reconnectDrive()}
+              />
+            }
+          />
+          <Route path="files" element={<AllFiles {...libraryProps} />} />
+          <Route path="folders" element={<AllFolders {...libraryProps} />} />
+          <Route
+            path="folders/:folderId"
+            element={<VaultPage {...libraryProps} variant="folder" currentFolderId={currentFolderId} folderPath={folderPath} />}
+          />
+          <Route path="recent" element={<VaultPage {...libraryProps} variant="recent" />} />
+          <Route path="favorites" element={<VaultPage {...libraryProps} variant="favorites" />} />
+          <Route path="categories" element={<Categories {...libraryProps} />} />
+          <Route
+            path="desktop"
+            element={<DesktopFiles documents={activeDocuments} allDocuments={documents} search={search} onOpenDocument={openDocument} />}
+          />
+          <Route
+            path="trash"
+            element={
+              <VaultPage
+                {...libraryProps}
+                variant="trash"
+                documents={trashDocuments}
+                onEmptyTrash={() => handleBulkPermanentDelete(trashDocuments)}
+              />
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <Settings
+                themeMode={themeMode}
+                viewMode={viewMode}
+                sortMode={sortMode}
+                category={category}
+                categories={categories}
+                onThemeModeChange={setThemeMode}
+                onViewModeChange={setViewMode}
+                onSortModeChange={setSortMode}
+                onCategoryChange={setCategory}
+                onSearchClear={() => setSearch('')}
+                onUploadClick={handleUploadClick}
+              />
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
 
-      <UploadDialog
-        open={uploadOpen}
-        categories={categories}
-        folderName={uploadDestinationFolder?.name || currentFolder?.name}
-        destinationFolderId={uploadDestinationFolderId}
-        onClose={() => setUploadOpen(false)}
-      />
+        <UploadDialog
+          open={uploadOpen}
+          categories={categories}
+          folderName={uploadDestinationFolder?.name || currentFolder?.name}
+          destinationFolderId={uploadDestinationFolderId}
+          onClose={() => setUploadOpen(false)}
+        />
 
-      <DocumentViewer
-        documentRecord={viewerDocument}
-        documents={activeDocuments}
-        accessToken={accessToken}
-        onClose={() => setViewerDocument(null)}
-        onDownload={(documentRecord) => void downloadDocument(documentRecord)}
-        onOpenDocument={(documentRecord) => {
-          void withFriendlyErrors(async () => {
-            await ensureAccessToken()
-            await actions.viewed(documentRecord)
-            setViewerDocument(documentRecord)
-          })
-        }}
-        onFavorite={(documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord))}
-        onReauthRequired={() => {
-          clearDriveAccessToken()
-          setShowDriveAuthModal(true)
-        }}
-      />
+        <DocumentViewer
+          documentRecord={viewerDocument}
+          documents={activeDocuments}
+          accessToken={accessToken}
+          onClose={() => setViewerDocument(null)}
+          onDownload={(documentRecord) => void downloadDocument(documentRecord)}
+          onOpenDocument={openDocument}
+          onFavorite={(documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord))}
+          onReauthRequired={() => {
+            clearDriveAccessToken()
+            setShowDriveAuthModal(true)
+          }}
+        />
 
-      {renameOpen && renameTarget && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">
-            <header>
-              <h2 id="rename-title">Rename {renameTarget.fileType === 'folder' ? 'Folder' : 'Document'}</h2>
-            </header>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                const nextName = renameValue.trim()
-                if (nextName && nextName !== renameTarget.name) {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    await actions.rename(renameTarget, nextName)
-                  })
-                }
-                setRenameOpen(false)
-              }}
+        <Dialog
+          open={renameOpen && Boolean(renameTarget)}
+          title={`Rename ${renameTarget?.fileType === 'folder' ? 'folder' : 'file'}`}
+          icon={<Pencil aria-hidden="true" />}
+          onClose={closeRename}
+          onSubmit={submitRename}
+          footer={
+            <>
+              <button type="button" className="secondary-button" onClick={closeRename}>
+                Cancel
+              </button>
+              <button type="submit" className="primary-button" disabled={!renameValue.trim()}>
+                Save
+              </button>
+            </>
+          }
+        >
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            placeholder="New name"
+            className="dialog-input"
+            aria-label="New name"
+          />
+        </Dialog>
+
+        <Dialog
+          open={Boolean(detailsTarget)}
+          title="Edit details"
+          description={detailsTarget?.record.name}
+          icon={<Tag aria-hidden="true" />}
+          onClose={() => setDetailsTarget(null)}
+          onSubmit={submitDetails}
+          footer={
+            <>
+              <button type="button" className="secondary-button" onClick={() => setDetailsTarget(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary-button">
+                Save
+              </button>
+            </>
+          }
+        >
+          <label className="field">
+            <span>Category</span>
+            <select
+              value={detailsTarget?.category ?? 'Other'}
+              onChange={(event) => setDetailsTarget((current) => current && { ...current, category: event.target.value as DocumentCategory })}
             >
-              <div className="dialog-body">
-                <input
-                  type="text"
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  placeholder="Enter new name"
-                  className="dialog-input"
-                  aria-label="New name"
-                  autoFocus
-                />
-              </div>
-              <footer>
-                <button type="button" className="secondary-button" onClick={() => setRenameOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary-button" disabled={!renameValue.trim()}>
-                  Save
-                </button>
-              </footer>
-            </form>
-          </section>
-        </div>
-      )}
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Description</span>
+            <textarea
+              className="dialog-input dialog-textarea"
+              rows={4}
+              maxLength={4000}
+              value={detailsTarget?.description ?? ''}
+              onChange={(event) => setDetailsTarget((current) => current && { ...current, description: event.target.value })}
+              placeholder="Notes that help you find this document later"
+            />
+          </label>
+          <div className="field">
+            <span>Tags</span>
+            <TagEditor
+              tags={detailsTarget?.tags ?? []}
+              suggestions={allTags}
+              onChange={(tags) => setDetailsTarget((current) => current && { ...current, tags })}
+            />
+            <small className="field-hint">Search for a tag by typing it with #, for example #tax.</small>
+          </div>
+        </Dialog>
 
-      {folderModalOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-title">
-            <header>
-              <h2 id="folder-title">New Folder</h2>
-            </header>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                const name = folderNameValue.trim()
-                if (name) {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    await actions.createFolder(name, currentFolderId)
-                  })
-                }
-                setFolderModalOpen(false)
-              }}
-            >
-              <div className="dialog-body">
-                <input
-                  type="text"
-                  value={folderNameValue}
-                  onChange={(e) => setFolderNameValue(e.target.value)}
-                  placeholder="Folder name"
-                  className="dialog-input"
-                  aria-label="Folder name"
-                  autoFocus
-                />
-              </div>
-              <footer>
-                <button type="button" className="secondary-button" onClick={() => setFolderModalOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary-button" disabled={!folderNameValue.trim()}>
-                  Create
-                </button>
-              </footer>
-            </form>
-          </section>
-        </div>
-      )}
-      {confirmTrashOpen && confirmTrashTarget && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-trash-title">
-            <header>
-              <h2 id="confirm-trash-title">Move to Trash?</h2>
-            </header>
-            <div className="dialog-body">
-              <p style={{ margin: '0 0 8px 0', color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
-                Are you sure you want to move <strong>{confirmTrashTarget.name}</strong> to the trash?
-                {confirmTrashTarget.fileType === 'folder' && ' All files and subfolders inside this folder will also be moved to the trash.'}
-              </p>
-            </div>
-            <footer>
+        <VersionHistoryDialog
+          documentRecord={versionsTarget}
+          actions={actions}
+          onClose={() => setVersionsTargetId(null)}
+          onNotify={addToast}
+          runTask={(task) => withFriendlyErrors(task)}
+        />
+
+        <Dialog
+          open={folderModalOpen}
+          title="New folder"
+          description={currentFolder ? `Inside ${currentFolder.name}` : 'At the top level of My Vault'}
+          icon={<FolderPlus aria-hidden="true" />}
+          onClose={() => setFolderModalOpen(false)}
+          onSubmit={submitNewFolder}
+          footer={
+            <>
+              <button type="button" className="secondary-button" onClick={() => setFolderModalOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary-button" disabled={!folderNameValue.trim()}>
+                Create
+              </button>
+            </>
+          }
+        >
+          <input
+            type="text"
+            value={folderNameValue}
+            onChange={(event) => setFolderNameValue(event.target.value)}
+            placeholder="Folder name"
+            className="dialog-input"
+            aria-label="Folder name"
+          />
+        </Dialog>
+
+        <Dialog
+          open={confirmTrashOpen && Boolean(confirmTrashTarget)}
+          title="Move to Trash?"
+          tone="danger"
+          icon={<Trash2 aria-hidden="true" />}
+          onClose={() => setConfirmTrashOpen(false)}
+          footer={
+            <>
               <button type="button" className="secondary-button" onClick={() => setConfirmTrashOpen(false)}>
                 Cancel
               </button>
-              <button
-                type="button"
-                className="primary-button danger-button"
-                onClick={() => {
-                  if (confirmTrashTarget) {
-                    void enqueueDelete([confirmTrashTarget], 'trash', accessToken, documents)
-                    addToast(`Moving "${confirmTrashTarget.name}" to trash...`, 'info')
-                  }
-                  setConfirmTrashOpen(false)
-                  setConfirmTrashTarget(null)
-                }}
-              >
+              <button type="button" className="danger-button" onClick={confirmTrash}>
                 Move to Trash
               </button>
-            </footer>
-          </section>
-        </div>
-      )}
+            </>
+          }
+        >
+          <p>
+            <strong>{confirmTrashTarget?.name}</strong> will move to Trash
+            {confirmTrashTarget?.fileType === 'folder' ? ' together with everything inside it' : ''}. You can restore it
+            from Trash at any time.
+          </p>
+        </Dialog>
 
-      {confirmDeleteOpen && confirmDeleteTarget && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-delete-title">
-            <header>
-              <h2 id="confirm-delete-title" style={{ color: '#d92d20' }}>Delete Permanently?</h2>
-            </header>
-            <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <p style={{ margin: 0, color: '#b42318', fontSize: '14px', fontWeight: 600 }}>
-                Warning: This action is irreversible and cannot be undone.
-              </p>
-              <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
-                Are you sure you want to permanently delete <strong>{confirmDeleteTarget.name}</strong> from Google Drive and your vault?
-                {confirmDeleteTarget.fileType === 'folder' && ' All nested files and subfolders inside this folder will be permanently deleted.'}
-              </p>
-            </div>
-            <footer>
+        <Dialog
+          open={confirmDeleteOpen && Boolean(confirmDeleteTarget)}
+          title="Delete permanently?"
+          tone="danger"
+          icon={<AlertTriangle aria-hidden="true" />}
+          onClose={() => setConfirmDeleteOpen(false)}
+          footer={
+            <>
               <button type="button" className="secondary-button" onClick={() => setConfirmDeleteOpen(false)}>
                 Cancel
               </button>
-              <button
-                type="button"
-                className="primary-button danger-button"
-                onClick={() => {
-                  if (confirmDeleteTarget) {
-                    void enqueueDelete([confirmDeleteTarget], 'permanent', accessToken, documents)
-                    addToast(`Deleting "${confirmDeleteTarget.name}" permanently...`, 'info')
-                  }
-                  setConfirmDeleteOpen(false)
-                  setConfirmDeleteTarget(null)
-                }}
-              >
-                Delete Permanently
+              <button type="button" className="danger-button" onClick={confirmPermanentDelete}>
+                Delete permanently
               </button>
-            </footer>
-          </section>
-        </div>
-      )}
-      {bulkPermanentDeleteOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-permanent-delete-title">
-            <header>
-              <h2 id="bulk-permanent-delete-title">Permanently Delete Selected Items?</h2>
-            </header>
-            <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <p style={{ margin: 0, color: '#b42318', fontSize: '14px', fontWeight: 600 }}>
-                Warning: This action is irreversible and cannot be undone.
-              </p>
-              <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>
-                Permanently delete <strong>{bulkPermanentDeleteItems.length} selected {bulkPermanentDeleteItems.length === 1 ? 'item' : 'items'}</strong> from Google Drive and your vault?
-                Selected folders include their nested files and subfolders.
-              </p>
-            </div>
-            <footer>
+            </>
+          }
+        >
+          <p>
+            <strong>{confirmDeleteTarget?.name}</strong>
+            {confirmDeleteTarget?.fileType === 'folder' ? ' and everything inside it' : ''} will be removed from your vault
+            and from Google Drive.
+          </p>
+          <p className="dialog-warning">This cannot be undone.</p>
+        </Dialog>
+
+        <Dialog
+          open={bulkPermanentDeleteOpen}
+          title={isEmptyingTrash ? 'Empty Trash?' : `Delete ${bulkPermanentDeleteItems.length} items permanently?`}
+          tone="danger"
+          icon={<AlertTriangle aria-hidden="true" />}
+          onClose={() => setBulkPermanentDeleteOpen(false)}
+          footer={
+            <>
               <button type="button" className="secondary-button" onClick={() => setBulkPermanentDeleteOpen(false)}>
                 Cancel
               </button>
-              <button
-                type="button"
-                className="primary-button danger-button"
-                onClick={() => {
-                  void permanentlyDeleteSelectedTrash()
-                }}
-              >
-                Delete Permanently
+              <button type="button" className="danger-button" onClick={permanentlyDeleteSelectedTrash}>
+                {isEmptyingTrash ? 'Empty Trash' : 'Delete permanently'}
               </button>
-            </footer>
-          </section>
-        </div>
-      )}
-      {uploadChoiceOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-choice-title">
-            <header>
-              <h2 id="upload-choice-title">Upload Documents</h2>
-            </header>
-            <div className="dialog-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <p style={{ margin: '0 0 4px 0', fontSize: '14px', lineHeight: '1.4' }}>
-                Where would you like to save these files?
-              </p>
-              <button
-                type="button"
-                className="choice-card-button"
-                onClick={() => {
-                  setUploadDestinationFolderId(currentFolderId)
-                  setUploadChoiceOpen(false)
-                  setUploadOpen(true)
-                }}
-              >
-                <strong>Upload to current location</strong>
-                <span>Files will be stored directly in the active folder view.</span>
-              </button>
-              <button
-                type="button"
-                className="choice-card-button"
-                onClick={() => {
-                  setUploadChoiceOpen(false)
-                  setNewFolderUploadOpen(true)
-                }}
-              >
-                <strong>Create new folder and upload</strong>
-                <span>Creates a new directory first, then places all files inside it.</span>
-              </button>
-            </div>
-            <footer>
-              <button type="button" className="secondary-button" onClick={() => setUploadChoiceOpen(false)}>
-                Cancel
-              </button>
-            </footer>
-          </section>
-        </div>
-      )}
+            </>
+          }
+        >
+          <p>
+            {bulkPermanentDeleteItems.length} {bulkPermanentDeleteItems.length === 1 ? 'item' : 'items'}, including the
+            contents of any folders, will be removed from your vault and from Google Drive.
+          </p>
+          <p className="dialog-warning">This cannot be undone.</p>
+        </Dialog>
 
-      {newFolderUploadOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="new-folder-upload-title">
-            <header>
-              <h2 id="new-folder-upload-title">Create Folder & Upload</h2>
-            </header>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                const name = uploadNewFolderName.trim()
-                if (name) {
-                  void withFriendlyErrors(async () => {
-                    await ensureAccessToken()
-                    const newFolderId = await actions.createFolder(name, currentFolderId)
-                    setUploadDestinationFolderId(newFolderId)
-                    setUploadNewFolderName('')
-                    setNewFolderUploadOpen(false)
-                    setUploadOpen(true)
-                  })
-                }
+        <Dialog
+          open={uploadChoiceOpen}
+          title="Upload"
+          description="Where should the new files go?"
+          icon={<Upload aria-hidden="true" />}
+          onClose={() => setUploadChoiceOpen(false)}
+          footer={
+            <button type="button" className="secondary-button" onClick={() => setUploadChoiceOpen(false)}>
+              Cancel
+            </button>
+          }
+        >
+          <div className="choice-list">
+            <button
+              type="button"
+              className="choice-card"
+              onClick={() => {
+                setUploadDestinationFolderId(currentFolderId)
+                setUploadChoiceOpen(false)
+                setUploadOpen(true)
               }}
             >
-              <div className="dialog-body">
-                <p style={{ margin: '0 0 12px 0', fontSize: '13px', lineHeight: '1.4' }}>
-                  Provide a name for the new folder. All uploaded files will be placed inside this directory.
-                </p>
-                <input
-                  type="text"
-                  value={uploadNewFolderName}
-                  onChange={(e) => setUploadNewFolderName(e.target.value)}
-                  placeholder="Folder name"
-                  className="dialog-input"
-                  aria-label="Folder name"
-                  autoFocus
-                />
-              </div>
-              <footer>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    setNewFolderUploadOpen(false)
-                    setUploadChoiceOpen(true)
-                  }}
-                >
-                  Back
-                </button>
-                <button type="submit" className="primary-button" disabled={!uploadNewFolderName.trim()}>
-                  Create & Upload
-                </button>
-              </footer>
-            </form>
-          </section>
-        </div>
-      )}
-      {operationLabel ? (
-        <div className="operation-overlay" role="status" aria-live="polite">
-          <div>
-            <span className="app-spinner" aria-hidden="true" />
-            <strong>{operationLabel}</strong>
+              <Upload aria-hidden="true" />
+              <span>
+                <strong>Upload to {currentFolder ? currentFolder.name : 'My Vault'}</strong>
+                <span>Files and folders are added to the location you are viewing.</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="choice-card"
+              onClick={() => {
+                setUploadChoiceOpen(false)
+                setNewFolderUploadOpen(true)
+              }}
+            >
+              <FolderPlus aria-hidden="true" />
+              <span>
+                <strong>Create a folder, then upload</strong>
+                <span>Name a new folder first and everything you upload goes inside it.</span>
+              </span>
+            </button>
           </div>
-        </div>
-      ) : null}
+        </Dialog>
 
-      {/* Reusable dialogs for individual/bulk moving and bulk trashing */}
-      {individualMoveOpen && individualMoveTarget && (
-        <FolderTreePicker
-          open={individualMoveOpen}
-          documents={documents}
-          title={`Move "${individualMoveTarget.name}"`}
-          disabledFolderIds={(() => {
-            const set = new Set<string>()
-            if (individualMoveTarget.fileType === 'folder') {
-              set.add(individualMoveTarget.id)
-              const descendants = collectDescendantFolderIds(documents, individualMoveTarget.id)
-              descendants.forEach(id => set.add(id))
-            }
-            return set
-          })()}
-          onClose={() => setIndividualMoveOpen(false)}
-          onMoveHere={(destId) => {
-            void withFriendlyErrors(async () => {
-              await ensureAccessToken()
-              await actions.moveItem(individualMoveTarget, destId)
-              addToast(`Moved "${individualMoveTarget.name}" successfully.`, 'success')
-            }, 'Moving item...')
-            setIndividualMoveOpen(false)
-          }}
-        />
-      )}
+        <Dialog
+          open={newFolderUploadOpen}
+          title="New folder for upload"
+          description="Everything you upload next goes into this folder."
+          icon={<FolderPlus aria-hidden="true" />}
+          onClose={() => setNewFolderUploadOpen(false)}
+          onSubmit={submitNewFolderUpload}
+          footer={
+            <>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setNewFolderUploadOpen(false)
+                  setUploadChoiceOpen(true)
+                }}
+              >
+                Back
+              </button>
+              <button type="submit" className="primary-button" disabled={!uploadNewFolderName.trim()}>
+                Create and upload
+              </button>
+            </>
+          }
+        >
+          <input
+            type="text"
+            value={uploadNewFolderName}
+            onChange={(event) => setUploadNewFolderName(event.target.value)}
+            placeholder="Folder name"
+            className="dialog-input"
+            aria-label="Folder name"
+          />
+        </Dialog>
 
-      {bulkMoveOpen && bulkMoveItems.length > 0 && (
-        <FolderTreePicker
-          open={bulkMoveOpen}
-          documents={documents}
-          title={`Move ${bulkMoveItems.length} items`}
-          disabledFolderIds={(() => {
-            const set = new Set<string>()
-            bulkMoveItems.forEach(item => {
-              if (item.fileType === 'folder') {
-                set.add(item.id)
-                const descendants = collectDescendantFolderIds(documents, item.id)
-                descendants.forEach(id => set.add(id))
-              }
-            })
-            return set
-          })()}
-          onClose={() => setBulkMoveOpen(false)}
-          onMoveHere={(destId) => {
-            void withFriendlyErrors(async () => {
-              await ensureAccessToken()
-              await actions.moveItems(bulkMoveItems, destId)
-              addToast(`Moved ${bulkMoveItems.length} items successfully.`, 'success')
-            }, 'Moving items...')
-            setBulkMoveOpen(false)
-          }}
-        />
-      )}
-
-      {bulkTrashOpen && bulkTrashItems.length > 0 && (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-trash-title">
-            <header>
-              <h2 id="bulk-trash-title">Move {bulkTrashItems.length} items to Trash?</h2>
-            </header>
-            <div className="dialog-body">
-              <p style={{ margin: '0 0 8px 0', color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
-                Are you sure you want to move <strong>{bulkTrashItems.length} selected items</strong> to the trash?
-                All nested files and subfolders inside selected folders will also be moved to the trash.
-              </p>
+        {operationLabel ? (
+          <div className="operation-overlay" role="status" aria-live="polite">
+            <div>
+              <span className="app-spinner" aria-hidden="true" />
+              <strong>{operationLabel}</strong>
             </div>
-            <footer>
+          </div>
+        ) : null}
+
+        {individualMoveOpen && individualMoveTarget ? (
+          <FolderTreePicker
+            open
+            documents={activeDocuments}
+            title={`Move "${individualMoveTarget.name}"`}
+            disabledFolderIds={moveBlockedIds([individualMoveTarget])}
+            onClose={() => setIndividualMoveOpen(false)}
+            onMoveHere={(destinationId) => {
+              const target = individualMoveTarget
+              void withFriendlyErrors(async () => {
+                await ensureAccessToken()
+                await actions.moveItem(target, destinationId)
+                addToast(`Moved "${target.name}".`, 'success')
+              }, 'Moving...')
+              setIndividualMoveOpen(false)
+            }}
+          />
+        ) : null}
+
+        {bulkMoveOpen && bulkMoveItems.length > 0 ? (
+          <FolderTreePicker
+            open
+            documents={activeDocuments}
+            title={`Move ${bulkMoveItems.length} items`}
+            disabledFolderIds={moveBlockedIds(bulkMoveItems)}
+            onClose={() => setBulkMoveOpen(false)}
+            onMoveHere={(destinationId) => {
+              const items = bulkMoveItems
+              void withFriendlyErrors(async () => {
+                await ensureAccessToken()
+                await actions.moveItems(items, destinationId)
+                addToast(`Moved ${items.length} items.`, 'success')
+              }, 'Moving items...')
+              setBulkMoveOpen(false)
+            }}
+          />
+        ) : null}
+
+        <Dialog
+          open={bulkTrashOpen && bulkTrashItems.length > 0}
+          title={`Move ${bulkTrashItems.length} items to Trash?`}
+          tone="danger"
+          icon={<Trash2 aria-hidden="true" />}
+          onClose={() => setBulkTrashOpen(false)}
+          footer={
+            <>
               <button type="button" className="secondary-button" onClick={() => setBulkTrashOpen(false)}>
                 Cancel
               </button>
-              <button
-                type="button"
-                className="primary-button danger-button"
-                onClick={() => {
-                  if (bulkTrashItems.length > 0) {
-                    void enqueueDelete(bulkTrashItems, 'trash', accessToken, documents)
-                    addToast(`Moving ${bulkTrashItems.length} items to trash...`, 'info')
-                  }
-                  setBulkTrashOpen(false)
-                  setBulkTrashItems([])
-                }}
-              >
+              <button type="button" className="danger-button" onClick={confirmBulkTrash}>
                 Move to Trash
               </button>
-            </footer>
-          </section>
-        </div>
-      )}
+            </>
+          }
+        >
+          <p>The selected items, and everything inside selected folders, will move to Trash. You can restore them later.</p>
+        </Dialog>
 
-      {/* Floating toast notifications */}
-      <div className="toast-container" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast-card is-${t.type}`}>
-            {t.message}
-          </div>
-        ))}
-      </div>
+        <div className="toast-container" aria-live="polite">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast is-${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'}>
+              {toast.type === 'success' ? (
+                <CheckCircle2 aria-hidden="true" />
+              ) : toast.type === 'error' ? (
+                <AlertTriangle aria-hidden="true" />
+              ) : (
+                <Info aria-hidden="true" />
+              )}
+              <span>{toast.message}</span>
+              <button
+                type="button"
+                className="toast__close"
+                onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}
+                aria-label="Dismiss"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
       </AppLayout>
     </UploadQueueProvider>
   )
@@ -1043,49 +1068,24 @@ function DriveAuthManager({
 
   if (!isOpen) return null
 
+  const close = () => {
+    if (stats.pausedForAuth) setDismissedPausedAuthModal(true)
+    else setShowDriveAuthModal(false)
+  }
+
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="drive-auth-title">
-        <header>
-          <h2 id="drive-auth-title">Google Drive Authorization Required</h2>
-        </header>
-        <div className="dialog-body" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <p style={{ margin: 0, color: '#475467', fontSize: '14px', lineHeight: '1.5' }}>
-            {stats.pausedForAuth ? (
-              driveConnected ? (
-                <strong style={{ color: '#039855' }}>Google Drive connected successfully.</strong>
-              ) : (
-                'Your upload has been safely paused. Reconnect Google Drive to continue.'
-              )
-            ) : driveConnected ? (
-              <strong style={{ color: '#039855' }}>Google Drive connected successfully.</strong>
-            ) : (
-              'Google Drive authorization is required to perform this action.'
-            )}
-          </p>
-        </div>
-        <footer>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              if (stats.pausedForAuth) {
-                setDismissedPausedAuthModal(true)
-              } else {
-                setShowDriveAuthModal(false)
-              }
-            }}
-          >
+    <Dialog
+      open
+      title={driveConnected ? 'Google Drive connected' : 'Reconnect Google Drive'}
+      icon={<HardDrive aria-hidden="true" />}
+      onClose={close}
+      footer={
+        <>
+          <button type="button" className="secondary-button" onClick={close}>
             Close
           </button>
           {!driveConnected ? (
-            <button
-              type="button"
-              className="primary-button"
-              onClick={async () => {
-                await onReconnectDrive()
-              }}
-            >
+            <button type="button" className="primary-button" onClick={() => void onReconnectDrive()}>
               Reconnect Google Drive
             </button>
           ) : (
@@ -1093,17 +1093,28 @@ function DriveAuthManager({
               type="button"
               className="primary-button"
               onClick={() => {
-                if (stats.pausedForAuth) {
-                  start()
-                }
+                if (stats.pausedForAuth) start()
                 setShowDriveAuthModal(false)
               }}
             >
-              {stats.pausedForAuth ? 'Continue Upload' : 'Continue'}
+              {stats.pausedForAuth ? 'Continue upload' : 'Continue'}
             </button>
           )}
-        </footer>
-      </section>
-    </div>
+        </>
+      }
+    >
+      {driveConnected ? (
+        <p className="dialog-success">
+          <CheckCircle2 aria-hidden="true" />
+          Google Drive is connected. You can carry on.
+        </p>
+      ) : (
+        <p>
+          {stats.pausedForAuth
+            ? 'Your upload is paused safely. Reconnect Google Drive to continue where it stopped.'
+            : 'Your Google Drive session has expired. Reconnect to keep working with your files.'}
+        </p>
+      )}
+    </Dialog>
   )
 }

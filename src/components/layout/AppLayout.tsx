@@ -1,44 +1,43 @@
 import {
   ArrowUp,
-  LogOut,
-  Menu,
-  Search,
-  Settings,
   Bell,
-  HardDrive,
   CheckCircle2,
-  X,
-  Trash2,
-  Upload,
   CloudUpload,
-  FileCheck2,
-  Sparkles,
-  BellRing,
-  CheckCheck,
-  LayoutDashboard,
   Files,
   FolderOpen,
-  Heart,
-  Tag,
+  HardDrive,
   History,
+  Home,
+  LogOut,
+  Menu,
+  Monitor,
   Moon,
-  Sun,
+  PauseCircle,
   RotateCw,
+  Search,
+  Settings,
+  Star,
+  Sun,
+  Tags,
+  Trash2,
+  Upload,
+  X,
+  type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import React from 'react'
-import { NavLink, useNavigate, useMatch, useResolvedPath } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useUploadQueue } from '../../hooks/useUploadQueue'
 import { useDeleteQueue } from '../../hooks/useDeleteQueue'
 import dvLogo from '../../assets/dv.png'
-import type { ThemeMode, VaultDocument } from '../../types/document'
+import type { ThemeMode } from '../../types/document'
 import type { VaultUser } from '../../types/user'
 import { getDriveStorageQuota, type DriveStorageQuota } from '../../services/googleDrive'
 import { formatFileSize } from '../../utils/formatters'
+import { Dialog } from '../ui/Dialog'
 
 interface AppLayoutProps {
   user: VaultUser
-  documents?: VaultDocument[]
+  trashCount: number
   search: string
   searchPlaceholder?: string
   onSearchChange: (value: string) => void
@@ -50,25 +49,37 @@ interface AppLayoutProps {
   onLogout: () => void
   themeMode: ThemeMode
   onThemeModeChange: (themeMode: ThemeMode) => void
-  onRefresh?: () => void
   children: ReactNode
 }
 
-const mainNavItems = [
-  { to: '/',           label: 'Dashboard',   icon: LayoutDashboard, color: '#22c55e' },
-  { to: '/files',      label: 'All Files',   icon: Files,           color: '#60a5fa' },
-  { to: '/folders',    label: 'All Folders', icon: FolderOpen,      color: '#fbbf24' },
-  { to: '/favorites',  label: 'Favorites',   icon: Heart,           color: '#f472b6' },
-  { to: '/categories', label: 'Categories',  icon: Tag,             color: '#a78bfa' },
-  { to: '/recent',     label: 'Recent',      icon: History,         color: '#34d399' },
-  { to: '/trash',      label: 'Trash',       icon: Trash2,          color: '#f87171' },
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon
+}
+
+const libraryNav: NavItem[] = [
+  { to: '/', label: 'Home', icon: Home },
+  { to: '/files', label: 'All files', icon: Files },
+  { to: '/folders', label: 'Folders', icon: FolderOpen },
+  { to: '/recent', label: 'Recent', icon: History },
+  { to: '/favorites', label: 'Favorites', icon: Star },
+  { to: '/categories', label: 'Categories', icon: Tags },
+  { to: '/desktop', label: 'Desktop Files', icon: Monitor },
+]
+
+const tabbarNav: NavItem[] = [
+  { to: '/', label: 'Home', icon: Home },
+  { to: '/files', label: 'Files', icon: Files },
+  { to: '/folders', label: 'Folders', icon: FolderOpen },
+  { to: '/recent', label: 'Recent', icon: History },
 ]
 
 export function AppLayout({
   user,
-  documents,
+  trashCount,
   search,
-  searchPlaceholder = 'Search files, folders, or documents...',
+  searchPlaceholder = 'Search documents',
   onSearchChange,
   onUploadClick,
   onUploadProgressClick,
@@ -78,723 +89,537 @@ export function AppLayout({
   onLogout,
   themeMode,
   onThemeModeChange,
-  onRefresh,
   children,
 }: AppLayoutProps) {
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [openPopover, setOpenPopover] = useState<'activity' | 'account' | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [driveQuota, setDriveQuota] = useState<DriveStorageQuota | null>(null)
-  const [quotaLoading, setQuotaLoading] = useState(false)
+  const [quotaState, setQuotaState] = useState<{ token: string; quota: DriveStorageQuota | null } | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const { stats } = useUploadQueue()
-  const navigate = useNavigate()
+  const location = useLocation()
 
-  // Fetch real storage quota from Google Drive
+  // Close the drawer and any popover whenever the route changes.
+  const [lastPath, setLastPath] = useState(location.pathname)
+  if (lastPath !== location.pathname) {
+    setLastPath(location.pathname)
+    setDrawerOpen(false)
+    setOpenPopover(null)
+  }
+
   useEffect(() => {
-    if (!accessToken) return
+    if (!accessToken) return undefined
     let cancelled = false
-    setQuotaLoading(true)
-    getDriveStorageQuota(accessToken).then((quota) => {
-      if (!cancelled) {
-        setDriveQuota(quota)
-        setQuotaLoading(false)
-      }
+    void getDriveStorageQuota(accessToken).then((quota) => {
+      if (!cancelled) setQuotaState({ token: accessToken, quota })
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [accessToken])
 
-  // Real-time dynamic notifications state
-  const [notifications, setNotifications] = useState<
-    Array<{ id: string; title: string; subtitle: string; icon: 'green' | 'blue' | 'orange' }>
-  >([])
+  const driveQuota = accessToken && quotaState?.token === accessToken ? quotaState.quota : null
+  const quotaLoading = Boolean(accessToken) && quotaState?.token !== accessToken
 
   useEffect(() => {
-    const list: Array<{ id: string; title: string; subtitle: string; icon: 'green' | 'blue' | 'orange' }> = []
-
-    if (driveConnected) {
-      list.push({
-        id: 'drive-status',
-        title: 'Google Drive connected',
-        subtitle: 'Vault is synchronized with Drive',
-        icon: 'green',
-      })
-    }
-
-    if (stats.running) {
-      list.push({
-        id: 'upload-status',
-        title: `Uploading ${stats.completed}/${stats.total} files`,
-        subtitle: `${stats.progress}% progress`,
-        icon: 'blue',
-      })
-    } else if (stats.completed > 0 && stats.completed === stats.total) {
-      list.push({
-        id: 'upload-complete',
-        title: 'Upload queue completed',
-        subtitle: `${stats.completed} files successfully uploaded`,
-        icon: 'green',
-      })
-    }
-
-    if (documents && documents.length > 0) {
-      const recentDoc = [...documents]
-        .filter((d) => !d.isDeleted)
-        .sort((a, b) => (b.uploadedAt?.toMillis() ?? 0) - (a.uploadedAt?.toMillis() ?? 0))[0]
-      if (recentDoc) {
-        list.push({
-          id: `doc-${recentDoc.id}`,
-          title: `Document synced`,
-          subtitle: `${recentDoc.name} is stored safely`,
-          icon: 'blue',
-        })
-      }
-    }
-
-    setNotifications(list)
-  }, [driveConnected, stats.running, stats.completed, stats.total, stats.progress, documents])
-
-  useEffect(() => {
-    const handleScroll = () => setShowScrollTop(window.scrollY > 360)
+    const handleScroll = () => setShowScrollTop(window.scrollY > 480)
     handleScroll()
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
-  // Keyboard shortcut: Ctrl + K (or Cmd + K) to focus search
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
         searchInputRef.current?.focus()
+      }
+      if (event.key === 'Escape') {
+        setOpenPopover(null)
+        setDrawerOpen(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const userInitials = user.displayName
-    ? user.displayName
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2)
-    : 'JD'
+  useEffect(() => {
+    document.body.style.overflow = drawerOpen ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [drawerOpen])
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
-    // 1. Check Service Worker for updates
     if ('serviceWorker' in navigator) {
       try {
         const registration = await navigator.serviceWorker.getRegistration()
-        if (registration) {
-          await registration.update()
-        }
-      } catch (err) {
-        console.error('Service Worker update check failed:', err)
+        await registration?.update()
+      } catch (error) {
+        console.error('Service worker update check failed:', error)
       }
     }
-    // 2. Trigger optional onRefresh callback
-    if (onRefresh) {
-      try {
-        onRefresh()
-      } catch (err) {
-        console.error('onRefresh callback error:', err)
-      }
-    }
-    // 3. Smooth page reload
-    setTimeout(() => {
-      window.location.reload()
-    }, 500)
+    window.setTimeout(() => window.location.reload(), 300)
   }
 
-  return (
-    <div className="app-shell">
-      {/* FULL-SCREEN MOBILE MENU OVERLAY */}
-      {mobileNavOpen && (
-        <div className="mobile-fullscreen-menu" role="dialog" aria-modal="true" aria-label="Navigation menu">
-          {/* Header */}
-          <div className="mfm-header">
-            <div className="mfm-brand">
-              <img src={dvLogo} alt="Document Vault" className="mfm-logo" />
-              <div className="mfm-brand-text">
-                <span className="mfm-brand-title">DOCUMENT VAULT</span>
-              </div>
-            </div>
-            <div className="mfm-header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button
-                type="button"
-                className="mfm-close-btn"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                aria-label="Refresh application"
-                title="Refresh application and check for updates"
-              >
-                <RotateCw size={18} className={isRefreshing ? 'spinning' : ''} />
-              </button>
-              <button
-                type="button"
-                className="mfm-close-btn"
-                onClick={() => setMobileNavOpen(false)}
-                aria-label="Close menu"
-              >
-                <X size={20} />
-              </button>
-            </div>
-          </div>
+  const displayName = user.displayName || user.email || 'Signed in'
+  const initials = getInitials(user.displayName || user.email)
 
-          {/* Navigation Items */}
-          <nav className="mfm-nav" aria-label="Primary navigation">
-            {mainNavItems.map((item) => (
-              <MobileNavItem
-                key={item.to}
-                to={item.to}
-                label={item.label}
-                Icon={item.icon}
-                color={item.color}
-                onClose={() => setMobileNavOpen(false)}
-              />
-            ))}
-          </nav>
+  const storage = driveQuota && driveQuota.limitBytes > 0
+    ? { used: driveQuota.usageBytes, limit: driveQuota.limitBytes, percent: Math.min(100, (driveQuota.usageBytes / driveQuota.limitBytes) * 100) }
+    : null
 
-          {/* Drive Status & Storage */}
-          <div className="mfm-drive-section">
-            <div className="mfm-drive-card" onClick={onReconnectDrive}>
-              <span className={`mfm-drive-dot ${driveConnected ? 'is-connected' : ''}`} />
-              <span className="mfm-drive-label">
-                GOOGLE DRIVE — {driveConnected ? 'CONNECTED' : 'DISCONNECTED'}
+  const sidebar = (
+    <>
+      <div className="sidebar__brand">
+        <NavLink to="/" className="brand" aria-label="Document Vault home">
+          <img src={dvLogo} alt="" />
+          <span>Document Vault</span>
+        </NavLink>
+        <button type="button" className="icon-button sidebar__close" onClick={() => setDrawerOpen(false)} aria-label="Close menu">
+          <X aria-hidden="true" />
+        </button>
+      </div>
+
+      <button type="button" className="primary-button sidebar__upload" onClick={onUploadClick}>
+        <Upload aria-hidden="true" />
+        <span>Upload</span>
+      </button>
+
+      <nav className="sidebar__nav" aria-label="Primary">
+        <span className="sidebar__label">Library</span>
+        {libraryNav.map((item) => (
+          <SidebarLink key={item.to} item={item} />
+        ))}
+        <div className="sidebar__divider" />
+        <SidebarLink item={{ to: '/trash', label: 'Trash', icon: Trash2 }} count={trashCount} />
+        <SidebarLink item={{ to: '/settings', label: 'Settings', icon: Settings }} />
+      </nav>
+
+      <div className="sidebar__footer">
+        <div className="drive-card">
+          <div className="drive-card__row">
+            <span className="drive-card__icon">
+              <HardDrive aria-hidden="true" />
+            </span>
+            <div className="drive-card__text">
+              <strong>Google Drive</strong>
+              <span>
+                <span className={driveConnected ? 'status-dot is-on' : 'status-dot is-off'} />
+                {driveConnected ? 'Connected' : 'Not connected'}
               </span>
             </div>
-
-            {!driveConnected && (
-              <button
-                type="button"
-                className="mfm-connect-drive-btn"
-                onClick={() => {
-                  setMobileNavOpen(false)
-                  onReconnectDrive()
-                }}
-                style={{
-                  marginTop: '8px',
-                  width: '100%',
-                  padding: '10px 14px',
-                  background: '#ef4444',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Connect Google Drive
-              </button>
-            )}
-
-            {/* Mobile Storage Widget */}
-            <div className="mfm-storage-widget" style={{ marginTop: '16px', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-              <div className="storage-header" style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
-                <span>Storage Usage</span>
-              </div>
-              {quotaLoading && !driveQuota ? (
-                <div className="storage-skeleton" />
-              ) : driveQuota ? (
-                <>
-                  <div className="storage-progress-bar">
-                    <div
-                      className="storage-progress-fill"
-                      style={{ width: `${Math.min(100, (driveQuota.usageBytes / driveQuota.limitBytes) * 100).toFixed(1)}%` }}
-                    />
-                  </div>
-                  <div className="storage-legend" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '6px', color: 'rgba(255,255,255,0.8)' }}>
-                    <span>{formatFileSize(driveQuota.usageBytes)} of {formatFileSize(driveQuota.limitBytes)}</span>
-                    <span>{Math.min(100, Math.round((driveQuota.usageBytes / driveQuota.limitBytes) * 100))}%</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="storage-progress-bar">
-                    <div className="storage-progress-fill" style={{ width: '0%' }} />
-                  </div>
-                  <div className="storage-legend" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '6px', color: 'rgba(255,255,255,0.8)' }}>
-                    <span>—</span>
-                    <span>—</span>
-                  </div>
-                </>
-              )}
-            </div>
           </div>
-
-          {/* User Profile Footer */}
-          <div className="mfm-footer">
-            <div className="mfm-avatar">
-              {user.photoURL
-                ? <img src={user.photoURL} alt={user.displayName ?? ''} />
-                : <span>{userInitials}</span>
-              }
+          {driveConnected ? (
+            <div className="storage-meter" aria-label="Google Drive storage">
+              <div className="storage-meter__track">
+                <div className="storage-meter__fill" style={{ width: `${storage ? storage.percent.toFixed(1) : 0}%` }} />
+              </div>
+              <span>
+                {storage
+                  ? `${formatFileSize(storage.used)} of ${formatFileSize(storage.limit)} used`
+                  : quotaLoading
+                    ? 'Checking storage...'
+                    : 'Storage unavailable'}
+              </span>
             </div>
-            <div className="mfm-user-info">
-              <span className="mfm-user-name">{user.displayName ?? 'User'}</span>
-              <span className="mfm-user-role">Document Vault Member</span>
-            </div>
-            <button
-              type="button"
-              className="mfm-logout-btn"
-              onClick={() => { setMobileNavOpen(false); setLogoutConfirmOpen(true) }}
-              aria-label="Log out"
-            >
-              <LogOut size={18} />
+          ) : (
+            <button type="button" className="secondary-button drive-card__connect" onClick={onReconnectDrive}>
+              Connect Drive
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
+    </>
+  )
 
-      {/* BACKDROP when mobile menu open */}
-      {mobileNavOpen && (
-        <div className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
-      )}
-
-      {/* LEFT NAVY SIDEBAR (desktop only) */}
-      <aside className="sidebar">
-        <div className="sidebar-top">
-          {/* BRAND LOGO */}
-          <div className="brand-wrapper">
-            <div className="brand" onClick={() => { navigate('/'); setMobileNavOpen(false) }} style={{ cursor: 'pointer' }}>
-              <div className="brand-logo-icon">
-                <img src={dvLogo} alt="Document Vault" className="brand-logo-img" />
-              </div>
-              <div className="brand-text-block">
-                <span className="brand-title">Document Vault</span>
-                <span className="brand-tagline">Your Files. Safe. Always.</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="icon-button mobile-only close-sidebar-btn"
-              onClick={() => setMobileNavOpen(false)}
-              aria-label="Close menu"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          {/* NAVIGATION LINKS */}
-          <nav aria-label="Primary navigation" className="sidebar-nav">
-            {mainNavItems.map((item) => {
-              const Icon = item.icon
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === '/'}
-                  onClick={() => setMobileNavOpen(false)}
-                >
-                  <Icon aria-hidden="true" />
-                  <span>{item.label}</span>
-                </NavLink>
-              )
-            })}
-          </nav>
-
-          {/* MY DRIVE SECTION */}
-          <div className="sidebar-section">
-            <span className="section-label">MY DRIVE</span>
-            <div className="drive-status-card" onClick={onReconnectDrive}>
-              <div className="drive-icon-badge">
-                <HardDrive size={16} />
-              </div>
-              <div className="drive-info">
-                <span className="drive-title">Google Drive</span>
-                <span className={driveConnected ? 'drive-status connected' : 'drive-status disconnected'}>
-                  <span className="status-dot" />
-                  {driveConnected ? 'Connected' : 'Reconnect required'}
-                </span>
-              </div>
-            </div>
-            {!driveConnected && (
-              <button
-                type="button"
-                className="sidebar-connect-drive-btn"
-                onClick={onReconnectDrive}
-                style={{
-                  marginTop: '8px',
-                  width: '100%',
-                  padding: '8px 12px',
-                  background: '#ef4444',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontWeight: 600,
-                  fontSize: '0.8rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                }}
-              >
-                Connect Google Drive
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* SIDEBAR FOOTER & STORAGE USAGE */}
-        <div className="sidebar-bottom">
-          <div className="storage-widget">
-            <div className="storage-header">
-              <span>Storage Usage</span>
-            </div>
-            {quotaLoading && !driveQuota ? (
-              <div className="storage-skeleton" />
-            ) : driveQuota ? (
-              <>
-                <div className="storage-progress-bar">
-                  <div
-                    className="storage-progress-fill"
-                    style={{ width: `${Math.min(100, (driveQuota.usageBytes / driveQuota.limitBytes) * 100).toFixed(1)}%` }}
-                  />
-                </div>
-                <div className="storage-legend">
-                  <span>{formatFileSize(driveQuota.usageBytes)} of {formatFileSize(driveQuota.limitBytes)}</span>
-                  <span>{Math.min(100, Math.round((driveQuota.usageBytes / driveQuota.limitBytes) * 100))}%</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="storage-progress-bar">
-                  <div className="storage-progress-fill" style={{ width: '0%' }} />
-                </div>
-                <div className="storage-legend">
-                  <span>—</span>
-                  <span>—</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          <NavLink
-            to="/settings"
-            className="sidebar-settings-link"
-            onClick={() => setMobileNavOpen(false)}
-          >
-            <Settings aria-hidden="true" />
-            <span>Settings</span>
-          </NavLink>
-        </div>
+  return (
+    <div className="shell">
+      <aside className={drawerOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Sidebar">
+        {sidebar}
       </aside>
+      {drawerOpen ? <div className="sidebar-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" /> : null}
 
-      {/* WORKSPACE & TOP HEADER */}
-      <div className="workspace">
+      <div className="shell__main">
         <header className="topbar">
           <button
-            className="icon-button mobile-only hamburger-btn"
             type="button"
-            aria-label="Open navigation"
-            onClick={() => setMobileNavOpen((open) => !open)}
+            className="icon-button topbar__menu"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
           >
             <Menu aria-hidden="true" />
           </button>
 
-          {/* SEARCH BAR WITH CTRL+K BADGE */}
-          <label className="search-box">
-            <Search aria-hidden="true" className="search-icon" />
+          <label className="search-box topbar__search">
+            <Search aria-hidden="true" />
             <input
               ref={searchInputRef}
               value={search}
               onChange={(event) => onSearchChange(event.target.value)}
               placeholder={searchPlaceholder}
               type="search"
+              aria-label="Search documents"
             />
-            <kbd className="shortcut-badge">Ctrl + K</kbd>
+            <kbd>Ctrl K</kbd>
           </label>
 
-          <div className="topbar-actions">
+          <div className="topbar__actions">
             <DeleteIndicator />
-            {stats.total > 0 ? <UploadIndicator onOpen={onUploadProgressClick} /> : null}
+            <UploadIndicator onOpen={onUploadProgressClick} />
 
-            {/* UPLOAD BUTTON */}
+            <ActivityMenu
+              open={openPopover === 'activity'}
+              onToggle={() => setOpenPopover((current) => (current === 'activity' ? null : 'activity'))}
+              onClose={() => setOpenPopover(null)}
+              driveConnected={driveConnected}
+              onReconnectDrive={onReconnectDrive}
+              onOpenUploads={onUploadProgressClick}
+            />
+
             <button
               type="button"
-              className="topbar-upload-btn"
-              onClick={onUploadClick}
-              title="Upload files"
-              aria-label="Upload files"
+              className="icon-button topbar__optional"
+              onClick={() => void handleRefresh()}
+              disabled={isRefreshing}
+              aria-label="Reload and check for updates"
+              title="Reload and check for updates"
             >
-              <Upload size={15} />
-              <span>Upload</span>
+              <RotateCw aria-hidden="true" className={isRefreshing ? 'spinning' : undefined} />
             </button>
 
-            {/* NOTIFICATION BELL */}
-            <div className="notification-wrapper">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => onThemeModeChange(themeMode === 'dark' ? 'light' : 'dark')}
+              aria-label={themeMode === 'dark' ? 'Use light theme' : 'Use dark theme'}
+              title={themeMode === 'dark' ? 'Use light theme' : 'Use dark theme'}
+            >
+              {themeMode === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+            </button>
+
+            <div className="popover-anchor">
               <button
                 type="button"
-                className="icon-button notification-btn"
-                aria-label="Notifications"
-                onClick={() => setNotificationsOpen((open) => !open)}
+                className="avatar-button"
+                onClick={() => setOpenPopover((current) => (current === 'account' ? null : 'account'))}
+                aria-label="Account"
+                aria-expanded={openPopover === 'account'}
               >
-                <Bell size={18} />
-                {notifications.length > 0 && (
-                  <span className="notification-badge">{notifications.length}</span>
-                )}
+                <Avatar photoURL={user.photoURL} initials={initials} />
               </button>
-
-              {notificationsOpen && (
-                <div className="notif-popover" role="dialog" aria-label="Notifications">
-
-                  {/* ── Header ── */}
-                  <div className="notif-header">
-                    <div className="notif-header-left">
-                      <span className="notif-title">Notifications</span>
-                      {notifications.length > 0 && (
-                        <span className="notif-count-badge">{notifications.length}</span>
-                      )}
-                    </div>
-                    <div className="notif-header-right">
-                      {notifications.length > 0 && (
-                        <button
-                          type="button"
-                          className="notif-clear-btn"
-                          onClick={() => setNotifications([])}
-                          title="Clear all"
-                        >
-                          Clear all
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="notif-close-btn"
-                        onClick={() => setNotificationsOpen(false)}
-                        aria-label="Close"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* ── List ── */}
-                  <div className="notif-list">
-                    {notifications.length > 0 ? (
-                      notifications.map((item) => {
-                        const IconComp =
-                          item.id.startsWith('drive')
-                            ? HardDrive
-                            : item.id === 'upload-status'
-                            ? CloudUpload
-                            : item.id === 'upload-complete'
-                            ? CheckCheck
-                            : item.id.startsWith('doc-')
-                            ? FileCheck2
-                            : item.icon === 'green'
-                            ? CheckCircle2
-                            : BellRing
-
-                        return (
-                          <div key={item.id} className={`notif-item notif-item-${item.icon}`}>
-                            <div className={`notif-icon-chip notif-chip-${item.icon}`}>
-                              <IconComp size={15} />
-                            </div>
-                            <div className="notif-item-body">
-                              <div className="notif-item-header-row">
-                                <span className="notif-item-title">{item.title}</span>
-                                <span className="notif-item-time">Active</span>
-                              </div>
-                              <span className="notif-item-sub">{item.subtitle}</span>
-                            </div>
-                            <button
-                              type="button"
-                              className="notif-dismiss"
-                              onClick={() => setNotifications((prev) => prev.filter((n) => n.id !== item.id))}
-                              title="Dismiss notification"
-                              aria-label="Dismiss notification"
-                            >
-                              <X size={13} />
-                            </button>
-                          </div>
-                        )
-                      })
-                    ) : (
-                      <div className="notif-empty">
-                        <div className="notif-empty-icon-wrap">
-                          <Sparkles size={24} className="notif-sparkle-icon" />
-                        </div>
-                        <span className="notif-empty-title">All caught up!</span>
-                        <span className="notif-empty-sub">You have no unread notifications.</span>
+              {openPopover === 'account' ? (
+                <>
+                  <div className="popover-scrim" onClick={() => setOpenPopover(null)} aria-hidden="true" />
+                  <div className="popover account-popover" role="menu">
+                    <div className="account-popover__head">
+                      <Avatar photoURL={user.photoURL} initials={initials} large />
+                      <div>
+                        <strong>{displayName}</strong>
+                        {user.email ? <span>{user.email}</span> : null}
                       </div>
-                    )}
+                    </div>
+                    <div className="menu-divider" />
+                    <NavLink to="/settings" className="popover__item" role="menuitem">
+                      <Settings aria-hidden="true" />
+                      <span>Settings</span>
+                    </NavLink>
+                    <button
+                      type="button"
+                      className="popover__item"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenPopover(null)
+                        setLogoutConfirmOpen(true)
+                      }}
+                    >
+                      <LogOut aria-hidden="true" />
+                      <span>Log out</span>
+                    </button>
                   </div>
-
-                  {/* ── Footer ── */}
-                  <div className="notif-footer">
-                    <span className="notif-status-dot" />
-                    <span>{notifications.length === 0 ? 'All notifications cleared' : `${notifications.length} active updates`}</span>
-                  </div>
-
-                </div>
-              )}
+                </>
+              ) : null}
             </div>
-
-            {/* REFRESH BUTTON */}
-            <button
-              type="button"
-              className="theme-toggle-btn app-refresh-btn"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              aria-label="Refresh application"
-              title="Refresh application and check for updates"
-            >
-              <RotateCw size={18} className={isRefreshing ? 'spinning' : ''} aria-hidden="true" />
-            </button>
-
-            {/* DARK / LIGHT MODE TOGGLE */}
-            <button
-              type="button"
-              className="theme-toggle-btn"
-              onClick={() => onThemeModeChange(themeMode === 'dark' ? 'light' : 'dark')}
-              aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {themeMode === 'dark'
-                ? <Sun size={18} aria-hidden="true" />
-                : <Moon size={18} aria-hidden="true" />
-              }
-            </button>
-
-            {/* USER PROFILE */}
-            <div className="profile-pill" onClick={() => navigate('/settings')}>
-              <div className="avatar-circle">
-                {user.photoURL ? <img src={user.photoURL} alt="" /> : <span>{userInitials}</span>}
-              </div>
-              <div className="profile-text">
-                <strong className="profile-name">{user.displayName ?? 'John Doe'}</strong>
-                <span className="profile-role">Administrator</span>
-              </div>
-            </div>
-
-            {/* LOG OUT BUTTON */}
-            <button
-              className="icon-button logout-btn"
-              type="button"
-              onClick={() => setLogoutConfirmOpen(true)}
-              aria-label="Log out"
-              title="Log out"
-            >
-              <LogOut aria-hidden="true" size={18} />
-            </button>
           </div>
         </header>
 
-        {!driveConnected && (
-          <div
-            className="drive-disconnected-banner"
-            style={{
-              background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.12) 100%)',
-              borderBottom: '1px solid rgba(239, 68, 68, 0.2)',
-              padding: '10px 24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '16px',
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ display: 'inline-flex', padding: '6px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
-                <HardDrive size={18} />
-              </span>
-              <div>
-                <strong style={{ fontSize: '0.875rem', color: 'var(--text-color, #1e293b)' }}>
-                  Google Drive is disconnected
-                </strong>
-                <p style={{ margin: 0, fontSize: '0.8rem', opacity: 0.85, color: 'var(--text-muted, #64748b)' }}>
-                  Connect your Google Drive account to backup and synchronize your vault documents seamlessly.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onReconnectDrive}
-              style={{
-                padding: '8px 16px',
-                background: '#ef4444',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '6px',
-                fontWeight: 600,
-                fontSize: '0.825rem',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                boxShadow: '0 2px 4px rgba(239, 68, 68, 0.25)',
-              }}
-            >
-              Connect Google Drive
+        {!driveConnected ? (
+          <div className="drive-banner" role="status">
+            <HardDrive aria-hidden="true" />
+            <p>
+              <strong>Google Drive is not connected.</strong> Connect it to open, upload and manage your files.
+            </p>
+            <button type="button" className="primary-button button--small" onClick={onReconnectDrive}>
+              Connect Drive
             </button>
           </div>
-        )}
+        ) : null}
 
-        <main className="main-content-area">{children}</main>
+        <main className="page">{children}</main>
       </div>
 
-      {/* MOBILE BOTTOM NAV — icon-only quick-nav pill */}
-      <div className="mobile-pill-shell is-folded">
-        <nav className="bottom-nav" aria-label="Mobile navigation">
-          {mainNavItems.slice(0, 5).map((item) => {
-            const Icon = item.icon
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                aria-label={item.label}
-                style={{ '--nav-icon-color': item.color } as React.CSSProperties}
-              >
-                <Icon aria-hidden="true" />
-              </NavLink>
-            )
-          })}
-        </nav>
-      </div>
+      <nav className="tabbar" aria-label="Quick navigation">
+        {tabbarNav.slice(0, 2).map((item) => (
+          <TabbarLink key={item.to} item={item} />
+        ))}
+        <button type="button" className="tabbar__upload" onClick={onUploadClick} aria-label="Upload">
+          <Upload aria-hidden="true" />
+        </button>
+        {tabbarNav.slice(2).map((item) => (
+          <TabbarLink key={item.to} item={item} />
+        ))}
+      </nav>
 
       {showScrollTop ? (
         <button
           type="button"
-          className="scroll-top-button"
+          className="scroll-top"
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          aria-label="Scroll to top"
+          aria-label="Back to top"
         >
           <ArrowUp aria-hidden="true" />
         </button>
       ) : null}
 
-      {logoutConfirmOpen ? (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="prompt-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="logout-title">
-            <header>
-              <h2 id="logout-title">Log out?</h2>
-            </header>
-            <div className="dialog-body">
-              <p>Are you sure you want to log out of Document Vault?</p>
+      <Dialog
+        open={logoutConfirmOpen}
+        title="Log out?"
+        description="You will need to sign in with Google again to open your vault."
+        icon={<LogOut aria-hidden="true" />}
+        onClose={() => setLogoutConfirmOpen(false)}
+        footer={
+          <>
+            <button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                setLogoutConfirmOpen(false)
+                onLogout()
+              }}
+            >
+              Log out
+            </button>
+          </>
+        }
+      />
+    </div>
+  )
+}
+
+function SidebarLink({ item, count }: { item: NavItem; count?: number }) {
+  const Icon = item.icon
+  return (
+    <NavLink to={item.to} end={item.to === '/'} className="sidebar__link">
+      <Icon aria-hidden="true" />
+      <span>{item.label}</span>
+      {count ? <span className="sidebar__count">{count > 99 ? '99+' : count}</span> : null}
+    </NavLink>
+  )
+}
+
+function TabbarLink({ item }: { item: NavItem }) {
+  const Icon = item.icon
+  return (
+    <NavLink to={item.to} end={item.to === '/'} className="tabbar__link">
+      <Icon aria-hidden="true" />
+      <span>{item.label}</span>
+    </NavLink>
+  )
+}
+
+function Avatar({ photoURL, initials, large }: { photoURL?: string; initials: string; large?: boolean }) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <span className={large ? 'avatar avatar--large' : 'avatar'} aria-hidden="true">
+      {photoURL && !failed ? (
+        <img src={photoURL} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      ) : (
+        initials
+      )}
+    </span>
+  )
+}
+
+function getInitials(value?: string | null) {
+  if (!value) return 'DV'
+  const parts = value.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean)
+  return (parts.slice(0, 2).map((part) => part[0]).join('') || 'DV').toUpperCase()
+}
+
+interface ActivityItem {
+  id: string
+  icon: LucideIcon
+  tone: 'success' | 'accent' | 'danger'
+  title: string
+  detail: string
+  action?: { label: string; run: () => void }
+}
+
+function ActivityMenu({
+  open,
+  onToggle,
+  onClose,
+  driveConnected,
+  onReconnectDrive,
+  onOpenUploads,
+}: {
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+  driveConnected: boolean
+  onReconnectDrive: () => void
+  onOpenUploads: () => void
+}) {
+  const { stats } = useUploadQueue()
+  const { stats: deleteStats } = useDeleteQueue()
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
+
+  const items = useMemo(() => {
+    const list: ActivityItem[] = []
+    list.push(
+      driveConnected
+        ? { id: 'drive-on', icon: HardDrive, tone: 'success', title: 'Google Drive connected', detail: 'Your vault is in sync with Drive.' }
+        : {
+            id: 'drive-off',
+            icon: HardDrive,
+            tone: 'danger',
+            title: 'Google Drive not connected',
+            detail: 'Connect Drive to open and upload files.',
+            action: { label: 'Connect', run: onReconnectDrive },
+          },
+    )
+    if (stats.pausedForAuth) {
+      list.push({
+        id: 'upload-paused',
+        icon: PauseCircle,
+        tone: 'danger',
+        title: 'Upload paused',
+        detail: 'Reconnect Google Drive to continue.',
+        action: { label: 'View', run: onOpenUploads },
+      })
+    } else if (stats.pausedForNetwork) {
+      list.push({
+        id: 'upload-offline',
+        icon: PauseCircle,
+        tone: 'danger',
+        title: 'Upload waiting for connection',
+        detail: 'It continues by itself when the connection returns.',
+        action: { label: 'View', run: onOpenUploads },
+      })
+    } else if (stats.needsFile > 0 && !stats.running) {
+      list.push({
+        id: `upload-needs-file-${stats.needsFile}`,
+        icon: PauseCircle,
+        tone: 'danger',
+        title: `${stats.needsFile} upload${stats.needsFile === 1 ? '' : 's'} need their files again`,
+        detail: 'Add the same files or folder again to continue. Finished files are skipped.',
+        action: { label: 'View', run: onOpenUploads },
+      })
+    } else if (stats.running) {
+      list.push({
+        id: 'upload-running',
+        icon: CloudUpload,
+        tone: 'accent',
+        title: `Uploading ${stats.completed + stats.failed} of ${stats.total}`,
+        detail: `${stats.progress}% complete`,
+        action: { label: 'View', run: onOpenUploads },
+      })
+    } else if (stats.total > 0) {
+      list.push({
+        id: `upload-done-${stats.total}-${stats.failed}`,
+        icon: stats.failed > 0 ? X : CheckCircle2,
+        tone: stats.failed > 0 ? 'danger' : 'success',
+        title: stats.failed > 0 ? `${stats.failed} uploads failed` : 'Uploads finished',
+        detail: `${stats.completed} of ${stats.total} files uploaded.`,
+        action: { label: 'View', run: onOpenUploads },
+      })
+    }
+    if (deleteStats.total > 0) {
+      list.push({
+        id: `delete-${deleteStats.mode}-${deleteStats.total}`,
+        icon: Trash2,
+        tone: deleteStats.running ? 'accent' : 'success',
+        title: deleteStats.running
+          ? deleteStats.mode === 'permanent' ? 'Deleting permanently' : 'Moving to Trash'
+          : deleteStats.mode === 'permanent' ? 'Deleted permanently' : 'Moved to Trash',
+        detail: `${deleteStats.completed} of ${deleteStats.total} items`,
+      })
+    }
+    return list.filter((item) => !dismissed.has(item.id))
+  }, [driveConnected, stats, deleteStats, dismissed, onReconnectDrive, onOpenUploads])
+
+  const attention = items.filter((item) => item.tone !== 'success').length
+
+  return (
+    <div className="popover-anchor">
+      <button
+        type="button"
+        className="icon-button"
+        onClick={onToggle}
+        aria-label={attention ? `Activity, ${attention} need attention` : 'Activity'}
+        aria-expanded={open}
+      >
+        <Bell aria-hidden="true" />
+        {attention ? <span className="icon-badge">{attention}</span> : null}
+      </button>
+      {open ? (
+        <>
+          <div className="popover-scrim" onClick={onClose} aria-hidden="true" />
+          <div className="popover activity-popover" role="dialog" aria-label="Activity">
+            <div className="popover__header">
+              <strong>Activity</strong>
+              <button type="button" className="icon-button" onClick={onClose} aria-label="Close activity">
+                <X aria-hidden="true" />
+              </button>
             </div>
-            <footer>
-              <button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => {
-                  setLogoutConfirmOpen(false)
-                  onLogout()
-                }}
-              >
-                Log out
-              </button>
-            </footer>
-          </section>
-        </div>
+            {items.length ? (
+              <ul className="activity-list">
+                {items.map((item) => {
+                  const Icon = item.icon
+                  return (
+                    <li key={item.id} className={`activity-item is-${item.tone}`}>
+                      <span className="activity-item__icon">
+                        <Icon aria-hidden="true" />
+                      </span>
+                      <div className="activity-item__text">
+                        <strong>{item.title}</strong>
+                        <span>{item.detail}</span>
+                      </div>
+                      {item.action ? (
+                        <button
+                          type="button"
+                          className="ghost-button button--small"
+                          onClick={() => {
+                            onClose()
+                            item.action?.run()
+                          }}
+                        >
+                          {item.action.label}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="icon-button activity-item__dismiss"
+                          onClick={() => setDismissed((current) => new Set(current).add(item.id))}
+                          aria-label="Dismiss"
+                        >
+                          <X aria-hidden="true" />
+                        </button>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="activity-empty">Nothing needs your attention.</p>
+            )}
+          </div>
+        </>
       ) : null}
     </div>
   )
@@ -802,28 +627,31 @@ export function AppLayout({
 
 function UploadIndicator({ onOpen }: { onOpen: () => void }) {
   const { stats } = useUploadQueue()
+  if (stats.total === 0) return null
   const processed = stats.completed + stats.failed
 
   return (
-    <button type="button" className="upload-indicator" onClick={onOpen} aria-label="Open upload manager">
-      {stats.pausedForAuth ? (
-        <>
-          <span>⏸ Upload Paused</span>
-          <strong>
-            {processed.toLocaleString()} / {stats.total.toLocaleString()}
-          </strong>
-        </>
+    <button type="button" className="progress-pill" onClick={onOpen} aria-label="Open upload manager">
+      {stats.pausedForAuth || stats.pausedForNetwork || (stats.paused > 0 && !stats.running) ? (
+        <PauseCircle aria-hidden="true" />
+      ) : stats.running ? (
+        <span className="app-spinner" aria-hidden="true" />
       ) : (
-        <>
-          <span className={stats.running ? 'upload-indicator-spinner is-spinning' : 'upload-indicator-spinner'} aria-hidden="true" />
-          <span>{stats.running ? 'Uploading' : 'Upload Queue'}</span>
-          <strong>
-            {processed.toLocaleString()} / {stats.total.toLocaleString()}
-          </strong>
-          <span>{stats.progress}%</span>
-        </>
+        <CheckCircle2 aria-hidden="true" />
       )}
-      {stats.failed > 0 ? <em>{stats.failed.toLocaleString()} failed</em> : null}
+      <span className="progress-pill__label">
+        {stats.pausedForNetwork
+          ? 'Offline'
+          : stats.pausedForAuth || (stats.paused > 0 && !stats.running)
+            ? 'Paused'
+            : stats.running
+              ? 'Uploading'
+              : 'Uploads'}
+      </span>
+      <strong>
+        {processed.toLocaleString()}/{stats.total.toLocaleString()}
+      </strong>
+      {stats.failed > 0 ? <em>{stats.failed} failed</em> : null}
     </button>
   )
 }
@@ -831,81 +659,21 @@ function UploadIndicator({ onOpen }: { onOpen: () => void }) {
 function DeleteIndicator() {
   const { stats } = useDeleteQueue()
   if (stats.total === 0) return null
-
-  const progressPercent = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0
-  const isPermanent = stats.mode === 'permanent'
+  const label = stats.running
+    ? stats.mode === 'permanent' ? 'Deleting' : 'Trashing'
+    : 'Done'
 
   return (
     <div
-      className="delete-indicator-pill"
-      title={`${isPermanent ? 'Deleting permanently' : 'Moving to trash'}: ${stats.completed}/${stats.total}${stats.currentItemName ? ` (${stats.currentItemName})` : ''}`}
+      className="progress-pill"
+      role="status"
+      title={stats.currentItemName ? `${label}: ${stats.currentItemName}` : label}
     >
-      <div className="delete-progress-spinner">
-        <svg viewBox="0 0 36 36" className="circular-chart">
-          <path
-            className="circle-bg"
-            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-          />
-          <path
-            className="circle"
-            strokeDasharray={`${progressPercent}, 100`}
-            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-          />
-        </svg>
-        {stats.running ? (
-          <Trash2 size={13} className="delete-icon-inner" />
-        ) : (
-          <CheckCircle2 size={13} className="delete-icon-inner text-emerald" />
-        )}
-      </div>
-      <div className="delete-indicator-text">
-        <span className="delete-title">
-          {stats.running
-            ? isPermanent
-              ? 'Deleting permanently...'
-              : 'Moving to trash...'
-            : 'Deletion complete'}
-        </span>
-        <span className="delete-sub">
-          {stats.completed}/{stats.total} items
-        </span>
-      </div>
+      {stats.running ? <span className="app-spinner" aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+      <span className="progress-pill__label">{label}</span>
+      <strong>
+        {stats.completed}/{stats.total}
+      </strong>
     </div>
-  )
-}
-
-// ── Mobile fullscreen menu nav item ──────────────────────────────────────
-function MobileNavItem({
-  to,
-  label,
-  Icon,
-  color,
-  onClose,
-}: {
-  to: string
-  label: string
-  Icon: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean | 'true' | 'false' }>
-  color: string
-  onClose: () => void
-}) {
-  const resolved = useResolvedPath(to)
-  const match = useMatch({ path: resolved.pathname, end: to === '/' })
-  const isActive = !!match
-
-  return (
-    <NavLink
-      to={to}
-      end={to === '/'}
-      className={`mfm-nav-item ${isActive ? 'is-active' : ''}`}
-      onClick={onClose}
-    >
-      <span className="mfm-nav-icon" style={{ color }}>
-        <Icon size={26} aria-hidden="true" />
-      </span>
-      <span className="mfm-nav-label" style={isActive ? { color } : {}}>
-        {label.toUpperCase()}
-      </span>
-      {isActive && <span className="mfm-nav-dot" style={{ background: color }} />}
-    </NavLink>
   )
 }

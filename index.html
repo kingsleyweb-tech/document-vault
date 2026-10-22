@@ -6,11 +6,18 @@
     <link rel="apple-touch-icon" href="/dv.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#faf7f3" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Document Vault" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="description" content="A private workspace for certificates, reports and personal records. Organise, search and preview documents stored in your own Google Drive." />
     <title>Document Vault</title>
+    <style>
+      /* Shown only until the first part of the site has loaded. */
+      .boot-loader { display: grid; place-items: center; min-height: 100vh; margin: 0; color: #8a8076; font: 15px system-ui, sans-serif; }
+      body { margin: 0; background: #ffffff; }
+      :root[data-theme='dark'] body:has(.boot-loader) { background: #14110e; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

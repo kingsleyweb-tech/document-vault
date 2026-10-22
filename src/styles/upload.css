@@ -1,0 +1,704 @@
+/* Upload dialog: picker, queued folders, overall progress and per-file rows. */
+
+.upload-dialog {
+  width: min(100%, 720px);
+  gap: 16px;
+  padding-bottom: 20px;
+  overflow-y: auto;
+}
+
+.upload-dialog > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.upload-dialog > :not(header):not(input) {
+  margin: 0 20px;
+}
+
+/* ── Picker ─────────────────────────────────────────────────────────── */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 20px;
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  color: var(--subtle);
+  text-align: center;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.dropzone.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.dropzone span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dropzone-hint {
+  max-width: 440px;
+}
+
+.upload-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.upload-top-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.upload-defaults {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.upload-defaults label {
+  display: grid;
+  gap: 6px;
+}
+
+.upload-defaults label > span {
+  color: var(--subtle);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.upload-defaults select,
+.upload-defaults input {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface);
+  color: var(--text);
+}
+
+.upload-defaults select {
+  padding-right: 32px;
+}
+
+/* ── Queued folders ─────────────────────────────────────────────────── */
+.queued-folders-panel {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-softer);
+}
+
+.queued-folders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.queued-folders-header > span {
+  flex: 1;
+}
+
+.add-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.add-folder-btn:hover {
+  border-color: var(--accent);
+}
+
+.queued-folders-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queued-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--subtle);
+  font-size: 13px;
+}
+
+.queued-folder-icon {
+  flex-shrink: 0;
+  color: var(--kind-folder);
+}
+
+.queued-folder-name {
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-folder-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ── Overall progress ───────────────────────────────────────────────── */
+.uq-banner {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.uq-banner-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.uq-banner-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.uq-banner-icon {
+  flex-shrink: 0;
+}
+
+.uq-banner-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uq-banner-pct {
+  flex-shrink: 0;
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.uq-progress-track,
+.uq-item-bar-track,
+.folder-card-bar-track,
+.progress-track {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.uq-progress-fill,
+.uq-item-bar-fill,
+.folder-card-bar-fill,
+.progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.uq-fill-done,
+.uq-item-bar-done,
+.fill-completed {
+  background: var(--success);
+}
+
+.uq-fill-error,
+.fill-failed {
+  background: var(--danger);
+}
+
+.fill-paused {
+  background: var(--warning);
+}
+
+.fill-pending {
+  background: var(--faint);
+}
+
+.uq-banner-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.uq-chip,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.uq-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.uq-chip-done,
+.badge-completed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.uq-chip-active,
+.badge-uploading {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.uq-chip-pending,
+.badge-pending {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.uq-chip-error,
+.badge-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge-paused {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* ── Per-folder progress ────────────────────────────────────────────── */
+.folder-upload-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.folder-upload-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.folder-upload-section-icon,
+.folder-card-icon {
+  color: var(--kind-folder);
+}
+
+.folder-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.folder-progress-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.folder-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.folder-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.folder-card-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.folder-card-counts strong {
+  color: var(--text);
+}
+
+.folder-card-speed {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.folder-card-remaining {
+  color: var(--faint);
+}
+
+.folder-card-active-file {
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── File rows ──────────────────────────────────────────────────────── */
+.upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upload-list-note {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.uq-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.uq-item-done {
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+  background: var(--success-soft);
+}
+
+.uq-item-failed {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  background: var(--danger-soft);
+}
+
+.uq-item-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.uq-item-done .uq-item-icon {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+
+.uq-item-failed .uq-item-icon {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+.uq-item-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.uq-item-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.uq-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uq-item-meta {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.uq-item-path {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uq-item-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.uq-item-bar-track {
+  flex: 1;
+  height: 4px;
+}
+
+.uq-item-bar-pct {
+  min-width: 36px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.uq-item-bar-pct-done {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.uq-item-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.uq-item-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.uq-item-fields select,
+.uq-item-fields input {
+  min-height: 32px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.uq-item-fields select {
+  flex: 0 0 150px;
+}
+
+.uq-item-fields input {
+  flex: 1;
+  min-width: 120px;
+  padding: 0 10px;
+}
+
+.uq-item-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  padding-top: 6px;
+}
+
+.uq-retry-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent-strong);
+}
+
+.uq-retry-btn:hover {
+  border-color: var(--accent);
+}
+
+.uq-icon-done {
+  color: var(--success);
+}
+
+.uq-icon-error {
+  color: var(--danger);
+}
+
+.uq-icon-spin,
+.uq-btn-spin {
+  color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+.uq-icon-compress {
+  color: var(--warning);
+}
+
+.uq-queued-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.uq-completed-group {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--success) 25%, var(--border));
+  border-radius: var(--radius);
+  background: var(--success-soft);
+}
+
+.uq-completed-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.uq-completed-summary::-webkit-details-marker {
+  display: none;
+}
+
+.uq-completed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+@media (max-width: 640px) {
+  .upload-dialog {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .upload-dialog > :not(header):not(input) {
+    margin: 0 14px;
+  }
+
+  .upload-defaults {
+    grid-template-columns: 1fr;
+  }
+
+  .uq-item-fields select {
+    flex: 1 1 100%;
+  }
+
+  .upload-top-actions > * {
+    flex: 1 1 auto;
+  }
+}
+
+.uq-banner-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.uq-icon-pending {
+  color: var(--warning, var(--muted));
+}
+
+/* Duplicate files waiting for a decision */
+.uq-duplicates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.uq-duplicates__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.uq-item-note {
+  color: var(--warning);
+  font-size: 12px;
+}

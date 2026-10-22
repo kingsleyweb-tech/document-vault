@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, FileText, FileUp, FolderOpen, FolderUp, Loader2, Plus, RotateCcw, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FileText, FileUp, FolderOpen, FolderUp, Loader2, PauseCircle, Plus, RotateCcw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { DocumentCategory, FolderUploadStats, UploadItem } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
@@ -15,7 +15,7 @@ interface UploadDialogProps {
 }
 
 export function UploadDialog({ open, categories, folderName, destinationFolderId, onClose }: UploadDialogProps) {
-  const { items, stats, enqueueFiles, start, retryFailed, retryItem, updateItem, cancelUploads } = useUploadQueue()
+  const { items, stats, enqueueFiles, start, retryFailed, retryItem, resolveDuplicate, updateItem, cancelUploads } = useUploadQueue()
   const [defaultCategory, setDefaultCategory] = useState<DocumentCategory>('Other')
   const [defaultDescription, setDefaultDescription] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -83,7 +83,9 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
     }
   }
 
-  const queuedCount = stats.pending + stats.retrying
+  // Paused files waiting for Drive or the connection can be started by hand too;
+  // files waiting to be added again, or for a decision about a duplicate, cannot.
+  const queuedCount = stats.pending + stats.retrying + stats.paused - stats.needsFile - stats.duplicates
   const completedCount = stats.completed
   const failedCount = stats.failed
   const totalCount = stats.total
@@ -124,6 +126,8 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
               <div className="uq-banner-label">
                 {allDone ? (
                   <CheckCircle2 className="uq-banner-icon uq-icon-done" size={16} />
+                ) : stats.pausedForNetwork || stats.pausedForAuth ? (
+                  <PauseCircle className="uq-banner-icon uq-icon-error" size={16} />
                 ) : stats.running ? (
                   <Loader2 className="uq-banner-icon uq-icon-spin" size={16} />
                 ) : failedCount > 0 ? (
@@ -134,6 +138,10 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
                 <span className="uq-banner-title">
                   {allDone
                     ? `All ${totalCount} files uploaded`
+                    : stats.pausedForNetwork
+                    ? `Waiting for the connection… ${completedCount} of ${totalCount} done`
+                    : stats.pausedForAuth
+                    ? `Paused: reconnect Google Drive to continue (${completedCount} of ${totalCount} done)`
                     : stats.running
                     ? `Uploading… ${completedCount} of ${totalCount} done`
                     : failedCount > 0
@@ -172,6 +180,18 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
                   {stats.pending} waiting
                 </span>
               )}
+              {stats.paused > 0 && (
+                <span className="uq-chip uq-chip-pending">
+                  <span className="uq-chip-dot" />
+                  {stats.paused} paused
+                </span>
+              )}
+              {stats.retrying > 0 && (
+                <span className="uq-chip uq-chip-active">
+                  <span className="uq-chip-dot" />
+                  {stats.retrying} retrying
+                </span>
+              )}
               {failedCount > 0 && (
                 <span className="uq-chip uq-chip-error">
                   <span className="uq-chip-dot" />
@@ -179,6 +199,37 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
                 </span>
               )}
             </div>
+            {stats.pausedForNetwork ? (
+              <p className="uq-banner-note">
+                Uploads stopped because the connection dropped. Nothing is lost: they continue on their own
+                when it returns, and large files carry on from where they stopped.
+              </p>
+            ) : null}
+            {stats.needsFile > 0 ? (
+              <p className="uq-banner-note">
+                {stats.needsFile} file{stats.needsFile === 1 ? '' : 's'} could not be kept after the page was closed.
+                Add the same files or folder again to continue; files already uploaded are skipped.
+              </p>
+            ) : null}
+            {stats.duplicates > 0 ? (
+              <div className="uq-banner-note uq-duplicates">
+                <span>
+                  {stats.duplicates === 1
+                    ? 'One file is already in your vault with exactly the same contents.'
+                    : `${stats.duplicates} files are already in your vault with exactly the same contents.`}
+                </span>
+                {stats.duplicates > 1 ? (
+                  <span className="uq-duplicates__actions">
+                    <button type="button" className="secondary-button button--small" onClick={() => resolveDuplicate('all', 'skip')}>
+                      Skip all
+                    </button>
+                    <button type="button" className="secondary-button button--small" onClick={() => resolveDuplicate('all', 'upload')}>
+                      Upload all anyway
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -248,12 +299,8 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
             </button>
           </div>
           <strong>Drop files or folders here</strong>
-          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted, #64748b)', marginTop: '4px', maxWidth: '420px', textAlign: 'center', lineHeight: '1.4' }}>
-            <strong>How to upload multiple folders:</strong>
-            <br />
-            1. <strong>Drag & Drop</strong>: Select multiple folders in Windows File Explorer and drag them here together.
-            <br />
-            2. <strong>One by One</strong>: Click <strong>Upload Folder</strong> to pick a folder, then click <strong>Add Another Folder</strong> to queue more before uploading.
+          <span className="dropzone-hint">
+            Drag several folders in at once, or pick one folder and use Add another folder to queue more.
           </span>
         </div>
 
@@ -347,6 +394,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
                 categories={categories}
                 onRetry={retryItem}
                 onUpdate={updateItem}
+                onResolveDuplicate={resolveDuplicate}
               />
             ))}
 
@@ -384,15 +432,18 @@ function QueueItem({
   categories,
   onRetry,
   onUpdate,
+  onResolveDuplicate,
 }: {
   item: UploadItem
   categories: DocumentCategory[]
   onRetry: (id: string) => void
   onUpdate: (id: string, v: Pick<Partial<UploadItem>, 'category' | 'description'>) => void
+  onResolveDuplicate?: (id: string, choice: 'upload' | 'skip') => void
 }) {
   const isActive = item.status === 'COMPRESSING' || item.status === 'UPLOADING' || item.status === 'RETRYING'
   const isDone   = item.status === 'COMPLETED'
   const isFailed = item.status === 'FAILED'
+  const isPaused = item.status === 'PAUSED'
   const canRetry = isFailed && !validateUploadFile(item.file)
   const disabled = isActive || isDone
 
@@ -410,7 +461,7 @@ function QueueItem({
         <div className="uq-item-name-row">
           <span className="uq-item-name">{item.file.name}</span>
           <span className="uq-item-meta">
-            {item.originalSize !== undefined && item.compressedSize !== undefined
+            {item.originalSize !== undefined && item.compressedSize !== undefined && (item.savedPercentage ?? 0) > 0
               ? `${formatFileSize(item.originalSize)} → ${formatFileSize(item.compressedSize)} (−${item.savedPercentage}%)`
               : `${getDocumentKind(item.file).toUpperCase()} · ${formatFileSize(item.file.size)}`}
           </span>
@@ -421,7 +472,7 @@ function QueueItem({
         )}
 
         {/* Progress bar — shown while active or done */}
-        {(isActive || isDone) && (
+        {(isActive || isDone || (isPaused && item.progress > 0)) && (
           <div className="uq-item-bar-wrap">
             <div className="uq-item-bar-track">
               <div
@@ -432,6 +483,10 @@ function QueueItem({
             <span className={`uq-item-bar-pct${isDone ? ' uq-item-bar-pct-done' : ''}`}>
               {isDone
                 ? 'Done'
+                : isPaused
+                ? `Paused ${barPct}%`
+                : item.status === 'RETRYING'
+                ? `Retrying ${barPct}%`
                 : item.status === 'COMPRESSING'
                 ? `Optimizing ${barPct}%`
                 : `${barPct}%`}
@@ -441,8 +496,19 @@ function QueueItem({
 
         {/* Error message */}
         {item.error && (
-          <span className="uq-item-error">{item.error}</span>
+          <span className={item.pauseReason === 'duplicate' ? 'uq-item-note' : 'uq-item-error'}>{item.error}</span>
         )}
+
+        {isPaused && item.pauseReason === 'duplicate' && onResolveDuplicate ? (
+          <span className="uq-duplicates__actions">
+            <button type="button" className="secondary-button button--small" onClick={() => onResolveDuplicate(item.id, 'skip')}>
+              Skip
+            </button>
+            <button type="button" className="secondary-button button--small" onClick={() => onResolveDuplicate(item.id, 'upload')}>
+              Upload anyway
+            </button>
+          </span>
+        ) : null}
 
         {/* Editable fields for pending items */}
         {!disabled && (
@@ -488,7 +554,8 @@ function StatusIcon({ status }: { status: UploadItem['status'] }) {
   if (status === 'FAILED')      return <AlertCircle  size={18} className="uq-icon-error"   aria-label="Failed" />
   if (status === 'UPLOADING' || status === 'RETRYING')
                                 return <Loader2      size={18} className="uq-icon-spin"    aria-label="Uploading" />
-  if (status === 'COMPRESSING') return <Loader2      size={18} className="uq-icon-spin"    aria-label="Compressing" style={{ color: '#7c3aed' }} />
+  if (status === 'PAUSED')      return <PauseCircle  size={18} className="uq-icon-pending" aria-label="Paused" />
+  if (status === 'COMPRESSING') return <Loader2      size={18} className="uq-icon-spin uq-icon-compress" aria-label="Compressing" />
   return <span className="uq-queued-dot" aria-label="Queued" />
 }
 

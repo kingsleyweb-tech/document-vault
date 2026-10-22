@@ -56,13 +56,6 @@ export async function compressImage(file: File): Promise<{ blob: Blob; savedPerc
   })
 }
 
-export async function compressPdf(file: File): Promise<{ blob: Blob; savedPercentage: number }> {
-  // Simulate optimization delay safely
-  await new Promise((resolve) => setTimeout(resolve, 600))
-  const saved = Math.floor(Math.random() * 6) + 4 // 4% to 9%
-  return { blob: file, savedPercentage: saved }
-}
-
 export async function compressFile(
   file: File,
   onProgress: (progress: number) => void
@@ -85,20 +78,7 @@ export async function compressFile(
     }
   }
 
-  if (type === 'application/pdf' || name.endsWith('.pdf')) {
-    onProgress(55)
-    const result = await compressPdf(file)
-    onProgress(100)
-    const simulatedSize = Math.round(originalSize * (1 - result.savedPercentage / 100))
-    return {
-      blob: file,
-      originalSize,
-      compressedSize: simulatedSize,
-      savedPercentage: result.savedPercentage,
-    }
-  }
-
-  // Unsupported formats (Word, Excel, PPT, text, html) are skipped
+  // Everything else (PDF, Word, Excel, PowerPoint, text, HTML) uploads unchanged.
   onProgress(100)
   return {
     blob: file,

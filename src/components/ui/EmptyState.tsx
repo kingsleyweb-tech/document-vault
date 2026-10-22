@@ -13,7 +13,7 @@ export function EmptyState({ icon, title, message, action }: EmptyStateProps) {
       <div className="empty-state__icon">{icon}</div>
       <h2>{title}</h2>
       <p>{message}</p>
-      {action}
+      {action ? <div className="empty-state__action">{action}</div> : null}
     </div>
   )
 }

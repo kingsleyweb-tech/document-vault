@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "product": "Document Vault",
+  "version": "1.0.0",
+  "releasedAt": null,
+  "notes": [
+    "First desktop release: the Document Vault workspace in its own window, with search across folders you choose on your computer."
+  ],
+  "notesUrl": null,
+  "builds": [
+    {
+      "id": "windows-x64",
+      "platform": "windows",
+      "arch": "x64",
+      "type": "installer",
+      "label": "Windows installer",
+      "fileName": "Document-Vault-Setup-1.0.0-x64.exe",
+      "url": null,
+      "size": null,
+      "sha256": null,
+      "minimumOs": "Windows 10 or 11, 64-bit",
+      "available": false,
+      "signed": false
+    },
+    {
+      "id": "macos-arm64",
+      "platform": "macos",
+      "arch": "arm64",
+      "type": "dmg",
+      "label": "macOS disk image for Apple Silicon",
+      "fileName": "Document-Vault-1.0.0-arm64.dmg",
+      "url": null,
+      "size": null,
+      "sha256": null,
+      "minimumOs": "macOS 13 Ventura or later",
+      "available": false,
+      "signed": false
+    },
+    {
+      "id": "macos-x64",
+      "platform": "macos",
+      "arch": "x64",
+      "type": "dmg",
+      "label": "macOS disk image for Intel",
+      "fileName": "Document-Vault-1.0.0-x64.dmg",
+      "url": null,
+      "size": null,
+      "sha256": null,
+      "minimumOs": "macOS 13 Ventura or later",
+      "available": false,
+      "signed": false
+    },
+    {
+      "id": "linux-x64-appimage",
+      "platform": "linux",
+      "arch": "x64",
+      "type": "appimage",
+      "label": "Linux AppImage",
+      "fileName": "Document-Vault-1.0.0-x86_64.AppImage",
+      "url": null,
+      "size": null,
+      "sha256": null,
+      "minimumOs": "64-bit Linux desktop (current Ubuntu, Debian or Fedora)",
+      "available": false,
+      "signed": false
+    },
+    {
+      "id": "linux-x64-deb",
+      "platform": "linux",
+      "arch": "x64",
+      "type": "deb",
+      "label": "Debian and Ubuntu package",
+      "fileName": "Document-Vault-1.0.0-amd64.deb",
+      "url": null,
+      "size": null,
+      "sha256": null,
+      "minimumOs": "Debian 12, Ubuntu 22.04 or later, 64-bit",
+      "available": false,
+      "signed": false
+    }
+  ]
+}

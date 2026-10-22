@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
-import { Navigate } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { signInWithGoogle } from '../services/auth'
 import { useAuth } from '../hooks/useAuth'
+import { safeNextPath } from '../routing'
 import loginImage from '../assets/col.png'
 import vaultLogo from '../assets/dv.png'
 
@@ -30,8 +31,11 @@ function GoogleLogo() {
   )
 }
 
-export function Login() {
+export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   const { isAuthenticated, loading } = useAuth()
+  const [searchParams] = useSearchParams()
+  const next = safeNextPath(searchParams.get('next'), window.location.origin)
+  const signedIn = !loading && isAuthenticated
   const [signInError, setSignInError] = useState<string | null>(null)
   const [signingIn, setSigningIn] = useState(false)
   const buttonDisabled = loading || signingIn
@@ -50,67 +54,69 @@ export function Login() {
     }
   }
 
-  if (!loading && isAuthenticated) {
-    return <Navigate to="/" replace />
+  // The workspace is a separate part of the site, so it opens with a full page load.
+  useEffect(() => {
+    if (signedIn) window.location.replace(next)
+  }, [signedIn, next])
+
+  if (signedIn) {
+    return <div className="route-loader">Opening your vault...</div>
   }
 
   return (
-    <main className="login-page">
-      <img className="login-mobile-background" src={loginImage} alt="" aria-hidden="true" />
-      <section className="login-shell">
-        <div className="login-content">
-          <div className="brand brand--large">
-            <img src={vaultLogo} alt="" aria-hidden="true" />
-            <span>Document Vault</span>
-          </div>
-          <div className="login-copy">
-            <span className="login-eyebrow">Military-grade document organization</span>
-            <h1>Your secure vault for important records.</h1>
-            <p>
-              Keep certificates, service documents, reports, and personal files organized in one clean
-              workspace backed by your Google Drive.
-            </p>
-          </div>
-          <div className="login-highlights" aria-label="Document Vault highlights">
-            <span>
-              <ShieldCheck aria-hidden="true" />
-              Private by default
-            </span>
-            <span>
-              <CheckCircle2 aria-hidden="true" />
-              Fast document lookup
-            </span>
-            <span>
-              <LockKeyhole aria-hidden="true" />
-              Secure Google sign-in
-            </span>
-          </div>
-        </div>
+    <main className="login">
+      <section className="login__panel">
+        <Link to="/" className="brand" aria-label="Document Vault home">
+          <img src={vaultLogo} alt="" aria-hidden="true" />
+          <span>Document Vault</span>
+        </Link>
 
-        <div className="login-visual-panel">
-          <img src={loginImage} alt="Ghana Armed Forces public relations officers at a formal event" />
-          <div className="login-panel">
-            <span className="login-badge login-mobile-signin-copy">
+        <div className="login__body">
+          <h1>{mode === 'register' ? 'Create your vault' : 'Your important records, organised.'}</h1>
+          <p>
+            Keep certificates, service documents, reports and personal files in one calm workspace. Every file is
+            stored in your own Google Drive.
+          </p>
+
+          <ul className="login__points" aria-label="Highlights">
+            <li>
+              <ShieldCheck aria-hidden="true" />
+              <span>Files stay in your Google Drive, private to you</span>
+            </li>
+            <li>
+              <CheckCircle2 aria-hidden="true" />
+              <span>Fast search, folders, favorites and previews</span>
+            </li>
+            <li>
               <LockKeyhole aria-hidden="true" />
-              Secure access
-            </span>
-            <div className="login-card-copy login-mobile-signin-copy">
-              <h2>Welcome back</h2>
-              <p>Continue with Google to open your document vault.</p>
-            </div>
-            <p className="login-desktop-signin-copy">Continue with Google to open your document vault.</p>
-            {signInError ? (
-              <p className="login-error" role="alert">
-                {signInError}
-              </p>
-            ) : null}
-            <button type="button" className="login-button" onClick={() => void handleGoogleSignIn()} disabled={buttonDisabled}>
-              <GoogleLogo />
-              <span>{loading ? 'Checking session...' : signingIn ? 'Opening Google...' : 'Continue with Google'}</span>
-            </button>
-          </div>
+              <span>Secure sign-in with your Google account</span>
+            </li>
+          </ul>
+
+          {signInError ? (
+            <p className="notice notice--error" role="alert">
+              {signInError}
+            </p>
+          ) : null}
+          <button type="button" className="login__google" onClick={() => void handleGoogleSignIn()} disabled={buttonDisabled}>
+            <GoogleLogo />
+            <span>{loading ? 'Checking session...' : signingIn ? 'Opening Google...' : 'Continue with Google'}</span>
+          </button>
+          <p className="login__fineprint">
+            {mode === 'register'
+              ? 'There is no separate sign-up form: your vault is created the first time you continue with Google. '
+              : ''}
+            You will be asked to let Document Vault create and open files it manages in your Drive.
+          </p>
+          <p className="login__fineprint">
+            <Link to="/privacy">Privacy</Link> · <Link to="/terms">Terms</Link> · <Link to="/documentation/getting-started">Help signing in</Link>
+          </p>
         </div>
       </section>
+
+      <figure className="login__visual">
+        <img src={loginImage} alt="Ghana Armed Forces public relations officers at a formal event" />
+      </figure>
     </main>
   )
 }

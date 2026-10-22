@@ -41,6 +41,19 @@ const extensionKindMap: Record<string, DocumentKind> = {
   csv: 'spreadsheet',
   ppt: 'presentation',
   pptx: 'presentation',
+  odt: 'word',
+  ods: 'spreadsheet',
+  tsv: 'spreadsheet',
+  xlsm: 'spreadsheet',
+  odp: 'presentation',
+  md: 'text',
+  markdown: 'text',
+  json: 'text',
+  xml: 'text',
+  log: 'text',
+  tif: 'image',
+  tiff: 'image',
+  bmp: 'image',
   epub: 'ebook',
   mobi: 'ebook',
   azw: 'ebook',
@@ -58,6 +71,17 @@ export function getDocumentKind(file: File): DocumentKind {
 export function isSupportedFile(file: File) {
   void file
   return true
+}
+
+/**
+ * The full file name for a renamed document. Names in the library are shown
+ * without their extension, so the original one is kept unless the new name
+ * already ends with it.
+ */
+export function renamedFileName(nextName: string, originalName: string) {
+  const extension = /\.([a-z0-9]{1,10})$/i.exec(originalName)?.[1]
+  if (!extension || nextName.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) return nextName
+  return `${nextName}.${extension}`
 }
 
 export function stripExtension(fileName: string) {

@@ -7,7 +7,9 @@ import {
   signOut,
 } from 'firebase/auth'
 import { auth } from './firebase'
-import { ensureVaultFolder } from './googleDrive'
+import { clearBlobCache, ensureVaultFolder } from './googleDrive'
+import { clearOfflineStore } from './offlineStore'
+import { clearUploadFileStore } from './uploadFileStore'
 import { upsertUserProfile } from './users'
 import type { VaultUser } from '../types/user'
 
@@ -101,11 +103,39 @@ export async function reconnectGoogleDrive() {
   return token
 }
 
+// Per-document reading positions reveal which documents were opened, and the
+// companion pairing token gives access to this computer's file index, so both
+// are removed with the rest of the session.
+const sessionStoragePrefixes = ['vault_last_read_page_', 'documentVault.presentationPosition.', 'documentVault.epubPosition.', 'documentVault.companion.token', 'documentVault.cachedVersions']
+
 export async function logout() {
   localStorage.removeItem(tokenStorageKey)
   localStorage.removeItem(tokenExpiryKey)
   notifyDriveTokenChanged()
+  await clearLocalSessionData()
   await signOut(auth)
+}
+
+/** Removes cached document contents and viewing history from this browser. */
+async function clearLocalSessionData() {
+  clearBlobCache()
+  // documentViewer.ts listens for this and drops its rendered previews.
+  window.dispatchEvent(new Event('documentVault.sessionEnded'))
+  try {
+    Object.keys(localStorage)
+      .filter((key) => sessionStoragePrefixes.some((prefix) => key.startsWith(prefix)))
+      .forEach((key) => localStorage.removeItem(key))
+  } catch {
+    // Storage may be unavailable; nothing to remove then.
+  }
+  try {
+    await clearOfflineStore()
+  } catch (error) {
+    console.warn('Could not clear the offline document cache:', error)
+  }
+  // Copies of files waiting to upload are private too. The queue itself stays;
+  // its files can be re-added after signing in again.
+  await clearUploadFileStore()
 }
 
 let persistenceReady: Promise<void> | null = null
@@ -125,7 +155,15 @@ function saveDriveAccessToken(accessToken: string) {
 function createGoogleProvider(mode: 'login' | 'reauthorize') {
   const provider = new GoogleAuthProvider()
   provider.addScope(driveScope)
-  provider.setCustomParameters(mode === 'login' ? { prompt: 'select_account' } : { prompt: 'consent' })
+  if (mode === 'login') {
+    provider.setCustomParameters({ prompt: 'select_account' })
+  } else {
+    // Renewing access for the signed-in account: Google skips the account
+    // chooser, and the consent screen too when access was granted before, so
+    // the window closes by itself. It asks again only if access was revoked.
+    const email = auth.currentUser?.email
+    if (email) provider.setCustomParameters({ login_hint: email })
+  }
   return provider
 }
 

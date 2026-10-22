@@ -1,33 +1,15 @@
-import { useState } from 'react'
-import {
-  Award,
-  BarChart3,
-  Briefcase,
-  Download,
-  Eye,
-  FolderOpen,
-  GraduationCap,
-  Heart,
-  Home,
-  Pencil,
-  Shield,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
-import type { DocumentCategory, VaultDocument } from '../types/document'
-import { DocumentIcon } from '../components/documents/DocumentIcon'
+import { useMemo, useState } from 'react'
+import { Award, BarChart3, Briefcase, FolderOpen, GraduationCap, Home, Shield, Tags, type LucideIcon } from 'lucide-react'
+import { DocumentCollection } from '../components/documents/DocumentCollection'
+import { EmptyState } from '../components/ui/EmptyState'
+import { LoadingState } from '../components/ui/LoadingState'
+import { PageHeader } from '../components/ui/PageHeader'
+import type { DocumentCategory, SortMode } from '../types/document'
+import { locationResolver } from '../utils/trash'
+import { matchesSearch, sortDocuments, sortOptions } from '../utils/sorting'
+import type { LibraryPageProps } from './VaultPage'
 
-interface CategoriesProps {
-  categories: DocumentCategory[]
-  documents: VaultDocument[]
-  onView: (documentRecord: VaultDocument) => void
-  onDownload: (documentRecord: VaultDocument) => void
-  onRename: (documentRecord: VaultDocument) => void
-  onFavorite: (documentRecord: VaultDocument) => void
-  onTrash: (documentRecord: VaultDocument) => void
-}
-
-const categoryIconMap: Record<DocumentCategory, LucideIcon> = {
+const categoryIcons: Record<DocumentCategory, LucideIcon> = {
   Personal: Home,
   School: GraduationCap,
   Military: Shield,
@@ -37,126 +19,103 @@ const categoryIconMap: Record<DocumentCategory, LucideIcon> = {
   Other: FolderOpen,
 }
 
-const categoryColorMap: Record<DocumentCategory, string> = {
-  Personal: '#2563eb',     // Blue
-  School: '#8b5cf6',       // Purple
-  Military: '#b91c1c',     // Red
-  Work: '#0891b2',         // Cyan
-  Certificates: '#ea580c', // Orange
-  Reports: '#16a34a',      // Green
-  Other: '#4b5563',        // Slate
-}
-
+// Files grouped by the category chosen at upload.
 export function Categories({
-  categories,
   documents,
-  onView,
-  onDownload,
-  onRename,
-  onFavorite,
-  onTrash,
-}: CategoriesProps) {
-  const [expandedCategory, setExpandedCategory] = useState<DocumentCategory | null>(null)
+  allDocuments,
+  categories,
+  accessToken,
+  loading,
+  error,
+  search,
+  viewMode,
+  sortMode,
+  onViewModeChange,
+  onSortModeChange,
+  actions,
+  bulk,
+}: LibraryPageProps) {
+  const [selected, setSelected] = useState<DocumentCategory>(categories[0])
+  const files = useMemo(() => documents.filter((record) => record.fileType !== 'folder'), [documents])
+
+  const counts = useMemo(() => {
+    const map = new Map<DocumentCategory, number>()
+    for (const record of files) map.set(record.category, (map.get(record.category) ?? 0) + 1)
+    return map
+  }, [files])
+
+  const items = useMemo(
+    () => sortDocuments(files.filter((record) => record.category === selected && matchesSearch(record, search)), sortMode),
+    [files, selected, search, sortMode],
+  )
+  const resolveLocation = useMemo(() => locationResolver(allDocuments), [allDocuments])
 
   return (
-    <section className="page-section animate-fade-in">
-      <div className="categories-container">
-        <header className="categories-header">
-          <h1>Categories</h1>
-          <p>Organize and review your documents by department and file classification.</p>
-        </header>
+    <section className="page">
+      <PageHeader title="Categories" description="Every file belongs to one category, chosen when it was uploaded." />
 
-        <div className="categories-grid">
-          {categories.map((category) => {
-            const Icon = categoryIconMap[category] ?? FolderOpen
-            const color = categoryColorMap[category] ?? '#2563eb'
-            const categoryDocs = documents.filter((doc) => doc.category === category && !doc.isDeleted)
-            const count = categoryDocs.length
-            const isExpanded = expandedCategory === category
-
-            return (
-              <div
-                key={category}
-                className={`category-card ${isExpanded ? 'is-expanded' : ''}`}
-                onClick={() => setExpandedCategory(isExpanded ? null : category)}
-                style={{ cursor: 'pointer' }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    setExpandedCategory(isExpanded ? null : category)
-                  }
-                }}
-                aria-expanded={isExpanded}
-                aria-label={`${category} documents, ${count} items`}
-              >
-                <div className="category-card-header">
-                  <div
-                    className="category-icon-wrapper"
-                    style={{
-                      backgroundColor: `${color}12`, // ~7% opacity soft tint background
-                      color: color,
-                    }}
-                  >
-                    <Icon aria-hidden="true" size={24} />
-                  </div>
-                </div>
-                <div className="category-card-content">
-                  <h3>{category}</h3>
-                  <span>{count} {count === 1 ? 'document' : 'documents'}</span>
-                </div>
-
-                {isExpanded && (
-                  <div className="category-docs-dropdown" onClick={(e) => e.stopPropagation()}>
-                    {categoryDocs.length > 0 ? (
-                      <div className="category-docs-list">
-                        {categoryDocs.map((doc) => (
-                          <div key={doc.id} className="category-doc-item">
-                            <div className="category-doc-info" onClick={() => onView(doc)} style={{ cursor: 'pointer' }}>
-                              <span className="category-doc-icon">
-                                <DocumentIcon kind={doc.fileType} />
-                              </span>
-                              <span className="category-doc-name" title={doc.originalName}>
-                                {doc.name}
-                              </span>
-                            </div>
-                            <div className="category-doc-actions">
-                              <button type="button" onClick={() => onView(doc)} aria-label="View document">
-                                <Eye size={16} />
-                              </button>
-                              {doc.fileType !== 'folder' && (
-                                <button type="button" onClick={() => onDownload(doc)} aria-label="Download document">
-                                  <Download size={16} />
-                                </button>
-                              )}
-                              <button type="button" onClick={() => onRename(doc)} aria-label="Rename document">
-                                <Pencil size={16} />
-                              </button>
-                              <button
-                                type="button"
-                                className={doc.isFavorite ? 'is-active' : ''}
-                                onClick={() => onFavorite(doc)}
-                                aria-label={doc.isFavorite ? 'Remove favorite' : 'Add favorite'}
-                              >
-                                <Heart size={16} />
-                              </button>
-                              <button type="button" onClick={() => onTrash(doc)} aria-label="Delete document">
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="category-docs-empty">No files under this category.</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+      <div className="category-tiles" role="tablist" aria-label="Categories">
+        {categories.map((category) => {
+          const Icon = categoryIcons[category] ?? FolderOpen
+          const count = counts.get(category) ?? 0
+          return (
+            <button
+              key={category}
+              type="button"
+              role="tab"
+              aria-selected={selected === category}
+              className={selected === category ? 'category-tile is-active' : 'category-tile'}
+              onClick={() => setSelected(category)}
+            >
+              <span className="category-tile__icon">
+                <Icon aria-hidden="true" />
+              </span>
+              <span className="category-tile__text">
+                <strong>{category}</strong>
+                <span>
+                  {count} {count === 1 ? 'file' : 'files'}
+                </span>
+              </span>
+            </button>
+          )
+        })}
       </div>
+
+      {error ? <div className="notice notice--error">{error}</div> : null}
+      {loading ? (
+        <LoadingState />
+      ) : (
+        <DocumentCollection
+          key={selected}
+          items={items}
+          allDocuments={allDocuments}
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
+          actions={actions}
+          bulk={bulk}
+          accessToken={accessToken}
+          locationFor={resolveLocation}
+          filters={
+            <>
+              <h2 className="collection__title">{selected}</h2>
+              <select value={sortMode} onChange={(event) => onSortModeChange(event.target.value as SortMode)} aria-label="Sort">
+                {sortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </>
+          }
+          empty={
+            <EmptyState
+              icon={<Tags aria-hidden="true" />}
+              title={search.trim() ? 'No matches in this category' : `Nothing in ${selected} yet`}
+              message="Pick a category when uploading to file documents here."
+            />
+          }
+        />
+      )}
     </section>
   )
 }

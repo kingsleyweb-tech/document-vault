@@ -1,5 +1,7 @@
-const CACHE_NAME = 'document-vault-app-v4'
+const CACHE_NAME = 'document-vault-app-v5'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/dv.png', '/icon-192.png', '/icon-512.png']
+// Always fetched fresh, so a new release is never hidden behind an old copy.
+const NEVER_CACHE = ['/releases/']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,6 +26,7 @@ self.addEventListener('fetch', (event) => {
 
   const requestUrl = new URL(event.request.url)
   if (requestUrl.origin !== self.location.origin) return
+  if (NEVER_CACHE.some((prefix) => requestUrl.pathname.startsWith(prefix))) return
 
   const isNavigation = event.request.mode === 'navigate'
 

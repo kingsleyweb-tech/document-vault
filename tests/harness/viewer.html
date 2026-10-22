@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document viewer harness</title>
+  </head>
+  <body>
+    <!-- Development-only page. Seeds the viewer's offline cache with a local
+         file so the full DocumentViewer runs without Google Drive. Served by
+         `npm run dev` at /tests/harness/viewer.html; not part of the build. -->
+    <div id="root"></div>
+    <script type="module" src="./viewer.tsx"></script>
+  </body>
+</html>

@@ -1,11 +1,22 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
+import { legacyHashTarget } from './routing'
+import { Root } from './Root'
+import './pwaInstall'
+
+// Apply the saved theme before the first paint so there is no flash of the wrong colours.
+try {
+  document.documentElement.dataset.theme = localStorage.getItem('documentVault.theme') === 'dark' ? 'dark' : 'light'
+} catch {
+  document.documentElement.dataset.theme = 'light'
+}
+
+const legacyTarget = legacyHashTarget(window.location.hash)
+if (legacyTarget) window.history.replaceState(null, '', legacyTarget)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <Root pathname={window.location.pathname} />
   </StrictMode>,
 )
 

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OCR harness</title>
+  </head>
+  <body>
+    <!-- Development-only page for running text recognition on local files,
+         without signing in. Served by `npm run dev` at /tests/harness/ocr.html;
+         not part of the production build. -->
+    <input type="file" aria-label="Picture or PDF" />
+    <output data-testid="status">idle</output>
+    <pre data-testid="text"></pre>
+    <script type="module" src="./ocr.ts"></script>
+  </body>
+</html>

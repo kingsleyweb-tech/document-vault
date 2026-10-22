@@ -1,3 +1,4 @@
+import { normalizeTags } from '../utils/tags'
 import {
   addDoc,
   collection,
@@ -7,6 +8,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  setDoc,
   Timestamp,
   updateDoc,
   where,
@@ -14,6 +16,7 @@ import {
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { scheduleLibraryMirror } from './metadataMirror'
 import type { NewDocumentMetadata, NewFolderMetadata, VaultDocument, VaultFolder, VaultTimestamp } from '../types/document'
 
 type Unsubscribe = () => void
@@ -23,7 +26,7 @@ const foldersCollection = collection(db, 'folders')
 
 export function listenToUserDocuments(
   ownerId: string,
-  callback: (documents: VaultDocument[]) => void,
+  callback: (documents: VaultDocument[], fromCache: boolean) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
   const userDocumentsQuery = query(documentsCollection, where('ownerId', '==', ownerId))
@@ -35,6 +38,7 @@ export function listenToUserDocuments(
         snapshot.docs
           .map(toVaultDocument)
           .sort((first, second) => second.uploadedAt.toMillis() - first.uploadedAt.toMillis()),
+        snapshot.metadata.fromCache,
       )
     },
     (error) => {
@@ -45,25 +49,29 @@ export function listenToUserDocuments(
 
 export function listenToUserLibrary(
   ownerId: string,
-  callback: (documents: VaultDocument[]) => void,
+  /** `complete` is true once both lists came from the server rather than the local cache. */
+  callback: (documents: VaultDocument[], complete: boolean) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
   let currentDocuments: VaultDocument[] = []
   let currentFolders: VaultFolder[] = []
+  let documentsFromServer = false
+  let foldersFromServer = false
 
   const emit = () => {
-    callback(
-      [
-        ...currentFolders.map(folderToVaultDocument),
-        ...currentDocuments,
-      ].sort((first, second) => second.uploadedAt.toMillis() - first.uploadedAt.toMillis()),
-    )
+    const library = [
+      ...currentFolders.map(folderToVaultDocument),
+      ...currentDocuments,
+    ].sort((first, second) => second.uploadedAt.toMillis() - first.uploadedAt.toMillis())
+    callback(library, documentsFromServer && foldersFromServer)
+    scheduleLibraryMirror(ownerId, library, documentsFromServer && foldersFromServer)
   }
 
   const unsubscribeDocuments = listenToUserDocuments(
     ownerId,
-    (nextDocuments) => {
+    (nextDocuments, fromCache) => {
       currentDocuments = nextDocuments
+      documentsFromServer = !fromCache
       emit()
     },
     onError,
@@ -73,6 +81,7 @@ export function listenToUserLibrary(
     query(foldersCollection, where('ownerId', '==', ownerId)),
     (snapshot) => {
       currentFolders = snapshot.docs.map(toVaultFolder)
+      foldersFromServer = !snapshot.metadata.fromCache
       emit()
     },
     onError,
@@ -84,18 +93,35 @@ export function listenToUserLibrary(
   }
 }
 
-export async function createDocumentRecord(metadata: NewDocumentMetadata) {
-  return addDoc(documentsCollection, {
-    ...metadata,
+/**
+ * With `recordId`, writing the same record again (a retry after the first
+ * write's reply was lost) replaces it instead of adding a duplicate.
+ */
+export async function createDocumentRecord(metadata: NewDocumentMetadata, recordId?: string) {
+  if (recordId) {
+    const ref = doc(documentsCollection, recordId)
+    await setDoc(ref, newDocumentFields(metadata))
+    return ref
+  }
+  return addDoc(documentsCollection, newDocumentFields(metadata))
+}
+
+function newDocumentFields(metadata: NewDocumentMetadata) {
+  // Firestore rejects undefined values, so optional fields are left out instead.
+  const defined = Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined))
+  return {
+    ...defined,
     folderId: metadata.folderId ?? metadata.parentId ?? null,
+    tags: normalizeTags(metadata.tags ?? []),
     searchText: createSearchText(metadata),
+    version: 1,
     isFavorite: false,
     isDeleted: false,
     uploadedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     lastViewedAt: null,
-  })
+  }
 }
 
 export async function createFolderRecord(metadata: NewFolderMetadata) {
@@ -129,17 +155,27 @@ export async function findFolderRecord(ownerId: string, name: string, parentFold
 }
 
 export async function updateDocumentRecord(id: string, values: Partial<VaultDocument>) {
-  const { uploadedAt, id: _id, updatedAt, lastViewedAt, ...safeValues } = values
+  const { uploadedAt, id: _id, updatedAt, lastViewedAt, createdAt, ownerId, driveFileId, isFolderRecord, ...safeValues } = values
   void uploadedAt
   void updatedAt
   void lastViewedAt
   void _id
+  void createdAt
+  void ownerId
+  void driveFileId
+  void isFolderRecord
+
+  const nextValues: Record<string, unknown> = Object.fromEntries(Object.entries(safeValues).filter(([, value]) => value !== undefined))
+  if (safeValues.tags) nextValues.tags = normalizeTags(safeValues.tags)
 
   await updateDoc(doc(db, 'documents', id), {
-    ...safeValues,
+    ...nextValues,
     updatedAt: serverTimestamp(),
   })
 }
+
+export { MAX_TAGS, MAX_TAG_LENGTH } from '../utils/tags'
+export { normalizeTags }
 
 export async function updateFolderRecord(id: string, values: Partial<VaultDocument | VaultFolder>) {
   const {
@@ -212,6 +248,10 @@ function toVaultDocument(snapshot: QueryDocumentSnapshot<DocumentData>): VaultDo
     parentId: data.folderId ?? data.parentId ?? null,
     folderId: data.folderId ?? data.parentId ?? null,
     folderPath: data.folderPath ?? '',
+    driveMissing: Boolean(data.driveMissing),
+    tags: Array.isArray(data.tags) ? data.tags.filter((tag: unknown): tag is string => typeof tag === 'string') : [],
+    contentHash: typeof data.contentHash === 'string' ? data.contentHash : undefined,
+    version: typeof data.version === 'number' ? data.version : 1,
   }
 }
 
@@ -286,6 +326,7 @@ function createSearchText(values: Partial<NewDocumentMetadata | VaultDocument>) 
     values.description,
     values.fileType,
     values.mimeType,
+    ...(values.tags ?? []),
   ]
     .filter(Boolean)
     .join(' ')

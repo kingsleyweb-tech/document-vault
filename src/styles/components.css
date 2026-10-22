@@ -1,0 +1,827 @@
+/* Shared building blocks: buttons, fields, menus, dialogs, feedback. */
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.primary-button,
+.secondary-button,
+.ghost-button,
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.primary-button svg,
+.secondary-button svg,
+.ghost-button svg,
+.danger-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.primary-button {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.secondary-button {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.secondary-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+}
+
+.ghost-button {
+  background: transparent;
+  color: var(--subtle);
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.danger-button,
+.primary-button.danger-button {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.danger-button:hover:not(:disabled),
+.primary-button.danger-button:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.danger-outline-button {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.danger-outline-button:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.primary-button--small,
+.button--small {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--subtle);
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.icon-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.icon-button--bordered {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.spinning {
+  animation: spin 0.9s linear infinite;
+}
+
+/* ── Fields ──────────────────────────────────────────────────────────── */
+.field-input,
+.dialog-input,
+select,
+.select {
+  min-height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.field-input,
+.dialog-input {
+  width: 100%;
+  padding: 0 12px;
+}
+
+select,
+.select {
+  padding: 0 32px 0 12px;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.field-input:focus,
+.dialog-input:focus,
+select:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field > span {
+  color: var(--subtle);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-box svg {
+  width: 16px;
+  height: 16px;
+}
+
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+
+.search-box input::placeholder {
+  color: var(--faint);
+}
+
+.search-box input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.search-box kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Segmented view toggle */
+.segmented-control {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.segmented-control button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.segmented-control button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.segmented-control button.is-active {
+  background: var(--surface);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Checkboxes */
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Notices, badges, chips ─────────────────────────────────────────── */
+.notice {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--subtle);
+  font-size: 13px;
+}
+
+.notice--error {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.notice--warning {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip svg {
+  width: 13px;
+  height: 13px;
+}
+
+.chip--success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.chip--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chip--accent {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.status-dot.is-on {
+  background: var(--success);
+}
+
+.status-dot.is-off {
+  background: var(--danger);
+}
+
+/* ── Menus (portal context menu and popovers) ───────────────────────── */
+.menu {
+  position: fixed;
+  z-index: 1300;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  animation: fade-up 0.12s ease-out;
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.menu button svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.menu button:hover {
+  background: var(--surface-soft);
+}
+
+.menu button.is-active svg {
+  color: var(--accent);
+  fill: var(--accent);
+}
+
+.menu button.is-danger {
+  color: var(--danger);
+}
+
+.menu button.is-danger svg {
+  color: var(--danger);
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+/* ── Dialogs ────────────────────────────────────────────────────────── */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--backdrop);
+  animation: fade-in 0.15s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.dialog,
+.folder-tree-picker,
+.upload-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 460px);
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: fade-up 0.18s ease-out;
+}
+
+.dialog--wide {
+  width: min(100%, 560px);
+}
+
+.dialog > header,
+.folder-tree-picker > header,
+.upload-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 0;
+}
+
+.dialog h2,
+.folder-tree-picker h2,
+.upload-dialog h2 {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.dialog > header p,
+.folder-tree-picker > header p,
+.upload-dialog > header p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.dialog-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.dialog-icon--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dialog-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  color: var(--subtle);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.dialog-body strong {
+  color: var(--text);
+}
+
+.dialog-warning {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.dialog > footer,
+.dialog form > footer,
+.folder-tree-picker > footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
+.dialog form {
+  display: contents;
+}
+
+.choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.choice-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.choice-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+}
+
+.choice-card > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.choice-card strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.choice-card span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ── Folder tree picker ─────────────────────────────────────────────── */
+.folder-tree-body {
+  gap: 4px;
+}
+
+.folder-tree-scroll {
+  max-height: min(48vh, 380px);
+  overflow-y: auto;
+}
+
+.folder-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.folder-tree-node:hover {
+  background: var(--surface-soft);
+}
+
+.folder-tree-node.is-selected {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.folder-tree-node.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.folder-tree-arrow {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  color: var(--muted);
+}
+
+.folder-tree-spacer {
+  display: inline-block;
+  width: 16px;
+}
+
+.folder-tree-icon {
+  color: var(--kind-folder);
+}
+
+.folder-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-tree-empty {
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── Empty, loading and route states ────────────────────────────────── */
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 56px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+}
+
+.empty-state__icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.empty-state__icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.empty-state h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.empty-state p {
+  max-width: 420px;
+  color: var(--muted);
+}
+
+.empty-state > button,
+.empty-state > div:last-child {
+  margin-top: 8px;
+}
+
+.app-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-state {
+  display: grid;
+  gap: 16px;
+}
+
+.loading-state__intro {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.skeleton-card {
+  height: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface-soft) 50%, var(--surface-muted) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.route-loader {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 100vh;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.operation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  background: var(--backdrop);
+}
+
+.operation-overlay > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ── Toasts ─────────────────────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1500;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 14px;
+  animation: fade-up 0.18s ease-out;
+  pointer-events: auto;
+}
+
+.toast svg {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.toast.is-success {
+  border-left-color: var(--success);
+}
+
+.toast.is-success svg {
+  color: var(--success);
+}
+
+.toast.is-error {
+  border-left-color: var(--danger);
+}
+
+.toast.is-error svg {
+  color: var(--danger);
+}
+
+/* ── Breadcrumbs ────────────────────────────────────────────────────── */
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.breadcrumbs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbs a:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.breadcrumbs a[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.breadcrumbs svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dialog-textarea {
+  min-height: 96px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+  font: inherit;
+}

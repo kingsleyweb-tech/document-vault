@@ -1,0 +1,590 @@
+.pptx-viewer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--text);
+}
+
+.pptx-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.pptx-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pptx-page-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pptx-page-field input {
+  width: 56px;
+  padding: 5px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  font-size: 13px;
+}
+
+.pptx-meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pptx-resume.resume-reading-banner {
+  position: static;
+  transform: none;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-muted);
+  box-shadow: none;
+  color: var(--text);
+  animation: none;
+}
+
+.pptx-resume.resume-reading-banner strong {
+  color: var(--text);
+}
+
+.pptx-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.pptx-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 320px;
+  overflow: auto;
+  background: var(--surface-soft);
+}
+
+.pptx-slide-frame {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12), 0 8px 24px rgba(16, 24, 40, 0.08);
+}
+
+.pptx-slide-frame.is-loading,
+.pptx-slide-frame.is-error {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pptx-slide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  transform-origin: 0 0;
+  color: #1f1f1f;
+  font-family: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.pptx-bg-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pptx-box,
+.pptx-text {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.pptx-text {
+  display: flex;
+  flex-direction: column;
+  padding: 4.8px 9.6px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.pptx-text--middle {
+  justify-content: center;
+}
+
+.pptx-text--bottom {
+  justify-content: flex-end;
+}
+
+.pptx-text.is-unplaced {
+  position: relative;
+  margin: 24px 48px 0;
+}
+
+.pptx-paragraph {
+  position: relative;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.pptx-bullet {
+  position: absolute;
+  left: 4px;
+  line-height: inherit;
+}
+
+.pptx-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+}
+
+.pptx-table-box {
+  overflow: hidden;
+}
+
+.pptx-table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+.pptx-table td {
+  padding: 4px 8px;
+  border: 1px solid #b9b2a6;
+  vertical-align: top;
+}
+
+.pptx-unsupported {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 2px dashed #b9b2a6;
+  background: rgba(245, 240, 232, 0.7);
+  color: #6b5d4a;
+  font-size: 18px;
+  text-align: center;
+}
+
+.pptx-hidden-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(16, 24, 40, 0.75);
+  color: #ffffff;
+  font-size: 12px;
+}
+
+.pptx-thumbs {
+  display: flex;
+  flex: 0 0 auto;
+  width: 212px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.pptx-thumbs-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pptx-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 10px 10px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.pptx-thumb .pptx-slide-frame {
+  outline: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.pptx-thumb:hover .pptx-slide-frame {
+  outline-color: var(--border-strong);
+}
+
+.pptx-thumb.is-active .pptx-slide-frame {
+  outline: 2px solid var(--accent);
+}
+
+.pptx-thumb.is-active .pptx-thumb-number {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.pptx-thumb-number {
+  width: 22px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pptx-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 280px;
+  flex: 0 0 auto;
+  padding: 12px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+}
+
+.pptx-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.pptx-search-form {
+  display: flex;
+  gap: 6px;
+}
+
+.pptx-search-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.pptx-search-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pptx-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pptx-search-results button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+}
+
+.pptx-search-results button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.pptx-search-results span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.pptx-fidelity-note {
+  margin: 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .pptx-thumbs {
+    display: none;
+  }
+
+  .pptx-search {
+    position: absolute;
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: 55%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    z-index: 5;
+  }
+
+  .pptx-body {
+    position: relative;
+  }
+
+  .pptx-meta {
+    display: none;
+  }
+}
+
+/* ── Slideshow ───────────────────────────────────────────────────────── */
+.pptx-present {
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* When the open-time label is shown it already pushes the button to the right. */
+.pptx-meta + .pptx-present {
+  margin-left: 12px;
+}
+
+@media (max-width: 640px) {
+  .pptx-meta + .pptx-present {
+    margin-left: auto;
+  }
+}
+
+.pptx-show {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.pptx-show.is-idle {
+  cursor: none;
+}
+
+.pptx-show .pptx-slide-frame {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.pptx-show-end {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 18px;
+}
+
+.pptx-show-controls {
+  position: absolute;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(28, 22, 17, 0.82);
+  color: #fff;
+  transform: translateX(-50%);
+  transition: opacity 0.25s ease;
+  backdrop-filter: blur(8px);
+}
+
+.pptx-show.is-idle .pptx-show-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pptx-show-controls button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pptx-show-controls button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.pptx-show-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pptx-show-counter {
+  min-width: 64px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.pptx-show-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Slideshow transitions: both slides share one grid cell so they overlap while the effect runs. */
+.pptx-show-layer {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+}
+
+@keyframes pptx-tr-fade {
+  from { opacity: 0; }
+}
+
+@keyframes pptx-tr-fade-out {
+  to { opacity: 0; }
+}
+
+@keyframes pptx-tr-slide-in {
+  from { translate: var(--pptx-tr-from); }
+}
+
+@keyframes pptx-tr-slide-out {
+  to { translate: var(--pptx-tr-to); }
+}
+
+@keyframes pptx-tr-clip {
+  from { clip-path: var(--pptx-tr-clip); }
+  to { clip-path: inset(0); }
+}
+
+@keyframes pptx-tr-circle {
+  from { clip-path: circle(0% at 50% 50%); }
+  to { clip-path: circle(75% at 50% 50%); }
+}
+
+@keyframes pptx-tr-zoom {
+  from { opacity: 0; scale: 0.3; }
+}
+
+/*
+ * Animation effects on slide objects. Each keyframe set describes an entrance;
+ * exits play it in reverse. Frames without an end use the object's own style.
+ */
+@keyframes pptx-fx-appear {
+  from { opacity: 0; }
+}
+
+@keyframes pptx-fx-fade {
+  from { opacity: 0; }
+}
+
+@keyframes pptx-fx-fly {
+  from { translate: var(--pptx-from); }
+  to { translate: var(--pptx-base); }
+}
+
+@keyframes pptx-fx-float {
+  from { opacity: 0; translate: var(--pptx-from); }
+  to { opacity: 1; translate: var(--pptx-base); }
+}
+
+@keyframes pptx-fx-bounce {
+  0% { translate: var(--pptx-from); animation-timing-function: ease-in; }
+  60% { translate: var(--pptx-base); scale: 1 0.9; animation-timing-function: ease-out; }
+  80% { scale: 1 1.04; }
+  100% { translate: var(--pptx-base); scale: 1; }
+}
+
+@keyframes pptx-fx-wipe {
+  from { clip-path: var(--pptx-clip); }
+  to { clip-path: inset(0); }
+}
+
+@keyframes pptx-fx-split {
+  from { clip-path: var(--pptx-clip); }
+  to { clip-path: inset(0); }
+}
+
+@keyframes pptx-fx-circle {
+  from { clip-path: circle(0% at 50% 50%); }
+  to { clip-path: circle(75% at 50% 50%); }
+}
+
+@keyframes pptx-fx-zoom {
+  from { opacity: 0; scale: 0; }
+}
+
+@keyframes pptx-fx-spin {
+  from { rotate: 0deg; }
+  to { rotate: 360deg; }
+}
+
+@keyframes pptx-fx-pulse {
+  50% { scale: 1.08; }
+}
+
+@keyframes pptx-fx-teeter {
+  20% { rotate: 6deg; }
+  40% { rotate: -6deg; }
+  60% { rotate: 4deg; }
+  80% { rotate: -4deg; }
+  100% { rotate: 0deg; }
+}
+
+@keyframes pptx-fx-grow {
+  from { scale: var(--pptx-scale-from); }
+  to { scale: var(--pptx-scale-to); }
+}
+
+@keyframes pptx-fx-transparency {
+  from { opacity: var(--pptx-opacity-from); }
+  to { opacity: var(--pptx-opacity-to); }
+}
+
+@keyframes pptx-fx-path {
+  from { translate: var(--pptx-from); }
+  to { translate: var(--pptx-to); }
+}
