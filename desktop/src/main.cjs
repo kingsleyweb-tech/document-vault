@@ -4,6 +4,7 @@ const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, session, shell } = require('electron')
 const { createStaticServer } = require('./static-server.cjs')
+const { createBrowserSignIn } = require('./browser-sign-in.cjs')
 const { findUpdate } = require('./updates.cjs')
 
 const SITE = 'https://documents-vault.vercel.app'
@@ -22,6 +23,18 @@ let mainWindow = null
 let appOrigin = null
 let companion = null
 let staticServer = null
+
+// Google sign-in happens in the user's browser; see browser-sign-in.cjs.
+const browserSignIn = createBrowserSignIn({
+  origin: () => appOrigin,
+  openBrowser: (url) => shell.openExternal(url),
+  onComplete: () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  },
+})
 
 // Development and tests only: a separate profile, so checks never touch a real one.
 if (!app.isPackaged && process.env.DV_USER_DATA) app.setPath('userData', process.env.DV_USER_DATA)
@@ -47,7 +60,7 @@ app.userAgentFallback = app.userAgentFallback.replace(/\s(Electron|document-vaul
 async function start() {
   lockDownSessions()
 
-  staticServer = createStaticServer(WEB_ROOT)
+  staticServer = createStaticServer(WEB_ROOT, { routes: browserSignIn.routes })
   const port = await staticServer.listen(APP_PORTS)
   appOrigin = `http://localhost:${port}`
 
@@ -225,6 +238,21 @@ function registerIpc() {
     if (!fromApp(event) || !companion) return null
     return companion.newPairingCode()
   })
+  ipcMain.handle('dv:google-sign-in', async (event, options) => {
+    if (!fromApp(event)) throw new Error('Not allowed')
+    const mode = options?.mode === 'reauthorize' ? 'reauthorize' : 'login'
+    const hint = typeof options?.hint === 'string' ? options.hint : ''
+    // Errors lose their details on the way to the page, so report a plain result.
+    try {
+      const { idToken, accessToken } = await browserSignIn.start({ mode, hint })
+      return { ok: true, idToken, accessToken }
+    } catch (error) {
+      return { ok: false, cancelled: error?.code === 'desktop/sign-in-cancelled', message: String(error?.message ?? error) }
+    }
+  })
+  ipcMain.handle('dv:cancel-google-sign-in', (event) => {
+    if (fromApp(event)) browserSignIn.cancel()
+  })
   ipcMain.handle('dv:check-updates', (event) => {
     if (!fromApp(event)) return
     return checkForUpdates({ quiet: false })
@@ -317,6 +345,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  browserSignIn.cancel()
   void companion?.close()
   void staticServer?.close()
 })

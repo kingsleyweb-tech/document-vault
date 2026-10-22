@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { FirebaseError } from 'firebase/app'
 import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { signInWithGoogle } from '../services/auth'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { cancelBrowserSignIn, signInWithGoogle, signsInThroughBrowser } from '../services/auth'
 import { useAuth } from '../hooks/useAuth'
-import { safeNextPath } from '../routing'
+import { canShowSignInPage, clearSignInNotes, isDesktopApp, rememberedDestination, safeNextPath } from '../routing'
 import loginImage from '../assets/col.png'
 import vaultLogo from '../assets/dv.png'
 
-function GoogleLogo() {
+export function GoogleLogo() {
   return (
     <svg className="google-logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path
@@ -34,11 +34,16 @@ function GoogleLogo() {
 export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   const { isAuthenticated, loading } = useAuth()
   const [searchParams] = useSearchParams()
-  const next = safeNextPath(searchParams.get('next'), window.location.origin)
+  const next = safeNextPath(searchParams.get('next') ?? rememberedDestination(), window.location.origin)
   const signedIn = !loading && isAuthenticated
+  const navigate = useNavigate()
+  // Only reachable from the site's Sign in, Get started and Open the web app
+  // buttons (or the desktop app); a typed address goes to the home page.
+  const [allowed] = useState(() => isDesktopApp() || canShowSignInPage())
   const [signInError, setSignInError] = useState<string | null>(null)
   const [signingIn, setSigningIn] = useState(false)
   const buttonDisabled = loading || signingIn
+  const throughBrowser = signsInThroughBrowser()
 
   async function handleGoogleSignIn() {
     setSignInError(null)
@@ -56,11 +61,20 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
 
   // The workspace is a separate part of the site, so it opens with a full page load.
   useEffect(() => {
-    if (signedIn) window.location.replace(next)
-  }, [signedIn, next])
+    if (signedIn) {
+      clearSignInNotes()
+      window.location.replace(next)
+    } else if (!loading && !allowed) {
+      navigate('/', { replace: true })
+    }
+  }, [signedIn, loading, allowed, next, navigate])
 
   if (signedIn) {
     return <div className="route-loader">Opening your vault...</div>
+  }
+
+  if (!allowed) {
+    return <div className="route-loader">{loading ? 'Checking session...' : 'Redirecting...'}</div>
   }
 
   return (
@@ -100,8 +114,24 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
           ) : null}
           <button type="button" className="login__google" onClick={() => void handleGoogleSignIn()} disabled={buttonDisabled}>
             <GoogleLogo />
-            <span>{loading ? 'Checking session...' : signingIn ? 'Opening Google...' : 'Continue with Google'}</span>
+            <span>
+              {loading
+                ? 'Checking session...'
+                : signingIn
+                  ? throughBrowser
+                    ? 'Waiting for your browser...'
+                    : 'Opening Google...'
+                  : 'Continue with Google'}
+            </span>
           </button>
+          {signingIn && throughBrowser ? (
+            <p className="login__fineprint" role="status">
+              Google sign-in has opened in your web browser. Finish there and you will come straight back here.{' '}
+              <button type="button" className="login__cancel" onClick={cancelBrowserSignIn}>
+                Cancel
+              </button>
+            </p>
+          ) : null}
           <p className="login__fineprint">
             {mode === 'register'
               ? 'There is no separate sign-up form: your vault is created the first time you continue with Google. '

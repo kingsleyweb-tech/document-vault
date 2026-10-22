@@ -3,9 +3,13 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
+  signInWithCredential,
   signInWithPopup,
   signOut,
+  type UserCredential,
 } from 'firebase/auth'
+import { FirebaseError } from 'firebase/app'
+import { desktopBridge } from './desktopCompanion'
 import { auth } from './firebase'
 import { clearBlobCache, ensureVaultFolder } from './googleDrive'
 import { clearOfflineStore } from './offlineStore'
@@ -18,12 +22,41 @@ const tokenStorageKey = 'documentVault.googleDriveAccessToken'
 const tokenExpiryKey = 'documentVault.googleDriveAccessTokenExpiry'
 const tokenChangedEvent = 'documentVault.googleDriveTokenChanged'
 
-export async function signInWithGoogle() {
+/**
+ * Signs in with Google and returns the Firebase result with the Drive token.
+ * Google refuses to sign in inside the desktop app's own window, so there the
+ * app opens sign-in in the user's browser and signs in here with the tokens it
+ * sends back. Everywhere else Google's pop-up is used.
+ */
+async function googleSignIn(mode: 'login' | 'reauthorize'): Promise<{ result: UserCredential; accessToken?: string }> {
   await ensureAuthPersistence()
-  const provider = createGoogleProvider('login')
-  const result = await signInWithPopup(auth, provider)
-  const credential = GoogleAuthProvider.credentialFromResult(result)
-  const accessToken = credential?.accessToken
+  const bridge = desktopBridge()
+  if (bridge?.signInWithGoogle) {
+    const answer = await bridge.signInWithGoogle({ mode, hint: mode === 'reauthorize' ? (auth.currentUser?.email ?? '') : '' })
+    if (!answer.ok) {
+      // Same code as a closed pop-up, so callers show their usual "cancelled" message.
+      if (answer.cancelled) throw new FirebaseError('auth/popup-closed-by-user', answer.message)
+      throw new Error(answer.message)
+    }
+    const result = await signInWithCredential(auth, GoogleAuthProvider.credential(answer.idToken, answer.accessToken))
+    return { result, accessToken: answer.accessToken }
+  }
+  const result = await signInWithPopup(auth, createGoogleProvider(mode))
+  return { result, accessToken: GoogleAuthProvider.credentialFromResult(result)?.accessToken }
+}
+
+/** Inside the desktop app: stop waiting for a browser sign-in that was abandoned. */
+export function cancelBrowserSignIn() {
+  void desktopBridge()?.cancelGoogleSignIn?.()
+}
+
+/** True when Google sign-in opens in the user's browser rather than a pop-up. */
+export function signsInThroughBrowser() {
+  return Boolean(desktopBridge()?.signInWithGoogle)
+}
+
+export async function signInWithGoogle() {
+  const { result, accessToken } = await googleSignIn('login')
 
   if (!accessToken) {
     throw new Error('Google sign-in succeeded, but Drive authorization was not granted.')
@@ -80,11 +113,7 @@ export function observeDriveAccessToken(callback: (accessToken: string | null) =
 }
 
 export async function reconnectGoogleDrive() {
-  await ensureAuthPersistence()
-  const provider = createGoogleProvider('reauthorize')
-  const result = await signInWithPopup(auth, provider)
-  const credential = GoogleAuthProvider.credentialFromResult(result)
-  const accessToken = credential?.accessToken
+  const { result, accessToken } = await googleSignIn('reauthorize')
 
   if (!accessToken) {
     throw new Error('Google Drive authorization was not granted.')
@@ -152,7 +181,7 @@ function saveDriveAccessToken(accessToken: string) {
   localStorage.setItem(tokenExpiryKey, (Date.now() + 55 * 60 * 1000).toString())
 }
 
-function createGoogleProvider(mode: 'login' | 'reauthorize') {
+function createGoogleProvider(mode: 'login' | 'reauthorize', loginHint = auth.currentUser?.email) {
   const provider = new GoogleAuthProvider()
   provider.addScope(driveScope)
   if (mode === 'login') {
@@ -161,8 +190,7 @@ function createGoogleProvider(mode: 'login' | 'reauthorize') {
     // Renewing access for the signed-in account: Google skips the account
     // chooser, and the consent screen too when access was granted before, so
     // the window closes by itself. It asks again only if access was revoked.
-    const email = auth.currentUser?.email
-    if (email) provider.setCustomParameters({ login_hint: email })
+    if (loginHint) provider.setCustomParameters({ login_hint: loginHint })
   }
   return provider
 }

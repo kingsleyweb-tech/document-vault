@@ -125,7 +125,14 @@ export interface DesktopBridge {
   companionPort: number | null
   requestPairingCode: () => Promise<string | null>
   checkForUpdates: () => Promise<void>
+  /** Google sign-in in the user's browser (added in 1.0.1). */
+  signInWithGoogle?: (options: { mode: 'login' | 'reauthorize'; hint?: string }) => Promise<DesktopSignInResult>
+  cancelGoogleSignIn?: () => Promise<void>
 }
+
+export type DesktopSignInResult =
+  | { ok: true; idToken: string; accessToken: string }
+  | { ok: false; cancelled: boolean; message: string }
 
 export function desktopBridge(): DesktopBridge | null {
   if (typeof window === 'undefined') return null

@@ -1,14 +1,33 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Info, TriangleAlert } from 'lucide-react'
+import { allowSignInPage } from '../routing'
 
 // The workspace is a separate part of the site with its own router, so links
-// into it are ordinary page loads rather than router links.
+// into it are ordinary page loads rather than router links. Clicking one means
+// the visitor wants in, so a signed-out visitor is shown sign-in, not the home page.
 export function AppLink({ to = '/app', className, children }: { to?: string; className?: string; children: ReactNode }) {
   return (
-    <a href={to} className={className}>
+    <a href={to} className={className} onClick={() => allowSignInPage()}>
       {children}
     </a>
+  )
+}
+
+/** The only way onto the sign-in page: typing /login or /register goes to the home page. */
+export function SignInLink({
+  to = '/login',
+  className,
+  children,
+}: {
+  to?: '/login' | '/register'
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <Link to={to} className={className} onClick={() => allowSignInPage()}>
+      {children}
+    </Link>
   )
 }
 
@@ -79,9 +98,9 @@ export function ClosingCta() {
             <p>Sign in with Google to create your vault. Your files stay in your own Google Drive.</p>
           </div>
           <div className="site-cta__actions">
-            <Link to="/register" className="site-button site-button--primary">
+            <SignInLink to="/register" className="site-button site-button--primary">
               Get started
-            </Link>
+            </SignInLink>
             <Link to="/downloads" className="site-button site-button--secondary">
               Downloads
             </Link>

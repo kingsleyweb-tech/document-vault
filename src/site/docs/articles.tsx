@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { AppLink, Callout } from '../ui'
+import { AppLink, Callout, SignInLink } from '../ui'
 
 export interface DocSection {
   id: string
@@ -47,7 +47,8 @@ export const articles: DocArticle[] = [
           <>
             <ol>
               <li>
-                Choose <Link to="/register">Get started</Link> (or <Link to="/login">Sign in</Link>; they work the same way).
+                Choose <SignInLink to="/register">Get started</SignInLink> (or <SignInLink to="/login">Sign in</SignInLink>; they work the
+                same way).
               </li>
               <li>Choose Continue with Google and pick your account.</li>
               <li>
@@ -535,12 +536,23 @@ export const articles: DocArticle[] = [
       {
         id: 'signing-in',
         title: 'Signing in',
-        keywords: 'google login desktop',
+        keywords: 'google login desktop browser couldn’t sign you in not secure',
         body: (
-          <p>
-            Sign in with Google exactly as on the web. The sign-in window is Google’s own page; Document Vault never sees your
-            password.
-          </p>
+          <>
+            <p>
+              Google does not allow signing in inside desktop apps, so choosing Continue with Google opens a sign-in page in
+              your usual web browser. Continue with Google there, and the app signs you in straight away. Your browser does not
+              stay signed in, and Document Vault never sees your password.
+            </p>
+            <p>
+              Google Drive access lasts about an hour at a time. When it runs out, choose Reconnect Google Drive in the app and
+              confirm in your browser.
+            </p>
+            <Callout>
+              Version 1.0.0 tried to sign in inside the app, which Google blocks with “Couldn’t sign you in”. Install the latest
+              version from <Link to="/downloads">Downloads</Link>.
+            </Callout>
+          </>
         ),
       },
       {

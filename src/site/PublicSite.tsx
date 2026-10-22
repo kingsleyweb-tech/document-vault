@@ -14,6 +14,7 @@ const Terms = lazy(() => import('./pages/Terms'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 // Sign-in needs Firebase, so it is the only part of this site that loads it.
 const SignIn = lazy(() => import('./SignIn'))
+const DesktopSignIn = lazy(() => import('./DesktopSignIn'))
 
 export default function PublicSite() {
   return (
@@ -21,6 +22,7 @@ export default function PublicSite() {
       <Routes>
         <Route path="/login" element={<Lazy><SignIn /></Lazy>} />
         <Route path="/register" element={<Lazy><SignIn mode="register" /></Lazy>} />
+        <Route path="/desktop-sign-in" element={<Lazy><DesktopSignIn /></Lazy>} />
         <Route element={<SiteLayout />}>
           <Route index element={<Home />} />
           <Route path="features" element={<Features />} />

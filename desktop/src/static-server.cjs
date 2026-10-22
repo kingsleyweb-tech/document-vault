@@ -50,7 +50,11 @@ function resolveFile(root, pathname) {
   return null
 }
 
-function createStaticServer(rootDir) {
+/**
+ * routes maps a path to a handler for requests the static files cannot answer
+ * (the browser sign-in hand-off). Handlers see every method; files only GET and HEAD.
+ */
+function createStaticServer(rootDir, { routes = {} } = {}) {
   const root = path.resolve(rootDir)
   const fallback = path.join(root, 'index.html')
   let allowedHosts = new Set()
@@ -61,11 +65,15 @@ function createStaticServer(rootDir) {
       response.writeHead(421, { 'Content-Type': 'text/plain' }).end('Misdirected request')
       return
     }
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+    if (Object.hasOwn(routes, pathname)) {
+      routes[pathname](request, response)
+      return
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end()
       return
     }
-    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
     // Like the website's host, unknown paths get the single page, which shows its own "not found".
     const file = resolveFile(root, pathname) ?? fallback
     const type = TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream'

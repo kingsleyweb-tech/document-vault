@@ -20,11 +20,15 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+// The desktop app's browser sign-in page runs on the app's local address in the
+// user's own browser; it must not leave a service worker behind there.
+const desktopSignInPage = window.location.pathname === '/desktop-sign-in'
+
+if ('serviceWorker' in navigator && import.meta.env.PROD && !desktopSignInPage) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js')
   })
-} else if ('serviceWorker' in navigator) {
+} else if ('serviceWorker' in navigator && !desktopSignInPage) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.getRegistrations().then((registrations) => {
       registrations.forEach((registration) => {

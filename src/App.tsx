@@ -23,7 +23,7 @@ import type { BulkActions } from './components/documents/DocumentCollection'
 import { Dialog } from './components/ui/Dialog'
 import { partitionLibrary } from './utils/trash'
 import { ProtectedRoute } from './routes/ProtectedRoute'
-import { logout, reconnectGoogleDrive, clearDriveAccessToken } from './services/auth'
+import { logout, reconnectGoogleDrive, clearDriveAccessToken, signsInThroughBrowser } from './services/auth'
 import { downloadDriveFile, isDriveAuthorizationError } from './services/googleDrive'
 import { buildDownloadName, ensureCacheMatchesVersion, getPreviewKind } from './services/documentViewer'
 import { hasStoredOriginal } from './services/offlineStore'
@@ -347,8 +347,11 @@ function AuthenticatedVaultInner() {
     // Renewing here, inside the click, lets the browser allow Google's window;
     // with access already granted it closes by itself without questions. The
     // viewer reloads when the token arrives.
+    // In the desktop app renewing means switching to the browser, so it waits
+    // for the viewer's Reconnect button instead of happening on its own.
     if (
       !accessToken &&
+      !signsInThroughBrowser() &&
       navigator.onLine &&
       documentRecord.driveFileId &&
       !hasStoredOriginal(documentRecord.driveFileId) &&

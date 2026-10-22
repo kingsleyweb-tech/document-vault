@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
-import { AppLink } from './ui'
+import { AppLink, SignInLink } from './ui'
 
 // The 192-pixel app icon is the same mark as the workspace logo at a sixth of the size.
 const logo = '/icon-192.png'
@@ -65,12 +65,12 @@ export function SiteLayout() {
             ))}
           </nav>
           <div className="site-header__actions">
-            <Link to="/login" className="site-button site-button--ghost">
+            <SignInLink to="/login" className="site-button site-button--ghost">
               Sign in
-            </Link>
-            <Link to="/register" className="site-button site-button--primary">
+            </SignInLink>
+            <SignInLink to="/register" className="site-button site-button--primary">
               Get started
-            </Link>
+            </SignInLink>
           </div>
           <button
             type="button"
@@ -93,12 +93,12 @@ export function SiteLayout() {
               ))}
             </nav>
             <div className="site-mobile-menu__actions">
-              <Link to="/register" className="site-button site-button--primary site-button--block">
+              <SignInLink to="/register" className="site-button site-button--primary site-button--block">
                 Get started
-              </Link>
-              <Link to="/login" className="site-button site-button--secondary site-button--block">
+              </SignInLink>
+              <SignInLink to="/login" className="site-button site-button--secondary site-button--block">
                 Sign in
-              </Link>
+              </SignInLink>
             </div>
           </div>
         </div>

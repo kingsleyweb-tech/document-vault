@@ -15,7 +15,7 @@ import {
   Star,
 } from 'lucide-react'
 import { features, trustPoints } from '../content'
-import { AppLink, ArrowLink, ClosingCta, SectionHead } from '../ui'
+import { AppLink, ArrowLink, ClosingCta, SectionHead, SignInLink } from '../ui'
 import { usePageMeta } from '../meta'
 
 const highlights = features.slice(0, 6)
@@ -38,9 +38,9 @@ export function Home() {
               file is stored in your own Google Drive, and only you can see it.
             </p>
             <div className="site-hero__actions">
-              <Link to="/register" className="site-button site-button--primary">
+              <SignInLink to="/register" className="site-button site-button--primary">
                 Get started
-              </Link>
+              </SignInLink>
               <Link to="/downloads" className="site-button site-button--secondary">
                 <Download aria-hidden="true" />
                 Downloads

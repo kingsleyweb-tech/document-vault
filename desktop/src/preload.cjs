@@ -15,4 +15,11 @@ contextBridge.exposeInMainWorld('documentVaultDesktop', {
   companionPort: typeof info.companionPort === 'number' ? info.companionPort : null,
   requestPairingCode: () => ipcRenderer.invoke('dv:pairing-code'),
   checkForUpdates: () => ipcRenderer.invoke('dv:check-updates'),
+  // Opens Google sign-in in the user's browser and resolves with the Google tokens.
+  signInWithGoogle: (options) =>
+    ipcRenderer.invoke('dv:google-sign-in', {
+      mode: options?.mode === 'reauthorize' ? 'reauthorize' : 'login',
+      hint: typeof options?.hint === 'string' ? options.hint : '',
+    }),
+  cancelGoogleSignIn: () => ipcRenderer.invoke('dv:cancel-google-sign-in'),
 })

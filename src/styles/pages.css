@@ -886,6 +886,17 @@
   font-size: 12px;
 }
 
+.login__cancel {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .login__visual {
   position: relative;
   margin: 16px 16px 16px 0;

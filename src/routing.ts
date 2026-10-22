@@ -32,3 +32,70 @@ export function safeNextPath(next: string | null | undefined, origin: string) {
 export function signInPath(next?: string) {
   return next ? `/login?next=${encodeURIComponent(next)}` : '/login'
 }
+
+// The sign-in page opens only from the site's own Sign in, Get started and
+// Open the web app buttons, never from a typed or pasted address; those go to
+// the home page instead. Clicking one of those buttons leaves a short-lived
+// note in this tab, which also lets the sign-in page survive a refresh.
+const SIGN_IN_ENTRY_KEY = 'documentVault.signInEntry'
+const SIGN_IN_ENTRY_LIFETIME_MS = 30 * 60 * 1000
+// The workspace page a signed-out visitor asked for, so they land there after signing in.
+const DESTINATION_KEY = 'documentVault.afterSignIn'
+
+type KeyValueStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+function tabStorage(): KeyValueStore | null {
+  try {
+    return window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+export function allowSignInPage(storage = tabStorage(), now = Date.now()) {
+  try {
+    storage?.setItem(SIGN_IN_ENTRY_KEY, String(now))
+  } catch {
+    // Storage blocked: the visitor is sent to the home page and can try again.
+  }
+}
+
+export function canShowSignInPage(storage = tabStorage(), now = Date.now()) {
+  try {
+    const since = Number(storage?.getItem(SIGN_IN_ENTRY_KEY))
+    return Number.isFinite(since) && since > 0 && now - since >= 0 && now - since < SIGN_IN_ENTRY_LIFETIME_MS
+  } catch {
+    return false
+  }
+}
+
+export function rememberDestination(path: string, storage = tabStorage()) {
+  try {
+    storage?.setItem(DESTINATION_KEY, path)
+  } catch {
+    // Not remembered; the workspace home opens after sign-in instead.
+  }
+}
+
+export function rememberedDestination(storage = tabStorage()) {
+  try {
+    return storage?.getItem(DESTINATION_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Called once signed in: the notes have done their job. */
+export function clearSignInNotes(storage = tabStorage()) {
+  try {
+    storage?.removeItem(SIGN_IN_ENTRY_KEY)
+    storage?.removeItem(DESTINATION_KEY)
+  } catch {
+    // Nothing to clear.
+  }
+}
+
+/** The desktop app has no home page of its own, so it always shows sign-in. */
+export function isDesktopApp() {
+  return typeof window !== 'undefined' && Boolean((window as { documentVaultDesktop?: { isDesktop?: boolean } }).documentVaultDesktop?.isDesktop)
+}

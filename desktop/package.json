@@ -1,7 +1,7 @@
 {
   "name": "document-vault-desktop",
   "productName": "Document Vault",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Document Vault for Windows, macOS and Linux.",
   "author": "Document Vault",
