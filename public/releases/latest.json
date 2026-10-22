@@ -4,9 +4,9 @@
   "version": "1.0.2",
   "releasedAt": "2026-10-22T02:34:35.091Z",
   "notes": [
-    "After Google sign-in in your browser, the page now takes you straight back to the app, with an Open Document Vault button if your browser asks first.",
-    "A refreshed workspace: a cleaner dashboard with search up front, and file lists designed for phones.",
-    "A new sign-in page."
+    "Slides fill the viewer like in PowerPoint, and every viewer button works, including Slideshow, Fit and full screen.",
+    "Closing a document no longer stops its download; it carries on in the background and opening it again picks up where it is.",
+    "Very long PDFs open more reliably, and pages that need special fonts or picture decoders now draw correctly."
   ],
   "notesUrl": null,
   "builds": [
