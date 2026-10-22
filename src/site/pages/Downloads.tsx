@@ -68,23 +68,23 @@ export default function Downloads() {
         <div className="site-container">
           <SectionHead eyebrow="Desktop app" title="Windows, macOS and Linux" id="desktop-title">
             The desktop app is the full workspace in its own window, plus search across folders you choose on your computer.
-            {manifest ? ` Current version: ${manifest.version}.` : ''}
           </SectionHead>
           {state.status === 'error' ? (
             <ManifestError onRetry={retry} />
           ) : (
-            <div className="site-grid site-grid--3">
-              {platforms.map((platform) => (
-                <PlatformCard
-                  key={platform.id}
-                  platform={platform}
-                  builds={manifest?.builds.filter((build) => build.platform === platform.id) ?? null}
-                  version={manifest?.version ?? null}
-                  releasedAt={manifest?.releasedAt ?? null}
-                  highlight={system.platform === platform.id}
-                />
-              ))}
-            </div>
+            <>
+              {manifest ? <ReleaseLine manifest={manifest} /> : null}
+              <div className="site-dl">
+                {platforms.map((platform) => (
+                  <PlatformGroup
+                    key={platform.id}
+                    platform={platform}
+                    builds={manifest?.builds.filter((build) => build.platform === platform.id) ?? null}
+                    highlight={system.platform === platform.id}
+                  />
+                ))}
+              </div>
+            </>
           )}
           {manifest && manifest.notes.length > 0 ? (
             <div className="site-prose site-gap-top">
@@ -112,19 +112,7 @@ export default function Downloads() {
             The web app works in any modern browser. On most devices you can also install it, so it opens in its own window from
             your home screen, Dock or Start menu.
           </SectionHead>
-          <div className="site-grid site-grid--2">
-            <article className="site-card site-card--fit">
-              <span className="site-card__icon">
-                <Globe aria-hidden="true" />
-              </span>
-              <h3>Web app</h3>
-              <p>Chrome, Edge, Safari and Firefox, on computers, tablets and phones.</p>
-              <div className="site-card__foot">
-                <AppLink className="site-button site-button--primary">Open the web app</AppLink>
-              </div>
-            </article>
-            <InstallCard system={system} />
-          </div>
+          <InstallSection system={system} />
         </div>
       </section>
 
@@ -349,96 +337,83 @@ function Recommendation({ state, system, onRetry }: { state: LoadState; system: 
   )
 }
 
-function PlatformCard({
+function ReleaseLine({ manifest }: { manifest: ReleaseManifest }) {
+  const released = manifest.releasedAt
+    ? new Date(manifest.releasedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+    : null
+  const unsigned = manifest.builds.some((build) => isDownloadable(build) && !build.signed)
+  return (
+    <p className="site-dl__release">
+      <span className="site-badge site-badge--ok">Version {manifest.version}</span>
+      {released ? <span>Released {released}</span> : null}
+      {unsigned ? (
+        <span>
+          Not yet code-signed: see <a href="#verify-title">Opening the app for the first time</a>
+        </span>
+      ) : null}
+    </p>
+  )
+}
+
+function PlatformGroup({
   platform,
   builds,
-  version,
-  releasedAt,
   highlight,
 }: {
   platform: (typeof platforms)[number]
   builds: ReleaseBuild[] | null
-  version: string | null
-  releasedAt: string | null
   highlight: boolean
 }) {
   return (
-    <article className="site-platform" data-highlight={highlight} aria-labelledby={`platform-${platform.id}`}>
-      <div className="site-platform__head">
-        <span className="site-card__icon">
+    <section className="site-dl__group" data-highlight={highlight} aria-labelledby={`platform-${platform.id}`}>
+      <header className="site-dl__head">
+        <span className="site-dl__icon">
           <platform.icon aria-hidden="true" />
         </span>
         <div>
           <h3 id={`platform-${platform.id}`}>{platformName(platform.id)}</h3>
-          <p>{highlight ? 'Your system' : platform.blurb}</p>
+          <p>{highlight ? <span className="site-badge site-badge--ok">Your system</span> : platform.blurb}</p>
         </div>
+      </header>
+      <div className="site-dl__rows">
+        {builds === null ? (
+          <p className="site-dl__empty" role="status">
+            Loading...
+          </p>
+        ) : builds.length === 0 ? (
+          <p className="site-dl__empty">No {platformName(platform.id)} build is listed for this release.</p>
+        ) : (
+          builds.map((build) => <BuildRow key={build.id} build={build} />)
+        )}
       </div>
-      {builds === null ? (
-        <p role="status">Loading...</p>
-      ) : builds.length === 0 ? (
-        <p>No {platformName(platform.id)} build is listed for this release.</p>
-      ) : (
-        builds.map((build) => <BuildRow key={build.id} build={build} version={version} releasedAt={releasedAt} />)
-      )}
-    </article>
+    </section>
   )
 }
 
-function BuildRow({ build, version, releasedAt }: { build: ReleaseBuild; version: string | null; releasedAt: string | null }) {
+function BuildRow({ build }: { build: ReleaseBuild }) {
   const ready = isDownloadable(build)
   const size = formatBytes(build.size)
   return (
-    <div className="site-build">
-      <div className="site-build__title">
+    <div className="site-dl__row">
+      <div className="site-dl__info">
         <strong>{archName(build.platform, build.arch)}</strong>
-        <span className={`site-badge${ready ? ' site-badge--ok' : ''}`}>{ready ? 'Available' : 'Not yet available'}</span>
-      </div>
-      <dl>
-        <dt>Format</dt>
-        <dd>{build.label}</dd>
-        {version ? (
-          <>
-            <dt>Version</dt>
-            <dd>{version}</dd>
-          </>
-        ) : null}
-        <dt>Requires</dt>
-        <dd>{build.minimumOs}</dd>
-        {ready && size ? (
-          <>
-            <dt>Size</dt>
-            <dd>{size}</dd>
-          </>
-        ) : null}
-        {ready && releasedAt ? (
-          <>
-            <dt>Released</dt>
-            <dd>{new Date(releasedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</dd>
-          </>
-        ) : null}
+        <span>{[build.label, ready ? size : null, build.minimumOs].filter(Boolean).join(' · ')}</span>
+        {build.note ? <span>{build.note}</span> : null}
         {ready && build.sha256 ? (
-          <>
-            <dt>SHA-256</dt>
-            <dd>
-              <code>{build.sha256}</code>
-            </dd>
-          </>
+          <details className="site-dl__sum">
+            <summary>SHA-256 checksum</summary>
+            <code>{build.sha256}</code>
+          </details>
         ) : null}
-        {ready ? (
-          <>
-            <dt>Signed</dt>
-            <dd>{build.signed ? 'Yes' : 'Not yet (see “Opening the app for the first time”)'}</dd>
-          </>
-        ) : null}
-      </dl>
-      {build.note ? <p>{build.note}</p> : null}
+      </div>
       {ready ? (
-        <a href={build.url!} className="site-button site-button--primary site-button--block" rel="noopener noreferrer">
+        <a href={build.url!} className="site-button site-button--primary site-dl__button" rel="noopener noreferrer">
           <MonitorDown aria-hidden="true" />
-          Download {build.label}
+          Download
+          <span className="site-visually-hidden"> {build.label}</span>
         </a>
       ) : (
-        <p className="site-build__pending">This build has not been published yet. Use the web app in the meantime.</p>
+        <span className="site-badge">Not yet available</span>
       )}
     </div>
   )
@@ -461,7 +436,7 @@ function ManifestError({ onRetry }: { onRetry: () => void }) {
   )
 }
 
-function InstallCard({ system }: { system: DetectedSystem }) {
+function InstallSection({ system }: { system: DetectedSystem }) {
   const promptReady = useSyncExternalStore(subscribeInstall, canPromptInstall, () => false)
   const [installed, setInstalled] = useState(isRunningInstalled)
   const [message, setMessage] = useState<string | null>(null)
@@ -477,28 +452,27 @@ function InstallCard({ system }: { system: DetectedSystem }) {
   }
 
   return (
-    <article className="site-card">
-      <span className="site-card__icon">
-        <Smartphone aria-hidden="true" />
-      </span>
-      <h3>Install from your browser</h3>
-      {installed ? (
-        <p>You are using the installed app already.</p>
-      ) : promptReady ? (
-        <>
-          <p>Your browser can install Document Vault now. It will open in its own window.</p>
-          <div className="site-card__foot">
-            <button type="button" className="site-button site-button--primary" onClick={() => void install()}>
+    <div className="site-install">
+      <div className="site-install__web">
+        <span className="site-dl__icon">
+          <Globe aria-hidden="true" />
+        </span>
+        <h3>Web app</h3>
+        <p>Chrome, Edge, Safari and Firefox, on computers, tablets and phones.</p>
+        <div className="site-install__actions">
+          <AppLink className="site-button site-button--primary">Open the web app</AppLink>
+          {!installed && promptReady ? (
+            <button type="button" className="site-button site-button--secondary" onClick={() => void install()}>
               <Download aria-hidden="true" />
               Install app
             </button>
-          </div>
-        </>
-      ) : (
-        <InstallSteps system={system} />
-      )}
-      {message ? <p role="status">{message}</p> : null}
-    </article>
+          ) : null}
+        </div>
+        {installed ? <p>You are using the installed app already.</p> : null}
+        {message ? <p role="status">{message}</p> : null}
+      </div>
+      <InstallSteps system={system} />
+    </div>
   )
 }
 
@@ -529,21 +503,24 @@ function InstallSteps({ system }: { system: DetectedSystem }) {
   const ordered = [...guides].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
 
   return (
-    <>
-      <p>Your browser has not offered an install button here. Use these steps instead:</p>
-      {ordered.map((guide, index) => (
-        <details key={guide.id} className="site-details" open={index === 0}>
-          <summary>{guide.title}</summary>
-          <div>
+    <div className="site-install__guides">
+      <h3>Install it as an app</h3>
+      <div className="site-install__grid">
+        {ordered.map((guide) => (
+          <div key={guide.id} className="site-install__guide" data-preferred={guide.id === preferred}>
+            <strong>
+              {guide.title}
+              {guide.id === preferred ? <span className="site-badge site-badge--ok">This device</span> : null}
+            </strong>
             <ol>
               {guide.steps.map((step) => (
                 <li key={step}>{step}</li>
               ))}
             </ol>
           </div>
-        </details>
-      ))}
-      <p>Firefox on computers cannot install web apps; use the web app in a tab or the desktop app.</p>
-    </>
+        ))}
+      </div>
+      <p className="site-install__note">Firefox on computers cannot install web apps; use the web app in a tab or the desktop app.</p>
+    </div>
   )
 }

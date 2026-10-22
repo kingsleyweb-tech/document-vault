@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FirebaseError } from 'firebase/app'
-import { CheckCircle2, LockKeyhole, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, FileText, LifeBuoy, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { cancelBrowserSignIn, signInWithGoogle, signsInThroughBrowser } from '../services/auth'
 import { useAuth } from '../hooks/useAuth'
@@ -80,10 +80,16 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   return (
     <main className="login">
       <section className="login__panel">
-        <Link to="/" className="brand" aria-label="Document Vault home">
-          <img src={vaultLogo} alt="" aria-hidden="true" />
-          <span>Document Vault</span>
-        </Link>
+        <div className="login__top">
+          <Link to="/" className="brand" aria-label="Document Vault home">
+            <img src={vaultLogo} alt="" aria-hidden="true" />
+            <span>Document Vault</span>
+          </Link>
+          <Link to="/" className="login__back">
+            <ArrowLeft aria-hidden="true" />
+            <span>Back to home</span>
+          </Link>
+        </div>
 
         <div className="login__body">
           <h1>{mode === 'register' ? 'Create your vault' : 'Your important records, organised.'}</h1>
@@ -138,9 +144,20 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
               : ''}
             You will be asked to let Document Vault create and open files it manages in your Drive.
           </p>
-          <p className="login__fineprint">
-            <Link to="/privacy">Privacy</Link> · <Link to="/terms">Terms</Link> · <Link to="/documentation/getting-started">Help signing in</Link>
-          </p>
+          <nav className="login__links" aria-label="More information">
+            <Link to="/documentation/getting-started">
+              <LifeBuoy aria-hidden="true" />
+              Help signing in
+            </Link>
+            <Link to="/privacy">
+              <ShieldCheck aria-hidden="true" />
+              Privacy
+            </Link>
+            <Link to="/terms">
+              <FileText aria-hidden="true" />
+              Terms
+            </Link>
+          </nav>
         </div>
       </section>
 

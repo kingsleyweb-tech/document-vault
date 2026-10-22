@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Callout, PageHead, ReviewNote } from '../ui'
+import { Callout, PageHead, ReviewNote, ReadingLayout } from '../ui'
 import { usePageMeta } from '../meta'
 
 export default function Security() {
@@ -12,7 +12,7 @@ export default function Security() {
       </PageHead>
       <section className="site-section site-section--tight">
         <div className="site-container">
-          <div className="site-prose">
+          <ReadingLayout>
             <h2 id="sign-in">Sign-in and access</h2>
             <ul>
               <li>
@@ -141,7 +141,7 @@ export default function Security() {
               If you find a security problem, tell the administrator who gave you access, privately, and do not share the details
               publicly until it is fixed. <ReviewNote>Public contact address to be confirmed</ReviewNote>
             </p>
-          </div>
+          </ReadingLayout>
         </div>
       </section>
     </>

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Callout, PageHead, ReviewNote } from '../ui'
+import { Callout, PageHead, ReviewNote, ReadingLayout } from '../ui'
 import { usePageMeta } from '../meta'
 
 export default function Terms() {
@@ -12,7 +12,7 @@ export default function Terms() {
       </PageHead>
       <section className="site-section site-section--tight">
         <div className="site-container">
-          <div className="site-prose">
+          <ReadingLayout>
             <Callout tone="warn">
               <strong>Draft.</strong> These terms are a plain-language starting point and have not been reviewed by a lawyer.{' '}
               <ReviewNote />
@@ -67,7 +67,7 @@ export default function Terms() {
 
             <h2 id="changes">Changes</h2>
             <p>These terms may be updated. Continuing to use Document Vault after a change means accepting the new terms.</p>
-          </div>
+          </ReadingLayout>
         </div>
       </section>
     </>

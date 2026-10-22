@@ -98,8 +98,30 @@
 .dashboard__main,
 .dashboard__side {
   display: grid;
-  gap: 20px;
+  gap: 36px;
   min-width: 0;
+}
+
+/* The dashboard's sections sit on the page without their own frames; the
+   side column shares one soft background instead of a box per section. */
+.dashboard .dashboard__main > .panel,
+.dashboard .dashboard__side > .panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.dashboard__side {
+  gap: 28px;
+  padding: 22px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+}
+
+.dashboard .dashboard__side > .upload-card {
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
 }
 
 .panel {
@@ -843,6 +865,84 @@
 .login__open-app {
   min-height: 48px;
   text-decoration: none;
+}
+
+.login__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.login__top .brand {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.login__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--subtle);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.login__back svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.15s ease;
+}
+
+.login__back:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.login__back:hover svg {
+  transform: translateX(-2px);
+}
+
+.login__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.login__links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--subtle);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.login__links a:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.login__links svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-strong);
 }
 
 .login__visual {

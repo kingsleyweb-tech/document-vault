@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Callout, PageHead, ReviewNote } from '../ui'
+import { Callout, PageHead, ReviewNote, ReadingLayout } from '../ui'
 import { usePageMeta } from '../meta'
 
 export default function Privacy() {
@@ -12,7 +12,7 @@ export default function Privacy() {
       </PageHead>
       <section className="site-section site-section--tight">
         <div className="site-container">
-          <div className="site-prose">
+          <ReadingLayout>
             <Callout tone="warn">
               <strong>Draft.</strong> This notice describes how the software works today. It has not yet been reviewed by a
               lawyer, and the operator’s name and contact details still need to be added. <ReviewNote />
@@ -119,7 +119,7 @@ export default function Privacy() {
 
             <h2 id="changes">Changes to this notice</h2>
             <p>When the software changes how it handles data, this page is updated at the same time.</p>
-          </div>
+          </ReadingLayout>
         </div>
       </section>
     </>

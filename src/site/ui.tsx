@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Info, TriangleAlert } from 'lucide-react'
 import { allowSignInPage } from '../routing'
@@ -108,5 +108,52 @@ export function ClosingCta() {
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * Long policy text beside an "On this page" list of its sections, which keeps
+ * the reader's place and fills the space beside the column of text.
+ */
+export function ReadingLayout({ children }: { children: ReactNode }) {
+  const proseRef = useRef<HTMLDivElement>(null)
+  const [sections, setSections] = useState<{ id: string; title: string }[]>([])
+  const [current, setCurrent] = useState<string | null>(null)
+
+  useEffect(() => {
+    const headings = [...(proseRef.current?.querySelectorAll<HTMLHeadingElement>('h2[id]') ?? [])]
+    setSections(headings.map((heading) => ({ id: heading.id, title: heading.textContent ?? '' })))
+    if (headings.length === 0 || typeof IntersectionObserver === 'undefined') return undefined
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting)
+        if (visible.length > 0) setCurrent(visible[0].target.id)
+      },
+      { rootMargin: '-90px 0px -65% 0px' },
+    )
+    headings.forEach((heading) => observer.observe(heading))
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div className="site-reading">
+      <div className="site-prose" ref={proseRef}>
+        {children}
+      </div>
+      {sections.length > 1 ? (
+        <nav className="site-reading__toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <ul>
+            {sections.map((section) => (
+              <li key={section.id}>
+                <a href={`#${section.id}`} aria-current={current === section.id ? 'location' : undefined}>
+                  {section.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
+    </div>
   )
 }
