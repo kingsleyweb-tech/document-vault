@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "Document Vault",
   "version": "1.0.0",
-  "releasedAt": null,
+  "releasedAt": "2026-10-22T00:35:18.406Z",
   "notes": [
     "First desktop release: the Document Vault workspace in its own window, with search across folders you choose on your computer."
   ],
@@ -15,11 +15,11 @@
       "type": "installer",
       "label": "Windows installer",
       "fileName": "Document-Vault-Setup-1.0.0-x64.exe",
-      "url": null,
-      "size": null,
-      "sha256": null,
+      "url": "https://github.com/kingsleyweb-tech/document-vault/releases/download/v1.0.0/Document-Vault-Setup-1.0.0-x64.exe",
+      "size": 121059428,
+      "sha256": "6d0b5e8c0b272ede042b5315a33504068d09b22bd74826ca8ca857e56c500b46",
       "minimumOs": "Windows 10 or 11, 64-bit",
-      "available": false,
+      "available": true,
       "signed": false
     },
     {
@@ -29,11 +29,11 @@
       "type": "dmg",
       "label": "macOS disk image for Apple Silicon",
       "fileName": "Document-Vault-1.0.0-arm64.dmg",
-      "url": null,
-      "size": null,
-      "sha256": null,
+      "url": "https://github.com/kingsleyweb-tech/document-vault/releases/download/v1.0.0/Document-Vault-1.0.0-arm64.dmg",
+      "size": 138053905,
+      "sha256": "c622637649f13f58bd9a147856493d1fbc9d826e27cea0979e71c29c96df1ca0",
       "minimumOs": "macOS 13 Ventura or later",
-      "available": false,
+      "available": true,
       "signed": false
     },
     {
@@ -43,11 +43,11 @@
       "type": "dmg",
       "label": "macOS disk image for Intel",
       "fileName": "Document-Vault-1.0.0-x64.dmg",
-      "url": null,
-      "size": null,
-      "sha256": null,
+      "url": "https://github.com/kingsleyweb-tech/document-vault/releases/download/v1.0.0/Document-Vault-1.0.0-x64.dmg",
+      "size": 144881539,
+      "sha256": "66f9dc848c1a62ba6e87372d65c3f10cbcdda7785ee4e3016ed8dde88e7e00fc",
       "minimumOs": "macOS 13 Ventura or later",
-      "available": false,
+      "available": true,
       "signed": false
     },
     {
