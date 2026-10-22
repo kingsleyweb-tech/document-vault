@@ -5,14 +5,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Eye,
-  FileText,
-  Folder,
   FolderPlus,
-  HardDrive,
   Loader2,
   Search,
-  Star,
-  Trash2,
   Upload,
   X,
 } from 'lucide-react'
@@ -35,7 +30,6 @@ interface DashboardViewProps {
   loading: boolean
   error: string | null
   accessToken?: string | null
-  driveConnected: boolean
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   actions: ItemActions
@@ -43,8 +37,8 @@ interface DashboardViewProps {
   onUploadClick: () => void
   onUploadProgressClick: () => void
   onCreateFolder: () => void
-  onSearchFocus: () => void
-  onReconnectDrive: () => void
+  search: string
+  onSearchChange: (value: string) => void
 }
 
 function greeting() {
@@ -62,7 +56,6 @@ export function DashboardView({
   loading,
   error,
   accessToken,
-  driveConnected,
   viewMode,
   onViewModeChange,
   actions,
@@ -70,8 +63,8 @@ export function DashboardView({
   onUploadClick,
   onUploadProgressClick,
   onCreateFolder,
-  onSearchFocus,
-  onReconnectDrive,
+  search,
+  onSearchChange,
 }: DashboardViewProps) {
   const files = useMemo(() => documents.filter((record) => record.fileType !== 'folder'), [documents])
   const folders = useMemo(() => documents.filter((record) => record.fileType === 'folder'), [documents])
@@ -103,22 +96,21 @@ export function DashboardView({
 
   const firstName = user.displayName?.split(' ')[0] || 'there'
 
-  const stats = [
-    { label: 'Files', value: files.length, icon: FileText, to: '/files' },
-    { label: 'Folders', value: folders.length, icon: Folder, to: '/folders' },
-    { label: 'Favorites', value: favoriteCount, icon: Star, to: '/favorites' },
-    { label: 'In Trash', value: trashCount, icon: Trash2, to: '/trash' },
+  const summary = [
+    { label: files.length === 1 ? 'file' : 'files', value: files.length, to: '/files' },
+    { label: folders.length === 1 ? 'folder' : 'folders', value: folders.length, to: '/folders' },
+    { label: favoriteCount === 1 ? 'favorite' : 'favorites', value: favoriteCount, to: '/favorites' },
+    { label: 'in Trash', value: trashCount, to: '/trash' },
   ]
 
   return (
     <section className="page dashboard">
-      <header className="hero">
-        <div className="hero__text">
-          <p className="hero__eyebrow">{greeting()}</p>
+      <header className="dash-hero">
+        <div>
+          <p className="dash-hero__eyebrow">{greeting()}</p>
           <h1>Welcome back, {firstName}</h1>
-          <p>Your documents live in your own Google Drive. This is where you find, open and organise them.</p>
         </div>
-        <div className="hero__actions">
+        <div className="dash-hero__actions">
           <button type="button" className="secondary-button" onClick={onCreateFolder}>
             <FolderPlus aria-hidden="true" />
             <span>New folder</span>
@@ -128,22 +120,26 @@ export function DashboardView({
             <span>Upload</span>
           </button>
         </div>
+        <label className="search-box dash-search">
+          <Search aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search names, #tags and text inside documents"
+            aria-label="Search your vault"
+          />
+        </label>
+        {loading || documents.length === 0 ? null : (
+          <nav className="dash-summary" aria-label="Library summary">
+            {summary.map((item) => (
+              <Link key={item.to} to={item.to}>
+                <strong>{item.value.toLocaleString()}</strong> {item.label}
+              </Link>
+            ))}
+          </nav>
+        )}
       </header>
-
-      <div className="stat-grid">
-        {stats.map((stat) => (
-          <Link key={stat.label} to={stat.to} className="stat-tile">
-            <span className="stat-tile__icon">
-              <stat.icon aria-hidden="true" />
-            </span>
-            <span className="stat-tile__text">
-              <strong>{loading ? '–' : stat.value.toLocaleString()}</strong>
-              <span>{stat.label}</span>
-            </span>
-            <ArrowRight className="stat-tile__arrow" aria-hidden="true" />
-          </Link>
-        ))}
-      </div>
 
       {error ? <div className="notice notice--error">{error}</div> : null}
 
@@ -222,30 +218,6 @@ export function DashboardView({
 
         <aside className="dashboard__side">
           <UploadStatusCard onOpen={onUploadProgressClick} />
-
-          <section className="panel">
-            <header className="panel__header">
-              <h2>Quick actions</h2>
-            </header>
-            <div className="quick-actions">
-              <button type="button" onClick={onUploadClick}>
-                <Upload aria-hidden="true" />
-                <span>Upload files</span>
-              </button>
-              <button type="button" onClick={onCreateFolder}>
-                <FolderPlus aria-hidden="true" />
-                <span>New folder</span>
-              </button>
-              <button type="button" onClick={onSearchFocus}>
-                <Search aria-hidden="true" />
-                <span>Search</span>
-              </button>
-              <button type="button" onClick={driveConnected ? onUploadClick : onReconnectDrive}>
-                <HardDrive aria-hidden="true" />
-                <span>{driveConnected ? 'Drive connected' : 'Connect Drive'}</span>
-              </button>
-            </div>
-          </section>
 
           <section className="panel">
             <header className="panel__header">

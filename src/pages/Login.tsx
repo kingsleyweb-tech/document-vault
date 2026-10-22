@@ -5,7 +5,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { cancelBrowserSignIn, signInWithGoogle, signsInThroughBrowser } from '../services/auth'
 import { useAuth } from '../hooks/useAuth'
 import { canShowSignInPage, clearSignInNotes, isDesktopApp, rememberedDestination, safeNextPath } from '../routing'
-import loginImage from '../assets/col.png'
+import { VaultIllustration } from '../components/auth/VaultIllustration'
 import vaultLogo from '../assets/dv.png'
 
 export function GoogleLogo() {
@@ -144,9 +144,9 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
         </div>
       </section>
 
-      <figure className="login__visual">
-        <img src={loginImage} alt="Ghana Armed Forces public relations officers at a formal event" />
-      </figure>
+      <div className="login__visual">
+        <VaultIllustration />
+      </div>
     </main>
   )
 }

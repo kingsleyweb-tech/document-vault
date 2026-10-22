@@ -14,6 +14,10 @@ const RELEASES_URL = `${SITE}/releases/latest.json`
 const APP_PORTS = [47616, 47617, 47618, 47619, 47620]
 const COMPANION_PORT = 47615
 const WEB_ROOT = path.join(__dirname, '..', 'web')
+// documentvault:// links only bring the app to the front; they carry no data.
+// The browser sign-in page offers one, because Windows does not let an app
+// raise its own window over the browser.
+const PROTOCOL = 'documentvault'
 const COMPANION_MAIN = path.join(__dirname, '..', 'companion', 'src', 'main.js').replace('app.asar', 'app.asar.unpacked')
 
 // Pages that may open in a pop-up from the app: Google and Firebase sign-in.
@@ -28,13 +32,15 @@ let staticServer = null
 const browserSignIn = createBrowserSignIn({
   origin: () => appOrigin,
   openBrowser: (url) => shell.openExternal(url),
-  onComplete: () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  },
+  onComplete: () => bringToFront(),
 })
+
+function bringToFront() {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
 
 // Development and tests only: a separate profile, so checks never touch a real one.
 if (!app.isPackaged && process.env.DV_USER_DATA) app.setPath('userData', process.env.DV_USER_DATA)
@@ -42,11 +48,15 @@ if (!app.isPackaged && process.env.DV_USER_DATA) app.setPath('userData', process
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+  // Windows and Linux start a second copy for a documentvault:// link; macOS
+  // sends open-url to this one.
+  app.on('second-instance', () => bringToFront())
+  app.on('open-url', (event) => {
+    event.preventDefault()
+    bringToFront()
   })
+  // Only installed copies claim the link, so development runs never take it over.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL)
   app.whenReady().then(start).catch((error) => {
     dialog.showErrorBox('Document Vault could not start', String(error?.message ?? error))
     app.quit()

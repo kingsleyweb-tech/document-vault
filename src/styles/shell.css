@@ -34,16 +34,20 @@
   align-items: center;
   gap: 10px;
   color: var(--text);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-decoration: none;
 }
 
 .brand img {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--accent-soft);
   object-fit: contain;
 }
 
@@ -53,7 +57,7 @@
 
 .sidebar__upload {
   width: 100%;
-  min-height: 40px;
+  min-height: 42px;
 }
 
 .sidebar__nav {
@@ -74,10 +78,10 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 38px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
-  color: var(--subtle);
+  color: var(--muted);
   font-weight: 500;
   text-decoration: none;
   transition: background-color 0.15s ease, color 0.15s ease;
@@ -95,13 +99,13 @@
 }
 
 .sidebar__link.active {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: var(--surface-soft);
+  color: var(--text);
   font-weight: 600;
 }
 
 .sidebar__link.active svg {
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .sidebar__count {
@@ -129,8 +133,8 @@
 .drive-card {
   display: grid;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
+  padding: 14px;
+  border: 0;
   border-radius: var(--radius);
   background: var(--surface-muted);
 }
@@ -194,7 +198,7 @@
 .storage-meter__fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--accent-meter);
   transition: width 0.4s ease;
 }
 
@@ -226,7 +230,7 @@
   align-items: center;
   gap: 12px;
   height: var(--topbar-height);
-  padding: 0 24px;
+  padding: 0 28px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: saturate(1.4) blur(10px);
@@ -518,10 +522,10 @@ button.progress-pill:hover {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 16px 24px 0;
-  padding: 12px 16px;
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
-  border-radius: var(--radius);
+  margin: 16px 28px 0;
+  padding: 12px 14px 12px 18px;
+  border: 1px solid color-mix(in srgb, var(--warning) 22%, transparent);
+  border-radius: var(--radius-lg);
   background: var(--warning-soft);
   color: var(--subtle);
 }
@@ -543,7 +547,8 @@ button.progress-pill:hover {
 .page {
   width: 100%;
   max-width: 1440px;
-  padding: 28px 24px 48px;
+  padding: 32px 28px 56px;
+  animation: fade-up 0.25s ease-out both;
 }
 
 /* ── Mobile tab bar ─────────────────────────────────────────────────── */
@@ -630,7 +635,7 @@ button.progress-pill:hover {
   }
 
   .page {
-    padding: 20px 16px calc(88px + env(safe-area-inset-bottom));
+    padding: 20px 16px calc(96px + env(safe-area-inset-bottom));
   }
 
   .tabbar {
@@ -642,22 +647,29 @@ button.progress-pill:hover {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
     align-items: center;
-    height: calc(64px + env(safe-area-inset-bottom));
-    padding: 0 8px env(safe-area-inset-bottom);
-    border-top: 1px solid var(--border);
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    backdrop-filter: blur(10px);
+    height: 60px;
+    margin: 0 12px calc(10px + env(safe-area-inset-bottom));
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--surface-muted) 94%, transparent);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
   }
 
   .tabbar__link {
     display: grid;
     justify-items: center;
+    align-content: center;
     gap: 2px;
-    padding: 6px 0;
+    height: 48px;
+    margin: 0 2px;
+    border-radius: var(--radius-pill);
     color: var(--muted);
     font-size: 11px;
     font-weight: 500;
     text-decoration: none;
+    transition: background-color 0.18s ease, color 0.18s ease;
   }
 
   .tabbar__link svg {
@@ -666,20 +678,23 @@ button.progress-pill:hover {
   }
 
   .tabbar__link.active {
-    color: var(--accent-strong);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    color: var(--text);
+    font-weight: 700;
   }
 
   .tabbar__upload {
     display: grid;
     place-items: center;
     justify-self: center;
-    width: 48px;
-    height: 48px;
+    width: 46px;
+    height: 46px;
     border: 0;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--primary);
     box-shadow: var(--shadow);
-    color: var(--accent-contrast);
+    color: var(--primary-contrast);
   }
 
   .tabbar__upload svg {
@@ -688,7 +703,7 @@ button.progress-pill:hover {
   }
 
   .scroll-top {
-    bottom: calc(80px + env(safe-area-inset-bottom));
+    bottom: calc(84px + env(safe-area-inset-bottom));
     right: 16px;
   }
 

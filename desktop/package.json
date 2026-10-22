@@ -1,7 +1,7 @@
 {
   "name": "document-vault-desktop",
   "productName": "Document Vault",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Document Vault for Windows, macOS and Linux.",
   "author": "Document Vault",
@@ -36,6 +36,14 @@
     ],
     "asarUnpack": [
       "companion/**/*"
+    ],
+    "protocols": [
+      {
+        "name": "Document Vault",
+        "schemes": [
+          "documentvault"
+        ]
+      }
     ],
     "win": {
       "target": [

@@ -5,11 +5,12 @@ import '../styles/pages.css'
 import { useState } from 'react'
 import { FirebaseError } from 'firebase/app'
 import { GoogleAuthProvider, inMemoryPersistence, setPersistence, signInWithPopup, signOut } from 'firebase/auth'
-import { CheckCircle2 } from 'lucide-react'
+import { ArrowUpRight, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { GoogleLogo } from '../pages/Login'
 import { auth } from '../services/firebase'
 import vaultLogo from '../assets/dv.png'
+import { VaultIllustration } from '../components/auth/VaultIllustration'
 
 // Opened in the user's browser by the desktop app, from the app's own local
 // server, because Google refuses to sign in inside the app's window. It signs
@@ -18,6 +19,9 @@ import vaultLogo from '../assets/dv.png'
 // signed out straight after, so nothing stays signed in in this browser.
 
 const driveScope = 'https://www.googleapis.com/auth/drive.file'
+// Registered by the installed app (desktop/src/main.cjs); opening it brings the
+// app's window to the front. It carries no data.
+const appLink = 'documentvault://open'
 
 type Step = 'ready' | 'working' | 'done' | 'failed'
 
@@ -63,6 +67,8 @@ export default function DesktopSignIn() {
       // The one-time code has been used; keep it out of the browser history.
       window.history.replaceState(null, '', window.location.pathname)
       setStep('done')
+      // The app also raises itself, but Windows may keep the browser in front.
+      window.location.assign(appLink)
     } catch (error) {
       console.error(error)
       setMessage(describe(error))
@@ -95,7 +101,14 @@ export default function DesktopSignIn() {
             <>
               <h1>You're signed in</h1>
               <p className="notice" role="status">
-                <CheckCircle2 aria-hidden="true" /> Return to the Document Vault app. You can close this tab.
+                <CheckCircle2 aria-hidden="true" /> Document Vault is now signed in. You can close this tab.
+              </p>
+              <a className="primary-button login__open-app" href={appLink}>
+                <span>Open Document Vault</span>
+                <ArrowUpRight aria-hidden="true" />
+              </a>
+              <p className="login__fineprint">
+                If your browser asks, allow it to open Document Vault.
               </p>
             </>
           ) : (
@@ -121,6 +134,10 @@ export default function DesktopSignIn() {
           )}
         </div>
       </section>
+
+      <div className="login__visual">
+        <VaultIllustration />
+      </div>
     </main>
   )
 }

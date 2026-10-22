@@ -545,6 +545,10 @@ export const articles: DocArticle[] = [
               stay signed in, and Document Vault never sees your password.
             </p>
             <p>
+              When sign-in finishes, the page takes you back to the app. If your browser asks whether to open Document Vault,
+              allow it, or choose Open Document Vault on the page.
+            </p>
+            <p>
               Google Drive access lasts about an hour at a time. When it runs out, choose Reconnect Google Drive in the app and
               confirm in your browser.
             </p>

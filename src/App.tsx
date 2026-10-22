@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, Route, Routes, useMatch } from 'react-router-dom'
+import { Navigate, Route, Routes, useMatch, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, FolderPlus, HardDrive, Info, Pencil, Tag, Trash2, Upload, X } from 'lucide-react'
 import { UploadDialog } from './components/documents/UploadDialog'
 import { AppLayout } from './components/layout/AppLayout'
@@ -160,6 +160,18 @@ function AuthenticatedVaultInner() {
 
 
   const folderMatch = useMatch('/folders/:folderId')
+  const onDashboard = Boolean(useMatch('/'))
+  const navigate = useNavigate()
+
+  // The dashboard has no results list of its own, so a search started there
+  // continues on All files, with the cursor kept in the top bar's search box.
+  function handleSearchChange(value: string) {
+    setSearch(value)
+    if (onDashboard && value.trim()) {
+      navigate('/files')
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.topbar__search input')?.focus())
+    }
+  }
   const currentFolderId = folderMatch?.params.folderId ?? null
 
   const currentFolder = useMemo(() => {
@@ -546,7 +558,7 @@ function AuthenticatedVaultInner() {
         trashCount={trashDocuments.length}
         search={search}
         searchPlaceholder={currentFolderId ? 'Search this folder' : 'Search your vault'}
-        onSearchChange={setSearch}
+        onSearchChange={handleSearchChange}
         onUploadClick={handleUploadClick}
         onUploadProgressClick={handleUploadProgressClick}
         driveConnected={Boolean(accessToken)}
@@ -568,7 +580,6 @@ function AuthenticatedVaultInner() {
                 loading={loading}
                 error={operationError ?? error}
                 accessToken={accessToken}
-                driveConnected={Boolean(accessToken)}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
                 actions={itemActions}
@@ -576,8 +587,8 @@ function AuthenticatedVaultInner() {
                 onUploadClick={handleUploadClick}
                 onUploadProgressClick={handleUploadProgressClick}
                 onCreateFolder={createNewFolder}
-                onSearchFocus={() => document.querySelector<HTMLInputElement>('.topbar__search input')?.focus()}
-                onReconnectDrive={() => void reconnectDrive()}
+                search={search}
+                onSearchChange={handleSearchChange}
               />
             }
           />
