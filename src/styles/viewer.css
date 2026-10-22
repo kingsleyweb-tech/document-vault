@@ -494,9 +494,10 @@
   padding: 6px;
   border: 1px solid var(--viewer-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--viewer-panel) 92%, transparent);
+  /* Solid rather than blurred: on iPhones a blur over a long document's
+     scrolling pages can cost extra graphics memory for what lies beneath. */
+  background: var(--viewer-panel);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(10px);
 }
 
 .pdf-floating-controls .icon-button {
