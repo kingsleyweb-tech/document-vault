@@ -357,8 +357,13 @@
 }
 
 @media (max-width: 720px) {
+  /* Phones: the slide list slides over the stage from the left. */
   .pptx-thumbs {
-    display: none;
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 6;
+    width: min(212px, 60vw);
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.25);
   }
 
   .pptx-search {
@@ -387,6 +392,16 @@
   .pptx-meta {
     display: none;
   }
+
+  /* Clear of the previous/next document buttons in the bottom corners. */
+  .pptx-fidelity-note {
+    padding: 6px 64px;
+    font-size: 11px;
+  }
+}
+
+.viewer.is-fullscreen .pptx-fidelity-note {
+  display: none;
 }
 
 /* ── Slideshow ───────────────────────────────────────────────────────── */
@@ -409,7 +424,7 @@
 .pptx-show {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1280; /* above the viewer (1200), which is also on the page itself */
   display: grid;
   place-items: center;
   overflow: hidden;

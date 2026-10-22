@@ -91,6 +91,18 @@
   color: var(--viewer-text);
 }
 
+.viewer-controls button.viewer-fit {
+  width: auto;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.viewer-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .viewer-controls button.is-active {
   color: var(--viewer-accent);
 }
@@ -797,9 +809,13 @@
   display: none;
 }
 
+.viewer.is-fullscreen .viewer-side-nav {
+  display: none;
+}
+
 .viewer.is-fullscreen .viewer-stage {
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   padding: 0;
   background: #000000;
 }
@@ -822,7 +838,7 @@
 .fullscreen-magnifier {
   position: fixed;
   right: 18px;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
   z-index: 1210;
   display: inline-flex;
   align-items: center;

@@ -9,7 +9,19 @@ export async function openPdf(blob: Blob): Promise<{ pdf: PDFDocumentProxy; task
   const pdfjs = await import('pdfjs-dist')
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
   // Scripts inside a PDF are never run: pdf.js only draws the pages, and XFA forms stay off.
-  const task = pdfjs.getDocument({ data: await blob.arrayBuffer(), enableXfa: false })
+  // Fonts, decoders and character maps come from this site (see vite.config.ts).
+  const assets = typeof window === 'undefined' ? null : `${window.location.origin}/pdfjs/`
+  const task = pdfjs.getDocument({
+    data: await blob.arrayBuffer(),
+    enableXfa: false,
+    ...(assets && {
+      wasmUrl: `${assets}wasm/`,
+      standardFontDataUrl: `${assets}standard_fonts/`,
+      cMapUrl: `${assets}cmaps/`,
+      cMapPacked: true,
+      iccUrl: `${assets}iccs/`,
+    }),
+  })
   return { pdf: await task.promise, task }
 }
 

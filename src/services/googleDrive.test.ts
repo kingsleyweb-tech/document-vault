@@ -100,3 +100,34 @@ describe('copies and versions', () => {
     expect(requests[1]).toMatchObject({ method: 'DELETE' })
   })
 })
+
+describe('downloads that outlive the viewer', () => {
+  it('keeps downloading after the viewer closes, and opening again joins it', async () => {
+    let push: ReadableStreamDefaultController<Uint8Array> | null = null
+    const body = new ReadableStream<Uint8Array>({ start: (controller) => void (push = controller) })
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Length': '3000' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const closed = new AbortController()
+    const first = downloadDriveFile('token', 'file-background', 'application/pdf', 'application/pdf', { signal: closed.signal })
+    await vi.waitFor(() => expect(push).not.toBeNull())
+    push!.enqueue(new Uint8Array(1000))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    closed.abort()
+    await expect(first).rejects.toThrow(/abort/i)
+
+    // Opened again: progress so far shows at once, and no second download starts.
+    const progress: Array<[number, number]> = []
+    const second = downloadDriveFile('token', 'file-background', 'application/pdf', 'application/pdf', {
+      onProgress: (loaded, total) => progress.push([loaded, total]),
+    })
+    await vi.waitFor(() => expect(progress[0]).toEqual([1000, 3000]))
+    push!.enqueue(new Uint8Array(2000))
+    push!.close()
+
+    expect((await second).size).toBe(3000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const { saveOfflineBlob } = await import('./offlineStore')
+    expect(saveOfflineBlob).toHaveBeenCalledWith('file-background', 'file-background', 'application/pdf', expect.any(Blob))
+  })
+})

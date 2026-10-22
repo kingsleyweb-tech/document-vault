@@ -278,7 +278,15 @@ export function PresentationViewer({ blob, snapshot, waitingLabel, documentId, d
       ) : null}
 
       <div className="pptx-body">
-        {showThumbnails ? <ThumbnailRail pptx={pptx} activeIndex={index} onSelect={goTo} /> : null}
+        {showThumbnails ? <ThumbnailRail
+            pptx={pptx}
+            activeIndex={index}
+            onSelect={(slide) => {
+              goTo(slide)
+              // On a phone the list covers the slide, so it closes once one is picked.
+              if (window.matchMedia('(max-width: 720px)').matches) setShowThumbnails(false)
+            }}
+          /> : null}
 
         <div className="pptx-stage" ref={stageRef}>
           {scale > 0.05 ? (

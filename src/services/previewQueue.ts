@@ -204,7 +204,9 @@ export function enqueuePreview(record: VaultDocument, reason: PreparationReason,
   const existing = metas.get(fileId)
   const upToDate = existing && existing.version === version && existing.pipelineVersion === PIPELINE_VERSION
 
-  if (upToDate && existing.status !== 'failed') {
+  // Failed or partly drawn: tried again when the document is opened, not by the background sweep.
+  const retry = existing?.status === 'failed' || existing?.status === 'partial'
+  if (upToDate && !retry) {
     const raised = PRIORITY[reason] > existing.priority
     const next = { ...existing, lastAccess: reason === 'backfill' ? existing.lastAccess : now, priority: Math.max(existing.priority, PRIORITY[reason]) }
     metas.set(fileId, next)
@@ -212,7 +214,7 @@ export function enqueuePreview(record: VaultDocument, reason: PreparationReason,
     if (raised) wake()
     return
   }
-  if (upToDate && existing.status === 'failed' && reason === 'backfill') return
+  if (upToDate && retry && reason === 'backfill') return
 
   const meta: PreviewMeta = {
     fileId,

@@ -8,9 +8,9 @@ import {
   Download,
   Heart,
   Maximize2,
+  Minimize2,
   Minus,
   Plus,
-  RotateCcw,
   Search,
 } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
@@ -117,7 +117,16 @@ export function DocumentViewer({
     }
   }, [viewedRecordId, viewedFileId, viewedVersion])
 
+  // The record is replaced whenever the library changes (a favorite, a rename);
+  // the download starts again only for another document or version.
+  const recordRef = useRef(documentRecord)
   useEffect(() => {
+    recordRef.current = documentRecord
+  })
+  const loadKey = documentRecord ? `${documentRecord.id}:${documentRecord.driveFileId}:${documentRecord.version ?? 1}` : null
+
+  useEffect(() => {
+    const documentRecord = recordRef.current
     let cancelled = false
     let loadedUrl: string | null = null
     const resetTimer = window.setTimeout(() => {
@@ -133,8 +142,8 @@ export function DocumentViewer({
       }
     }
 
-    // Opening another document stops this download instead of letting it
-    // compete for the connection.
+    // Closing the viewer stops waiting for the file, but the download itself
+    // carries on in the background, so opening it again picks up where it is.
     const controller = new AbortController()
     let lastProgressAt = 0
     loadDocumentPreview(accessToken, documentRecord, {
@@ -175,15 +184,23 @@ export function DocumentViewer({
       window.clearTimeout(resetTimer)
       if (loadedUrl) URL.revokeObjectURL(loadedUrl)
     }
-  }, [documentRecord, accessToken, reloadKey])
+  }, [loadKey, accessToken, reloadKey])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(document.fullscreenElement === viewerRef.current)
     }
+    // Without the browser's full screen (iPhone), Escape leaves the viewer's own.
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.fullscreenElement) setIsFullscreen(false)
+    }
 
     document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
   }, [])
 
   const documentPathIndex = useMemo(() => buildDocumentPathIndex(documents), [documents])
@@ -245,8 +262,18 @@ export function DocumentViewer({
   const loading = !activeError && !activePreview && !earlyPdf && !earlyDeck
   const zoomOut = () => setZoom((currentZoom) => Math.max(0.5, currentZoom - 0.1))
   const zoomIn = () => setZoom((currentZoom) => Math.min(2, currentZoom + 0.1))
+  // iPhones have no full screen for pages, so there the viewer just hides its toolbar.
   const enterFullscreen = () => {
-    void viewerRef.current?.requestFullscreen()
+    const element = viewerRef.current
+    if (typeof element?.requestFullscreen === 'function') {
+      element.requestFullscreen().catch(() => setIsFullscreen(true))
+    } else {
+      setIsFullscreen(true)
+    }
+  }
+  const exitFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+    setIsFullscreen(false)
   }
   const activeDownload = download?.documentId === documentRecord.id ? download : null
   const retry = () => {
@@ -297,8 +324,9 @@ export function DocumentViewer({
           <button type="button" onClick={zoomIn} aria-label="Zoom in">
             <Plus aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => setZoom(1)} aria-label="Fit width">
-            <RotateCcw aria-hidden="true" />
+          {/* Undoes zooming; a word, since an arrow icon read as "rotate". */}
+          <button type="button" className="viewer-fit" onClick={() => setZoom(1)} disabled={zoom === 1} aria-label="Fit width" title="Fit width">
+            Fit
           </button>
           <button type="button" onClick={enterFullscreen} aria-label="Full screen">
             <Maximize2 aria-hidden="true" />
@@ -525,6 +553,9 @@ export function DocumentViewer({
           <span>{Math.round(zoom * 100)}%</span>
           <button type="button" onClick={zoomIn} aria-label="Zoom in">
             <Plus aria-hidden="true" />
+          </button>
+          <button type="button" onClick={exitFullscreen} aria-label="Exit full screen">
+            <Minimize2 aria-hidden="true" />
           </button>
         </div>
       ) : null}

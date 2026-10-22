@@ -26,7 +26,8 @@ import { ProtectedRoute } from './routes/ProtectedRoute'
 import { logout, reconnectGoogleDrive, clearDriveAccessToken, signsInThroughBrowser } from './services/auth'
 import { downloadDriveFile, isDriveAuthorizationError } from './services/googleDrive'
 import { buildDownloadName, ensureCacheMatchesVersion, getPreviewKind } from './services/documentViewer'
-import { hasStoredOriginal } from './services/offlineStore'
+import { getOfflineBlob, hasStoredOriginal } from './services/offlineStore'
+import { isAppleMobile } from './utils/device'
 import { notifyDriveAccessChanged, startPreviewQueue, syncLibrary } from './services/previewQueue'
 import type { DocumentCategory, SortMode, ThemeMode, VaultDocument, ViewMode } from './types/document'
 
@@ -106,7 +107,11 @@ function AuthenticatedVaultInner() {
     if (restored) setViewerDocument(restored)
   }
   // Back removes ?open, which closes the viewer.
-  const shownDocument = openParam && viewerDocument?.id === openParam ? viewerDocument : null
+  // The library's current copy, so changes made while it is open (favorite, rename) show at once.
+  const shownDocument =
+    openParam && viewerDocument?.id === openParam
+      ? (documents.find((item) => item.id === openParam) ?? viewerDocument)
+      : null
   const [operationError, setOperationError] = useState<string | null>(null)
   const [showDriveAuthModal, setShowDriveAuthModal] = useState(false)
   const [dismissedPausedAuthModal, setDismissedPausedAuthModal] = useState(false)
@@ -263,17 +268,35 @@ function AuthenticatedVaultInner() {
 
   async function downloadDocument(documentRecord: VaultDocument) {
     await withFriendlyErrors(async () => {
-      const token = await ensureAccessToken()
       await ensureCacheMatchesVersion(documentRecord)
-      const blob = await downloadDriveFile(token, documentRecord.driveFileId, documentRecord.mimeType)
+      // A copy already on this device (opened before) is saved without downloading it again.
+      const isWorkspaceFile = documentRecord.mimeType.startsWith('application/vnd.google-apps.')
+      const stored = isWorkspaceFile ? null : await getOfflineBlob(documentRecord.driveFileId)
+      const blob = stored?.blob ?? (await downloadDriveFile(await ensureAccessToken(), documentRecord.driveFileId, documentRecord.mimeType))
+      const name = buildDownloadName(documentRecord)
+      // iPhone and iPad save files through the share sheet ("Save to Files"); a
+      // download link does nothing in an installed web app there.
+      if (isAppleMobile()) {
+        const file = new File([blob], name, { type: blob.type || documentRecord.mimeType || 'application/octet-stream' })
+        if (navigator.canShare?.({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file] })
+            return
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return
+            // Not allowed (too long after the tap): fall back to the link below.
+          }
+        }
+      }
       const link = document.createElement('a')
       const url = URL.createObjectURL(blob)
       link.href = url
-      link.download = buildDownloadName(documentRecord)
+      link.download = name
       document.body.append(link)
       link.click()
       link.remove()
-      URL.revokeObjectURL(url)
+      // Safari reads the file after the click returns, so it stays available for a while.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
     })
   }
 

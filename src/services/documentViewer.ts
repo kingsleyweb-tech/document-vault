@@ -257,6 +257,8 @@ export async function loadDocumentPreview(
   // dropped by ensureCacheMatchesVersion above.
   const blob = offlineBlobItem?.blob
     ?? await downloadDriveFile(accessToken!, documentRecord.driveFileId, resolvedMimeType, resolvedMimeType, options)
+  // Closed meanwhile: the file is kept on this device, so there is nothing more to prepare now.
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
   const typedBlob = blob.type ? blob : new Blob([blob], { type: resolvedMimeType || localMimeType })
   const objectUrl = URL.createObjectURL(typedBlob)

@@ -28,6 +28,8 @@ const RETRY_DELAYS_MS = [5_000, 20_000, 60_000]
  * large files (and OCR) to a computer; the text is indexed when it is opened there.
  */
 const MAX_BYTES_CONSTRAINED = 25 * 1024 * 1024
+/** Reading every page of a long book takes a phone minutes of work; a computer does it instead. */
+const MAX_PDF_PAGES_CONSTRAINED = 300
 const FOREIGN_KEY_VIOLATION = '23503'
 const UNKNOWN_FUNCTION = 'PGRST202'
 
@@ -84,6 +86,7 @@ async function extractPdf(blob: Blob) {
   const task = pdfjs.getDocument({ data: await blob.arrayBuffer() })
   const pdf = await task.promise
   try {
+    if (isMemoryConstrained() && pdf.numPages > MAX_PDF_PAGES_CONSTRAINED) throw new LeftForComputer()
     const pages: string[] = []
     let length = 0
     for (let number = 1; number <= Math.min(pdf.numPages, MAX_PDF_PAGES) && length < MAX_CHARS; number += 1) {
@@ -100,6 +103,9 @@ async function extractPdf(blob: Blob) {
     void task.destroy()
   }
 }
+
+/** Indexing skipped on this device; it happens when the document is opened on a computer. */
+class LeftForComputer extends Error {}
 
 // Groups that hold settings, fonts, pictures or metadata rather than body text.
 const RTF_HIDDEN_GROUPS = new Set(['fonttbl', 'colortbl', 'stylesheet', 'info', 'pict', 'header', 'footer', 'listtable', 'listoverridetable', 'rsidtbl', 'generator', 'xmlnstbl', 'themedata', 'datastore', 'latentstyles'])
@@ -214,6 +220,7 @@ async function indexNow(target: IndexTarget, blob: Blob, force: boolean) {
     }
     done.add(target.id)
   } catch (error) {
+    if (error instanceof LeftForComputer) return
     console.warn('Could not index the text of', target.name, error instanceof Error ? error.message : (error as { message?: string })?.message)
   }
 }

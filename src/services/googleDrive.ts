@@ -709,22 +709,120 @@ async function readBody(response: Response, onProgress?: DownloadOptions['onProg
   return new Blob(parts, { type })
 }
 
-export async function getDriveFileContent(accessToken: string, fileId: string, options: DownloadOptions & { cache?: boolean } = {}) {
-  try {
-    const response = await fetchWithRetry(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      credentials: 'omit',
-      signal: options.signal,
-    })
+/**
+ * One download per file, shared by everyone who asks for it. A caller that
+ * stops waiting (the viewer closing) does not stop the download: it finishes
+ * in the background and is kept on this device, so opening the file again
+ * picks up where it got to, or opens at once.
+ */
+interface Transfer {
+  promise: Promise<Blob>
+  controller: AbortController
+  loaded: number
+  total: number
+  listeners: Set<NonNullable<DownloadOptions['onProgress']>>
+  waiting: number
+  /** When the last caller stopped waiting, for dropping the oldest. */
+  detachedAt: number
+}
 
-    if (!response.ok) {
-      throw await parseDriveError(response)
+const transfers = new Map<string, Transfer>()
+/** Downloads nobody is waiting for that may carry on at once; older ones stop. */
+const MAX_BACKGROUND_DOWNLOADS = 2
+
+function startTransfer(accessToken: string, fileId: string) {
+  const existing = transfers.get(fileId)
+  if (existing) return existing
+  const controller = new AbortController()
+  const transfer: Transfer = {
+    controller,
+    loaded: 0,
+    total: 0,
+    listeners: new Set(),
+    waiting: 0,
+    detachedAt: 0,
+    promise: Promise.resolve(new Blob()),
+  }
+  transfer.promise = (async () => {
+    try {
+      const response = await fetchWithRetry(`${driveApi}/files/${encodeURIComponent(fileId)}?alt=media`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: 'omit',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw await parseDriveError(response)
+      const blob = await readBody(response, (loaded, total) => {
+        transfer.loaded = loaded
+        transfer.total = total
+        transfer.listeners.forEach((listener) => listener(loaded, total))
+      })
+      cacheOffline(fileId, blob.type, blob)
+      return blob
+    } finally {
+      transfers.delete(fileId)
     }
+  })()
+  // Nobody may be waiting by the time it fails.
+  transfer.promise.catch(() => undefined)
+  transfers.set(fileId, transfer)
+  return transfer
+}
 
-    const blob = await readBody(response, options.onProgress)
-    if (options.cache !== false) cacheOffline(fileId, blob.type, blob)
-    return blob
+function waitForTransfer(transfer: Transfer, options: DownloadOptions) {
+  const { signal, onProgress } = options
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  transfer.waiting += 1
+  if (onProgress) {
+    transfer.listeners.add(onProgress)
+    if (transfer.loaded > 0) onProgress(transfer.loaded, transfer.total)
+  }
+  return new Promise<Blob>((resolve, reject) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return false
+      settled = true
+      transfer.waiting -= 1
+      if (onProgress) transfer.listeners.delete(onProgress)
+      signal?.removeEventListener('abort', stopWaiting)
+      return true
+    }
+    const stopWaiting = () => {
+      if (!finish()) return
+      if (transfer.waiting === 0) {
+        transfer.detachedAt = Date.now()
+        limitBackgroundDownloads()
+      }
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', stopWaiting, { once: true })
+    transfer.promise.then(
+      (blob) => finish() && resolve(blob),
+      (error: unknown) => finish() && reject(error),
+    )
+  })
+}
+
+function limitBackgroundDownloads() {
+  const background = [...transfers.values()].filter((transfer) => transfer.waiting === 0)
+  background.sort((a, b) => a.detachedAt - b.detachedAt)
+  while (background.length > MAX_BACKGROUND_DOWNLOADS) background.shift()?.controller.abort()
+}
+
+/** Progress of a file still downloading, or null when none is under way. */
+export function getDownloadProgress(fileId: string) {
+  const transfer = transfers.get(fileId)
+  return transfer ? { loaded: transfer.loaded, total: transfer.total } : null
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+export async function getDriveFileContent(accessToken: string, fileId: string, options: DownloadOptions = {}) {
+  try {
+    return await waitForTransfer(startTransfer(accessToken, fileId), options)
   } catch (error) {
+    if (isAbortError(error)) throw error
     // Offline or network error fallback from IndexedDB
     const offlineItem = await getOfflineBlob(fileId)
     if (offlineItem?.blob) {
@@ -809,15 +907,16 @@ export async function downloadDriveFile(
       }
       blob = await exportGoogleWorkspaceFile(accessToken, fileId, activeMimeType, options)
     } else {
-      blob = await getDriveFileContent(accessToken, fileId, { ...options, cache: false })
+      blob = await getDriveFileContent(accessToken, fileId, options)
     }
 
-    // Store in memory cache & IndexedDB for offline access
+    // Kept in memory; the download itself already stored it on this device.
     storeBlobInCache(fileId, cacheKey, blob)
-    cacheOffline(fileId, activeMimeType || blob.type, blob)
+    if (activeMimeType?.startsWith('application/vnd.google-apps.')) cacheOffline(fileId, activeMimeType, blob)
 
     return blob
   } catch (downloadError) {
+    if (isAbortError(downloadError)) throw downloadError
     // If download fails due to offline state or network failure, load from IndexedDB
     const offlineItem = await getOfflineBlob(fileId)
     if (offlineItem?.blob) {
