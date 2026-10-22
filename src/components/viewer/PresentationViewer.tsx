@@ -177,7 +177,8 @@ export function PresentationViewer({ blob, snapshot, waitingLabel, documentId, d
     )
   }
 
-  const padding = 32
+  // The slide covers the whole stage at 100%, as in PowerPoint; zooming in scrolls.
+  const padding = 0
   const fitScale =
     stageSize.width > 0
       ? Math.min((stageSize.width - padding) / pptx.width, (stageSize.height - padding) / pptx.height)
