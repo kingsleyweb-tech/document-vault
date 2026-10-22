@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, Route, Routes, useMatch, useNavigate } from 'react-router-dom'
+import { Navigate, Route, Routes, useMatch, useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, FolderPlus, HardDrive, Info, Pencil, Tag, Trash2, Upload, X } from 'lucide-react'
 import { UploadDialog } from './components/documents/UploadDialog'
 import { AppLayout } from './components/layout/AppLayout'
@@ -94,6 +94,19 @@ function AuthenticatedVaultInner() {
   })
   const [uploadOpen, setUploadOpen] = useState(false)
   const [viewerDocument, setViewerDocument] = useState<VaultDocument | null>(null)
+  // The open document is in the address (?open=<id>), so a reload (or the
+  // browser restoring a page it closed) shows it again, and Back closes it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const openParam = searchParams.get('open')
+  /** True when opening added a history entry that Back can remove. */
+  const viewerPushedRef = useRef(false)
+  // After a reload only the id is known; the record comes from the library.
+  if (openParam && viewerDocument?.id !== openParam && !loading) {
+    const restored = documents.find((item) => item.id === openParam && item.fileType !== 'folder' && !item.isDeleted)
+    if (restored) setViewerDocument(restored)
+  }
+  // Back removes ?open, which closes the viewer.
+  const shownDocument = openParam && viewerDocument?.id === openParam ? viewerDocument : null
   const [operationError, setOperationError] = useState<string | null>(null)
   const [showDriveAuthModal, setShowDriveAuthModal] = useState(false)
   const [dismissedPausedAuthModal, setDismissedPausedAuthModal] = useState(false)
@@ -349,11 +362,38 @@ function AuthenticatedVaultInner() {
     setBulkPermanentDeleteItems([])
   }
 
+  const showInAddress = (documentId: string | null) => {
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params)
+        if (documentId) next.set('open', documentId)
+        else next.delete('open')
+        return next
+      },
+      { replace: !documentId || Boolean(openParam) },
+    )
+  }
+
+  const closeViewer = () => {
+    setViewerDocument(null)
+    if (!openParam) return
+    if (viewerPushedRef.current) {
+      viewerPushedRef.current = false
+      navigate(-1)
+    } else {
+      showInAddress(null)
+    }
+  }
+
   const openDocument = (documentRecord: VaultDocument) => {
     // The viewer opens at once. It shows cached copies without Drive and asks
     // to reconnect otherwise. Recording the view is a Firestore write that
     // waits for the network, so it must not hold the document back.
     setViewerDocument(documentRecord)
+    if (openParam !== documentRecord.id) {
+      if (!openParam) viewerPushedRef.current = true
+      showInAddress(documentRecord.id)
+    }
     void actions.viewed(documentRecord).catch((error: unknown) => console.warn('Could not record the view:', error))
     // Without a Drive token, a document not stored on this device cannot open.
     // Renewing here, inside the click, lets the browser allow Google's window;
@@ -646,10 +686,10 @@ function AuthenticatedVaultInner() {
         />
 
         <DocumentViewer
-          documentRecord={viewerDocument}
+          documentRecord={shownDocument}
           documents={activeDocuments}
           accessToken={accessToken}
-          onClose={() => setViewerDocument(null)}
+          onClose={closeViewer}
           onDownload={(documentRecord) => void downloadDocument(documentRecord)}
           onOpenDocument={openDocument}
           onFavorite={(documentRecord) => void withFriendlyErrors(() => actions.toggleFavorite(documentRecord))}

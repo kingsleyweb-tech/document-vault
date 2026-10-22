@@ -16,6 +16,8 @@ import {
   type PreviewMeta,
 } from './offlineStore'
 import { openPdf, pictureWidthFor, readPageSizes, renderPagePicture, yieldToBrowser } from './pdfPages'
+import { setOpenDocument } from './foreground'
+import { isMemoryConstrained } from '../utils/device'
 
 /**
  * Background preparation of previews on this device.
@@ -51,6 +53,8 @@ const MAX_OTHER_BYTES = 100 * 1024 * 1024
 const MAX_BACKFILL_BYTES = 40 * 1024 * 1024
 /** Documents picked for backfill per session. */
 const BACKFILL_PER_SESSION = 25
+const MAX_BACKFILL_BYTES_CONSTRAINED = 15 * 1024 * 1024
+const BACKFILL_PER_SESSION_CONSTRAINED = 6
 /** First pages drawn ahead of time; the rest are drawn as they are viewed. */
 export const PREPARED_PAGES = 3
 const DEFAULT_BUDGET_BYTES = 500 * 1024 * 1024
@@ -256,6 +260,7 @@ export function cancelPreview(fileId: string) {
  */
 export function setForegroundDocument(fileId: string | null) {
   foregroundFileId = fileId
+  setOpenDocument(fileId)
   // A job that downloads from Drive would compete with the document being
   // opened (or download the same file twice), so it stops and waits its turn.
   // Uploads work from bytes already in the browser and carry on.
@@ -311,14 +316,17 @@ async function planBackfill() {
   const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
   if (connection?.saveData) return
   backfillDoneForSession = true
+  // Phones and tablets prepare only a few small documents.
+  const constrained = isMemoryConstrained()
+  const maxBytes = constrained ? MAX_BACKFILL_BYTES_CONSTRAINED : MAX_BACKFILL_BYTES
   const candidates = [...library.values()]
-    .filter((record) => !metas.has(record.driveFileId) && (record.fileSize ?? 0) <= MAX_BACKFILL_BYTES)
+    .filter((record) => !metas.has(record.driveFileId) && (record.fileSize ?? 0) <= maxBytes)
     .filter((record) => {
       const kind = getPreviewKind(record)
       return kind !== 'embed' && kind !== 'fallback' && kind !== 'media'
     })
     .sort((first, second) => backfillScore(second) - backfillScore(first))
-    .slice(0, BACKFILL_PER_SESSION)
+    .slice(0, constrained ? BACKFILL_PER_SESSION_CONSTRAINED : BACKFILL_PER_SESSION)
   candidates.forEach((record) => enqueuePreview(record, 'backfill'))
 }
 
@@ -594,6 +602,7 @@ export function resetPreviewQueueForTests() {
   running = false
   current = null
   foregroundFileId = null
+  setOpenDocument(null)
   backfillDoneForSession = false
   persistRequested = false
   rejectedToken = null

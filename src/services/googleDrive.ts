@@ -1,5 +1,6 @@
 import type { DriveFile, DriveFolder } from '../types/googleDrive'
 import { saveOfflineBlob, getOfflineBlob } from './offlineStore'
+import { isMemoryConstrained } from '../utils/device'
 
 const driveApi = 'https://www.googleapis.com/drive/v3'
 const driveUploadApi = 'https://www.googleapis.com/upload/drive/v3'
@@ -123,6 +124,9 @@ function escapeDriveQuery(value: string) {
 // instant (no network round trip at all).
 
 const BLOB_CACHE_MAX = 8
+/** Total size kept in memory; files are also stored on the device, so this only saves a read. */
+const BLOB_CACHE_MAX_BYTES = 200 * 1024 * 1024
+const BLOB_CACHE_MAX_BYTES_CONSTRAINED = 40 * 1024 * 1024
 
 interface BlobCacheEntry {
   blob: Blob
@@ -146,9 +150,15 @@ function getBlobFromCache(fileId: string, mimeType: string): Blob | null {
 
 function storeBlobInCache(fileId: string, mimeType: string, blob: Blob) {
   const key = blobCacheKey(fileId, mimeType)
+  const maxBytes = isMemoryConstrained() ? BLOB_CACHE_MAX_BYTES_CONSTRAINED : BLOB_CACHE_MAX_BYTES
+  blobCache.delete(key)
+  // A file larger than the whole budget is not kept: it would push out everything else.
+  if (blob.size > maxBytes) return
 
-  // Evict LRU entries when over limit
-  if (blobCache.size >= BLOB_CACHE_MAX) {
+  // Evict least recently used entries until the new file fits.
+  let total = blob.size
+  for (const entry of blobCache.values()) total += entry.blob.size
+  while (blobCache.size > 0 && (blobCache.size >= BLOB_CACHE_MAX || total > maxBytes)) {
     let oldestKey = ''
     let oldestTime = Infinity
     for (const [k, v] of blobCache) {
@@ -157,7 +167,8 @@ function storeBlobInCache(fileId: string, mimeType: string, blob: Blob) {
         oldestKey = k
       }
     }
-    if (oldestKey) blobCache.delete(oldestKey)
+    total -= blobCache.get(oldestKey)?.blob.size ?? 0
+    blobCache.delete(oldestKey)
   }
 
   blobCache.set(key, { blob, mimeType, accessedAt: Date.now() })

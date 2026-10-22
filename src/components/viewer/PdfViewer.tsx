@@ -2,8 +2,9 @@ import { AlertCircle, ChevronLeft, ChevronRight, PanelLeft, RefreshCw, Search, X
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import { getPageImage, savePageImage } from '../../services/offlineStore'
-import { drawPage, encodePicture, openPdf, pictureWidthFor, readPageSizes, renderPagePicture, yieldToBrowser } from '../../services/pdfPages'
+import { drawPage, encodePicture, openPdf, pictureWidthFor, readPageSizes, releaseCanvas, renderPagePicture, yieldToBrowser } from '../../services/pdfPages'
 import { defaultPageDisplayWidth, notePageImageStored, PREPARED_PAGES } from '../../services/previewQueue'
+import { isMemoryConstrained } from '../../utils/device'
 import { anchoredOffset, computePageTops, PAGE_GAP, pageIndexAt } from './pdfLayout'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18,11 +19,14 @@ import { anchoredOffset, computePageTops, PAGE_GAP, pageIndexAt } from './pdfLay
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_PAGE_WIDTH = 900
-const OVERSCAN_PAGES = 2
-const KEEP_PAGES = 6
-const MAX_CONCURRENT_RENDERS = 2
+// Phones and tablets keep fewer pages in memory and draw one at a time: iOS
+// closes a page that holds too many drawn pages ("A problem repeatedly occurred").
+const CONSTRAINED = isMemoryConstrained()
+const OVERSCAN_PAGES = CONSTRAINED ? 1 : 2
+const KEEP_PAGES = CONSTRAINED ? 2 : 6
+const MAX_CONCURRENT_RENDERS = CONSTRAINED ? 1 : 2
 /** Pages drawn while reading that are also kept on this device, per document and visit. */
-const MAX_STORED_WHILE_READING = 40
+const MAX_STORED_WHILE_READING = CONSTRAINED ? 15 : 40
 
 interface SearchMatch {
   pageNumber: number
@@ -105,6 +109,23 @@ export function PdfVirtualizedViewer({
   const storedCountRef = useRef(0)
   const wantedRef = useRef<number[]>([])
   const pumpRef = useRef<() => void>(() => undefined)
+  const scrollFrameRef = useRef(0)
+  // Canvases no longer shown; freed after the next paint, so a page never goes blank first.
+  const discardedRef = useRef<Set<HTMLCanvasElement>>(new Set())
+  const releaseTimerRef = useRef<number | undefined>(undefined)
+  const discardCanvas = useCallback((canvas: HTMLCanvasElement) => {
+    discardedRef.current.add(canvas)
+    // Not pushed back by later discards: while flicking through pages they come constantly.
+    if (releaseTimerRef.current !== undefined) return
+    releaseTimerRef.current = window.setTimeout(() => {
+      releaseTimerRef.current = undefined
+      const shown = new Set(Object.values(picturesRef.current).map((picture) => picture.canvas))
+      for (const item of discardedRef.current) {
+        if (!shown.has(item)) releaseCanvas(item)
+      }
+      discardedRef.current.clear()
+    }, 100)
+  }, [])
 
   // ── 1. Geometry ───────────────────────────────────────────────────────────
   const pageWidth = Math.max(120, Math.round(Math.min(contentWidth, MAX_PAGE_WIDTH) * zoom))
@@ -178,9 +199,17 @@ export function PdfVirtualizedViewer({
 
   useEffect(() => {
     const objectUrls = objectUrlsRef.current
+    const discarded = discardedRef.current
     return () => {
       objectUrls.forEach((url) => URL.revokeObjectURL(url))
       objectUrls.clear()
+      window.clearTimeout(releaseTimerRef.current)
+      window.cancelAnimationFrame(scrollFrameRef.current)
+      discarded.forEach(releaseCanvas)
+      discarded.clear()
+      Object.values(picturesRef.current).forEach((picture) => {
+        if (picture.canvas) releaseCanvas(picture.canvas)
+      })
     }
   }, [])
 
@@ -223,11 +252,12 @@ export function PdfVirtualizedViewer({
         URL.revokeObjectURL(old.url)
         objectUrlsRef.current.delete(old.url)
       }
+      if (old?.canvas && old.canvas !== picture.canvas) discardCanvas(old.canvas)
       const next = { ...prev, [page]: picture }
       picturesRef.current = next
       return next
     })
-  }, [])
+  }, [discardCanvas])
 
   const pump = useCallback(() => {
     const queue = wantedRef.current
@@ -264,8 +294,12 @@ export function PdfVirtualizedViewer({
           const store = Boolean(fileId) && (page <= PREPARED_PAGES || storedCountRef.current < MAX_STORED_WHILE_READING)
           if (store && page > PREPARED_PAGES) storedCountRef.current += 1
           // Encoding waits until the browser is idle so it never delays showing a page.
+          // A page scrolled away meanwhile is not encoded; its canvas is already freed.
           void yieldToBrowser(500)
-            .then(() => encodePicture(canvas))
+            .then(() => {
+              if (picturesRef.current[page]?.canvas !== canvas) throw new Error('Page no longer shown')
+              return encodePicture(canvas)
+            })
             .then((picture) => {
               if (picturesRef.current[page]?.canvas === canvas) setPicture(page, { url: URL.createObjectURL(picture), width })
               if (store && fileId) void savePageImage(fileId, page, width, picture).then((bytes) => notePageImageStored(fileId, bytes))
@@ -308,21 +342,31 @@ export function PdfVirtualizedViewer({
         const page = Number(key)
         if (page >= minKeep && page <= maxKeep) continue
         next ??= { ...prev }
-        const url = prev[page].url
+        const { url, canvas } = prev[page]
         if (url) {
           URL.revokeObjectURL(url)
           objectUrlsRef.current.delete(url)
         }
+        if (canvas) discardCanvas(canvas)
         lookedUpRef.current.delete(page)
         delete next[page]
       }
       if (next) picturesRef.current = next
       return next ?? prev
     })
-  }, [visibleStart, visibleEnd, currentPage, numPages, pageErrors, pump])
+  }, [visibleStart, visibleEnd, currentPage, numPages, pageErrors, pump, discardCanvas])
 
   // ── 5. Scrolling and navigation ───────────────────────────────────────────
+  // At most one update per frame: scroll events can fire far more often while flicking.
   const handleScroll = () => {
+    if (scrollFrameRef.current) return
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = 0
+      readScrollPosition()
+    })
+  }
+
+  const readScrollPosition = () => {
     const stage = stageRef.current
     if (!stage || !numPages) return
     const top = stage.scrollTop - contentTop()
@@ -367,6 +411,7 @@ export function PdfVirtualizedViewer({
         const page = await pdfProxy.getPage(i)
         const textContent = await page.getTextContent()
         const textStr = textContent.items.map((item) => ('str' in item ? item.str : '')).join(' ')
+        page.cleanup()
         if (textStr.toLowerCase().includes(query)) {
           matches.push({
             pageNumber: i,

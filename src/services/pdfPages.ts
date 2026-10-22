@@ -1,4 +1,5 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
+import { isMemoryConstrained } from '../utils/device'
 
 // Shared by the viewer and background preparation: opening a PDF, reading
 // page sizes and drawing pages as pictures. pdf.js parses in its worker; only
@@ -40,10 +41,22 @@ export async function readPageSizes(
 /** Picture widths are rounded up to these steps so stored pictures can be reused across window sizes. */
 const WIDTH_STEP = 200
 export const MAX_PAGE_PICTURE_WIDTH = 1800
+/** Phones and tablets draw smaller pictures: each drawn page holds width × height × 4 bytes. */
+const MAX_PAGE_PICTURE_WIDTH_CONSTRAINED = 1200
+/** The most pixels one page is drawn with, so very tall pages cannot use hundreds of megabytes. */
+const MAX_PAGE_PIXELS = 8_000_000
+const MAX_PAGE_PIXELS_CONSTRAINED = 2_400_000
 
 export function pictureWidthFor(displayWidth: number) {
   const ratio = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2)
-  return Math.min(MAX_PAGE_PICTURE_WIDTH, Math.max(WIDTH_STEP, Math.ceil((displayWidth * ratio) / WIDTH_STEP) * WIDTH_STEP))
+  const max = isMemoryConstrained() ? MAX_PAGE_PICTURE_WIDTH_CONSTRAINED : MAX_PAGE_PICTURE_WIDTH
+  return Math.min(max, Math.max(WIDTH_STEP, Math.ceil((displayWidth * ratio) / WIDTH_STEP) * WIDTH_STEP))
+}
+
+/** Gives a canvas's memory back at once; browsers otherwise keep it until garbage collection. */
+export function releaseCanvas(canvas: HTMLCanvasElement) {
+  canvas.width = 0
+  canvas.height = 0
 }
 
 /** Draws one page onto a new canvas at the given pixel width. */
@@ -51,7 +64,10 @@ export async function drawPage(pdf: PDFDocumentProxy, pageNumber: number, width:
   const page = await pdf.getPage(pageNumber)
   try {
     const base = page.getViewport({ scale: 1 })
-    const viewport = page.getViewport({ scale: width / base.width })
+    const maxPixels = isMemoryConstrained() ? MAX_PAGE_PIXELS_CONSTRAINED : MAX_PAGE_PIXELS
+    let scale = width / base.width
+    if (base.width * base.height * scale * scale > maxPixels) scale = Math.sqrt(maxPixels / (base.width * base.height))
+    const viewport = page.getViewport({ scale })
     const canvas = document.createElement('canvas')
     canvas.width = Math.ceil(viewport.width)
     canvas.height = Math.ceil(viewport.height)
@@ -66,12 +82,18 @@ export async function drawPage(pdf: PDFDocumentProxy, pageNumber: number, width:
   }
 }
 
-/** WebP where the browser can encode it, otherwise PNG. */
+/** WebP where the browser can encode it, otherwise JPEG (Safari cannot write WebP). */
 export async function encodePicture(canvas: HTMLCanvasElement): Promise<Blob> {
-  const blob = await encode(canvas, 'image/webp', 0.86)
-  // Browsers that cannot write WebP fall back to PNG silently.
-  return blob.type === 'image/webp' ? blob : encode(canvas, 'image/png')
+  if (!webpUnsupported) {
+    const blob = await encode(canvas, 'image/webp', 0.86)
+    // Browsers that cannot write WebP return a PNG instead, which is large and slow.
+    if (blob.type === 'image/webp') return blob
+    webpUnsupported = true
+  }
+  return encode(canvas, 'image/jpeg', 0.88)
 }
+
+let webpUnsupported = false
 
 /** Draws one page at the given pixel width as a picture file. */
 export async function renderPagePicture(pdf: PDFDocumentProxy, pageNumber: number, width: number): Promise<Blob> {
@@ -79,8 +101,7 @@ export async function renderPagePicture(pdf: PDFDocumentProxy, pageNumber: numbe
   try {
     return await encodePicture(canvas)
   } finally {
-    canvas.width = 0
-    canvas.height = 0
+    releaseCanvas(canvas)
   }
 }
 

@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { browserLocalPersistence, browserPopupRedirectResolver, getAuth, indexedDBLocalPersistence, initializeAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 
 const requiredEnv = {
@@ -24,5 +24,22 @@ export const firebaseApp = initializeApp({
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 })
 
-export const auth = getAuth(firebaseApp)
+// The sign-in is kept in localStorage, falling back to IndexedDB where that is
+// unavailable. It is chosen here, once: changing it after start-up moved the
+// saved sign-in between the two on every page load, and a page closed by the
+// browser mid-move (iOS does this to pages that use too much memory) lost it,
+// which signed the user out.
+export const auth = createAuth()
+
+function createAuth() {
+  try {
+    return initializeAuth(firebaseApp, {
+      persistence: [browserLocalPersistence, indexedDBLocalPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
+    })
+  } catch {
+    // Outside a browser (the tests) these storages do not exist.
+    return getAuth(firebaseApp)
+  }
+}
 export const db = getFirestore(firebaseApp)

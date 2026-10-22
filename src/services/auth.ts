@@ -1,8 +1,6 @@
 import {
-  browserLocalPersistence,
   GoogleAuthProvider,
   onAuthStateChanged,
-  setPersistence,
   signInWithCredential,
   signInWithPopup,
   signOut,
@@ -21,6 +19,13 @@ const driveScope = 'https://www.googleapis.com/auth/drive.file'
 const tokenStorageKey = 'documentVault.googleDriveAccessToken'
 const tokenExpiryKey = 'documentVault.googleDriveAccessTokenExpiry'
 const tokenChangedEvent = 'documentVault.googleDriveTokenChanged'
+// Set while someone is signed in on this browser and removed by signing out.
+// It holds no account details; it only lets the workspace tell a lost sign-in
+// (storage briefly unreadable after the browser closed the page) from a real
+// sign-out. See ProtectedRoute.
+const signedInMarkerKey = 'documentVault.signedIn'
+const signInRetryKey = 'documentVault.signInRetry'
+const SIGN_IN_RETRY_WINDOW_MS = 60 * 1000
 
 /**
  * Signs in with Google and returns the Firebase result with the Drive token.
@@ -29,7 +34,6 @@ const tokenChangedEvent = 'documentVault.googleDriveTokenChanged'
  * sends back. Everywhere else Google's pop-up is used.
  */
 async function googleSignIn(mode: 'login' | 'reauthorize'): Promise<{ result: UserCredential; accessToken?: string }> {
-  await ensureAuthPersistence()
   const bridge = desktopBridge()
   if (bridge?.signInWithGoogle) {
     const answer = await bridge.signInWithGoogle({ mode, hint: mode === 'reauthorize' ? (auth.currentUser?.email ?? '') : '' })
@@ -71,7 +75,6 @@ export async function signInWithGoogle() {
 }
 
 export function observeAuth(callback: (user: VaultUser | null) => void) {
-  void ensureAuthPersistence()
   return onAuthStateChanged(auth, (user) => {
     if (!user) {
       callback(null)
@@ -79,6 +82,11 @@ export function observeAuth(callback: (user: VaultUser | null) => void) {
     }
 
     const vaultUser = toVaultUser(user)
+    try {
+      localStorage.setItem(signedInMarkerKey, '1')
+    } catch {
+      // Without storage a lost sign-in simply shows the home page.
+    }
     callback(vaultUser)
     void upsertUserProfile(vaultUser)
   })
@@ -137,7 +145,32 @@ export async function reconnectGoogleDrive() {
 // are removed with the rest of the session.
 const sessionStoragePrefixes = ['vault_last_read_page_', 'documentVault.presentationPosition.', 'documentVault.epubPosition.', 'documentVault.companion.token', 'documentVault.cachedVersions']
 
+/**
+ * Called when the workspace finds nobody signed in. Returns true when it should
+ * reload once and look again: this browser was signed in, nobody signed out,
+ * and it has not just tried. The sign-in itself is still checked by Firebase.
+ */
+export function shouldRetryLostSignIn(now = Date.now()) {
+  try {
+    if (localStorage.getItem(signedInMarkerKey) !== '1') return false
+    const last = Number(sessionStorage.getItem(signInRetryKey))
+    if (Number.isFinite(last) && last > 0 && now - last < SIGN_IN_RETRY_WINDOW_MS) {
+      localStorage.removeItem(signedInMarkerKey)
+      return false
+    }
+    sessionStorage.setItem(signInRetryKey, String(now))
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function logout() {
+  try {
+    localStorage.removeItem(signedInMarkerKey)
+  } catch {
+    // Nothing stored.
+  }
   localStorage.removeItem(tokenStorageKey)
   localStorage.removeItem(tokenExpiryKey)
   notifyDriveTokenChanged()
@@ -165,13 +198,6 @@ async function clearLocalSessionData() {
   // Copies of files waiting to upload are private too. The queue itself stays;
   // its files can be re-added after signing in again.
   await clearUploadFileStore()
-}
-
-let persistenceReady: Promise<void> | null = null
-
-function ensureAuthPersistence() {
-  persistenceReady ??= setPersistence(auth, browserLocalPersistence)
-  return persistenceReady
 }
 
 function saveDriveAccessToken(accessToken: string) {

@@ -2,6 +2,8 @@ import { auth } from './firebase'
 import { supabase } from './supabase'
 import type { VaultDocument } from '../types/document'
 import { isOcrEnabled, looksScanned, recognizeImage, recognizePdf } from './ocr'
+import { whenNoDocumentOpen } from './foreground'
+import { isMemoryConstrained } from '../utils/device'
 
 // Full-text search over the words inside uploaded documents. Text is extracted
 // in the browser whenever the file is already in hand (after an upload, or when
@@ -21,6 +23,11 @@ const OCR_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'
 const MAX_CHARS = 2_000_000 // the document_contents check constraint
 const MAX_PDF_PAGES = 1500
 const RETRY_DELAYS_MS = [5_000, 20_000, 60_000]
+/**
+ * Reading a file's text opens a second copy of it, so phones and tablets leave
+ * large files (and OCR) to a computer; the text is indexed when it is opened there.
+ */
+const MAX_BYTES_CONSTRAINED = 25 * 1024 * 1024
 const FOREIGN_KEY_VIOLATION = '23503'
 const UNKNOWN_FUNCTION = 'PGRST202'
 
@@ -151,11 +158,20 @@ export function normaliseContent(text: string) {
 export function queueContentIndex(target: IndexTarget, blob: Blob, options: { force?: boolean } = {}) {
   if (options.force) done.delete(target.id)
   if (!supabase || !auth.currentUser || done.has(target.id) || inFlight.has(target.id) || blob.size === 0) return
+  if (isMemoryConstrained() && blob.size > MAX_BYTES_CONSTRAINED) return
   inFlight.add(target.id)
-  const run = () => void indexNow(target, blob, options.force === true).finally(() => inFlight.delete(target.id))
-  if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 4000 })
-  else setTimeout(run, 500)
+  // One document at a time, and only while none is open in the viewer.
+  queue = queue.then(async () => {
+    await whenNoDocumentOpen()
+    await new Promise<void>((resolve) => {
+      if ('requestIdleCallback' in window) window.requestIdleCallback(() => resolve(), { timeout: 4000 })
+      else setTimeout(resolve, 500)
+    })
+    await indexNow(target, blob, options.force === true).finally(() => inFlight.delete(target.id))
+  })
 }
+
+let queue: Promise<void> = Promise.resolve()
 
 async function indexNow(target: IndexTarget, blob: Blob, force: boolean) {
   const client = supabase
@@ -173,6 +189,8 @@ async function indexNow(target: IndexTarget, blob: Blob, force: boolean) {
     let source: 'extracted' | 'ocr' = 'extracted'
     const ocrKind = ocrKindOf(target, blob)
     if (ocrKind && looksScanned(raw) && isOcrEnabled()) {
+      // OCR needs far more memory than a phone page may use; a computer does it instead.
+      if (isMemoryConstrained()) return
       const recognised = ocrKind === 'image' ? await recognizeImage(blob) : await recognizePdf(blob)
       if (recognised.trim()) {
         raw = recognised

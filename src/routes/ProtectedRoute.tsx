@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { shouldRetryLostSignIn } from '../services/auth'
 import { canShowSignInPage, isDesktopApp, rememberDestination, signInPath } from '../routing'
 
 export function ProtectedRoute() {
@@ -15,6 +16,12 @@ export function ProtectedRoute() {
   // page change.
   useEffect(() => {
     if (!signedOut) return
+    // iOS can close a page and reopen it before its saved sign-in is readable
+    // again; one more load usually finds it, on the same page.
+    if (shouldRetryLostSignIn()) {
+      window.location.reload()
+      return
+    }
     const { pathname, search, hash } = window.location
     const destination = `${pathname}${search}${hash}`
     rememberDestination(destination)
