@@ -9,9 +9,9 @@
 #   SHA256SUMS.txt. The tag must match "version" in desktop/package.json.
 #   Linux is built but not attached until it has been tested.
 #
-# Repository secrets needed (Settings, Secrets and variables, Actions): the same
-# VITE_ values as the website's .env. They end up in the app like they do on
-# the website, but are kept out of the repository.
+# Repository secret needed (Settings, Secrets and variables, Actions): DOC,
+# holding the website's .env lines (at least the VITE_ ones). The VITE_ values
+# end up in the app like they do on the website, but stay out of the repository.
 
 name: Desktop builds
 
@@ -49,27 +49,38 @@ jobs:
               desktop/release/*.deb
     runs-on: ${{ matrix.os }}
     env:
-      VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-      VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-      VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-      VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-      VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
-      VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
-      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       # No signing certificates yet; see docs/PRODUCT_PLAN.md (A3, A4).
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - name: Check the build settings are present
+      - uses: actions/checkout@v4
+      # The settings come from the DOC secret (a copy of the website's .env)
+      # or from one secret per VITE_ name. They are written to a .env file on
+      # this build machine only; Vite puts only the VITE_ values into the app.
+      - name: Write the build settings
         shell: bash
+        env:
+          DOC: ${{ secrets.DOC }}
+          SECRET_VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          SECRET_VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          SECRET_VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          SECRET_VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          SECRET_VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          SECRET_VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          SECRET_VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
+          SECRET_VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SECRET_VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          : > .env
+          if [ -n "$DOC" ]; then printf '%s\n' "$DOC" | tr -d '\r' >> .env; fi
+          for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID VITE_FIREBASE_MEASUREMENT_ID VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY; do
+            value_name="SECRET_$name"
+            if [ -n "${!value_name}" ]; then echo "$name=${!value_name}" >> .env; fi
+          done
           missing=0
           for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_APP_ID VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY; do
-            if [ -z "${!name}" ]; then echo "::error::Repository secret $name is not set"; missing=1; fi
+            if ! grep -qE "^[[:space:]]*$name[[:space:]]*=[[:space:]]*[^[:space:]]" .env; then echo "::error::$name is missing from the DOC secret"; missing=1; fi
           done
           exit $missing
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
