@@ -28,16 +28,17 @@ export async function openPdf(blob: Blob): Promise<{ pdf: PDFDocumentProxy; task
 /**
  * Each page's size in points as [width, height, width, height, ...], read in
  * chunks so very long documents do not hold up the page. `onChunk` receives
- * the sizes known so far.
+ * the sizes known so far. With `limit`, only the first pages are read.
  */
 export async function readPageSizes(
   pdf: PDFDocumentProxy,
-  { chunk = 50, signal, onChunk }: { chunk?: number; signal?: AbortSignal; onChunk?: (sizes: number[], upTo: number) => void } = {},
+  { chunk = 50, limit = Infinity, signal, onChunk }: { chunk?: number; limit?: number; signal?: AbortSignal; onChunk?: (sizes: number[], upTo: number) => void } = {},
 ): Promise<number[]> {
   const sizes: number[] = []
-  for (let start = 1; start <= pdf.numPages; start += chunk) {
+  const last = Math.min(pdf.numPages, limit)
+  for (let start = 1; start <= last; start += chunk) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-    const end = Math.min(pdf.numPages, start + chunk - 1)
+    const end = Math.min(last, start + chunk - 1)
     const pages = await Promise.all(Array.from({ length: end - start + 1 }, (_, i) => pdf.getPage(start + i)))
     for (const page of pages) {
       const viewport = page.getViewport({ scale: 1 })

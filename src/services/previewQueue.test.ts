@@ -18,7 +18,11 @@ const fakes = vi.hoisted(() => ({
   aborted: [] as string[],
   converted: [] as string[],
   slides: 1500,
+  /** Whether the device counts as a phone or tablet with little memory. */
+  constrained: false,
 }))
+
+vi.mock('../utils/device', () => ({ isMemoryConstrained: () => fakes.constrained }))
 
 vi.mock('./documentViewer', async () => {
   const store = await import('./offlineStore')
@@ -236,6 +240,55 @@ describe('background preview preparation', () => {
     await queue.waitForPreviewQueueIdle()
     expect(queue.getPreviewStatus('drive-d')?.status).toBe('ready')
     expect(fakes.downloads).toEqual([])
+  })
+
+  it('gives up on a job that keeps closing the page, instead of crashing on every load', async () => {
+    const doc = record('d2', 'Crashes.pdf')
+    await store.saveOfflineBlob('drive-d2', 'Crashes.pdf', 'application/pdf', pdfBytes())
+    await store.savePreviewMeta({
+      fileId: 'drive-d2', documentId: 'd2', name: 'Crashes', version: 1, pipelineVersion: queue.PIPELINE_VERSION, status: 'processing',
+      interruptions: 1, priority: queue.PRIORITY.upload, attempts: 0, originalBytes: 0, imageBytes: 0, queuedAt: 1, updatedAt: 1, lastAccess: 1,
+    })
+    await start([doc])
+    await queue.waitForPreviewQueueIdle()
+    expect(queue.getPreviewStatus('drive-d2')).toMatchObject({ status: 'failed', interruptions: 2 })
+    expect(fakes.openPdfCalls).toBe(0)
+  })
+
+  it('on a phone, leaves a job that was cut off to a computer at once', async () => {
+    fakes.constrained = true
+    try {
+      const doc = record('d3', 'Book.pdf')
+      await store.saveOfflineBlob('drive-d3', 'Book.pdf', 'application/pdf', pdfBytes())
+      await store.savePreviewMeta({
+        fileId: 'drive-d3', documentId: 'd3', name: 'Book', version: 1, pipelineVersion: queue.PIPELINE_VERSION, status: 'processing',
+        priority: queue.PRIORITY.upload, attempts: 0, originalBytes: 0, imageBytes: 0, queuedAt: 1, updatedAt: 1, lastAccess: 1,
+      })
+      await start([doc])
+      await queue.waitForPreviewQueueIdle()
+      expect(queue.getPreviewStatus('drive-d3')?.status).toBe('unsupported')
+      // Opening it on the phone does not start it again.
+      queue.enqueuePreview(doc, 'open')
+      await queue.waitForPreviewQueueIdle()
+      expect(queue.getPreviewStatus('drive-d3')?.status).toBe('unsupported')
+      expect(fakes.openPdfCalls).toBe(0)
+    } finally {
+      fakes.constrained = false
+    }
+  })
+
+  it('on a phone, leaves long PDFs to a computer', async () => {
+    fakes.constrained = true
+    try {
+      const doc = record('d4', 'Book.pdf')
+      await start([doc])
+      queue.enqueuePreview(doc, 'upload', pdfBytes())
+      await queue.waitForPreviewQueueIdle()
+      expect(queue.getPreviewStatus('drive-d4')).toMatchObject({ status: 'unsupported', pageCount: 1200 })
+      expect(fakes.rendered).toEqual([])
+    } finally {
+      fakes.constrained = false
+    }
   })
 
   it('records slide counts for decks without running anything in them', async () => {

@@ -313,6 +313,8 @@ export interface PreviewMeta {
   /** Higher runs first: uploads, then opened files, then the backlog. */
   priority: number
   attempts: number
+  /** Times the page closed (reload, or the browser ending it) while this job ran. */
+  interruptions?: number
   error?: string
   /** Not tried again before this time (after a failure). */
   notBefore?: number

@@ -27,6 +27,8 @@ const KEEP_PAGES = CONSTRAINED ? 2 : 6
 const MAX_CONCURRENT_RENDERS = CONSTRAINED ? 1 : 2
 /** Pages drawn while reading that are also kept on this device, per document and visit. */
 const MAX_STORED_WHILE_READING = CONSTRAINED ? 15 : 40
+/** Pages whose size a phone reads up front. */
+const SIZED_PAGES_CONSTRAINED = 50
 
 interface SearchMatch {
   pageNumber: number
@@ -172,10 +174,16 @@ export function PdfVirtualizedViewer({
           setPageSizes([first.width, first.height])
           setNumPages(pdf.numPages)
           setPdfProxy(pdf)
+          // Each page read stays in pdf.js's memory until the document closes, so
+          // a phone reads only the first pages of a long one; the rest are
+          // assumed to be shaped like the last of those.
+          const limit = CONSTRAINED ? SIZED_PAGES_CONSTRAINED : Infinity
+          const last = Math.min(pdf.numPages, limit)
           await readPageSizes(pdf, {
+            limit,
             signal: controller.signal,
             onChunk: (sizes, upTo) => {
-              if (!cancelled && (upTo === pdf.numPages || upTo % 200 === 0)) setPageSizes(sizes.slice())
+              if (!cancelled && (upTo === last || upTo % 200 === 0)) setPageSizes(sizes.slice())
             },
           })
         } else {

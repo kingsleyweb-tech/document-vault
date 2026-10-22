@@ -12,9 +12,12 @@ describe('PDF page layout', () => {
     expect(tops[3]).toBe(2 * card(800, 842 / 595) + card(800, 595 / 842))
   })
 
-  it('assumes unknown pages are shaped like the first page', () => {
+  it('assumes unknown pages are shaped like the last known page', () => {
     const tops = computePageTops(1000, [612, 792], 900)
     expect(tops[1000]).toBe(1000 * card(900, 792 / 612))
+    // A book whose cover is shaped differently from its pages.
+    const book = computePageTops(1000, [252, 312, 510, 669], 900)
+    expect(book[1000] - book[2]).toBe(998 * card(900, 669 / 510))
   })
 
   it('finds the page under any offset', () => {

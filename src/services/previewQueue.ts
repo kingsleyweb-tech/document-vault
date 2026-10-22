@@ -45,6 +45,10 @@ export const PRIORITY = { upload: 30, open: 20, backfill: 10 } as const
 export type PreparationReason = keyof typeof PRIORITY
 
 const MAX_ATTEMPTS = 3
+/** Times a job may be cut off by the page closing before it is given up on. */
+const MAX_INTERRUPTIONS = 2
+/** Phones prepare PDFs up to this many pages; longer ones are left to a computer. */
+const MAX_PDF_PAGES_CONSTRAINED = 300
 const RETRY_DELAY_MS = 30_000
 /** PDFs are prepared up to this size; other files are kept up to the offline copy limit. */
 const MAX_PDF_BYTES = 300 * 1024 * 1024
@@ -131,7 +135,20 @@ export function startPreviewQueue(options: { getAccessToken: () => string | null
     const saved = await getAllPreviewMeta()
     if (epoch !== sessionEpoch) return
     for (const meta of saved) {
-      if (meta.status === 'processing') meta.status = 'queued'
+      // A job still marked as running was cut off. If the job itself made the
+      // browser end the page (iOS does when memory runs out), starting it again
+      // would end the page again on every load, so a phone leaves it to a
+      // computer and a computer tries it once more.
+      if (meta.status === 'processing') {
+        const interruptions = (meta.interruptions ?? 0) + 1
+        Object.assign(meta, { interruptions, status: 'queued' })
+        if (isMemoryConstrained()) {
+          Object.assign(meta, { status: 'unsupported', error: 'The page closed while preparing this on this device; it still opens normally' })
+        } else if (interruptions >= MAX_INTERRUPTIONS) {
+          Object.assign(meta, { status: 'failed', error: 'The page closed while preparing this' })
+        }
+        void savePreviewMeta(meta)
+      }
       // Jobs added while loading are newer than what was saved.
       if (!metas.has(meta.fileId)) metas.set(meta.fileId, meta)
     }
@@ -496,6 +513,10 @@ async function obtainOriginal(record: VaultDocument, signal: AbortSignal): Promi
 async function preparePdf(meta: PreviewMeta, original: Blob, signal: AbortSignal) {
   const { pdf, task } = await openPdf(original)
   try {
+    if (isMemoryConstrained() && pdf.numPages > MAX_PDF_PAGES_CONSTRAINED) {
+      update(meta, { status: 'unsupported', pageCount: pdf.numPages, error: 'Too long to prepare on this device; it still opens normally' })
+      return
+    }
     const pageSizes = await readPageSizes(pdf, { signal })
     meta = update(meta, { pageCount: pdf.numPages, pageSizes })
     const width = pictureWidthFor(defaultPageDisplayWidth())

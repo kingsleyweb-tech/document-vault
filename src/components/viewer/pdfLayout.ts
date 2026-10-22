@@ -11,15 +11,17 @@ const DEFAULT_ASPECT = 11 / 8.5
 /**
  * Where each page's card starts: tops[i] for page i + 1, and tops[count] is
  * the total height. `sizes` is [width, height, ...] in points and may cover
- * only the first pages; the rest are assumed to be shaped like the first.
+ * only the first pages; the rest are assumed to be shaped like the last known
+ * one (a book's cover is often a different size from its pages).
  */
 export function computePageTops(count: number, sizes: number[], pageWidth: number): Float64Array {
   const tops = new Float64Array(count + 1)
-  const knownAspect = sizes.length >= 2 && sizes[0] > 0 ? sizes[1] / sizes[0] : DEFAULT_ASPECT
+  let knownAspect = DEFAULT_ASPECT
   for (let i = 0; i < count; i += 1) {
     const width = sizes[i * 2]
     const height = sizes[i * 2 + 1]
-    const aspect = width && height ? height / width : knownAspect
+    if (width && height) knownAspect = height / width
+    const aspect = knownAspect
     tops[i + 1] = tops[i] + PAGE_HEADER + PAGE_BORDER + Math.round(pageWidth * aspect) + PAGE_GAP
   }
   return tops
