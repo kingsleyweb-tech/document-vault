@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { ExternalLink, FolderOpen, X } from 'lucide-react'
 import { companion, CompanionError, type LocalEntry } from '../../services/desktopCompanion'
@@ -93,11 +95,13 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useBodyScrollLock(true)
+
   const current = loaded?.id === entry.id ? loaded.value : null
   const error = failure?.id === entry.id ? failure.message : null
   const previewId = `local-${entry.id}`
 
-  return (
+  return createPortal(
     <div className="viewer local-preview" role="dialog" aria-modal="true" aria-label={`Preview of ${entry.name}`}>
       <div className="local-preview__panel">
         <header className="local-preview__header">
@@ -177,6 +181,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

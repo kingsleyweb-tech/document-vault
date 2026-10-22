@@ -7,6 +7,14 @@
   color: var(--text);
 }
 
+/* The presentation brings its own toolbar and stage, so the viewer's padded,
+   scrolling stage would only add an empty margin around it. */
+.viewer-stage:has(> .pptx-viewer) {
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+}
+
 .pptx-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -365,6 +373,15 @@
 
   .pptx-body {
     position: relative;
+  }
+
+  /* A wide slide in a tall phone screen: keep it at the top, under the
+     controls, instead of floating in the middle of a mostly empty stage. */
+  .pptx-stage {
+    place-items: start center;
+    align-content: start;
+    min-height: 0;
+    padding: 12px 8px;
   }
 
   .pptx-meta {

@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import { AlertCircle, CheckCircle2, FileText, FileUp, FolderOpen, FolderUp, Loader2, PauseCircle, Plus, RotateCcw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { DocumentCategory, FolderUploadStats, UploadItem } from '../../types/document'
@@ -24,6 +26,8 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const addFolderInputRef = useRef<HTMLInputElement>(null)
+
+  useBodyScrollLock(open)
 
   if (!open) return null
 
@@ -100,7 +104,7 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
   const activeItems = items.filter((i) => i.status !== 'COMPLETED')
   const doneItems = items.filter((i) => i.status === 'COMPLETED')
 
-  return (
+  return createPortal(
     <div className="dialog-backdrop" role="presentation">
       <section className="upload-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-title">
 
@@ -422,7 +426,8 @@ export function UploadDialog({ open, categories, folderName, destinationFolderId
         )}
 
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

@@ -264,7 +264,7 @@ export function setForegroundDocument(fileId: string | null) {
   // A job that downloads from Drive would compete with the document being
   // opened (or download the same file twice), so it stops and waits its turn.
   // Uploads work from bytes already in the browser and carry on.
-  if (fileId && current && current.priority < PRIORITY.upload && !current.paused) {
+  if (fileId && current && (current.priority < PRIORITY.upload || isMemoryConstrained()) && !current.paused) {
     current.paused = true
     current.controller.abort()
   }
@@ -359,7 +359,8 @@ function pickNext(): PreviewMeta | null {
     if (!local && (!online || !token)) continue
     if (meta.waitingFor === 'drive' && (!token || token === rejectedToken)) continue
     // The open document included: the viewer is drawing its pages right now.
-    if (foregroundFileId && meta.priority < PRIORITY.upload) continue
+    // Phones hold one document at a time, so even uploads wait for the viewer to close.
+    if (foregroundFileId && (meta.priority < PRIORITY.upload || isMemoryConstrained())) continue
     if (!best || meta.priority > best.priority || (meta.priority === best.priority && meta.queuedAt < best.queuedAt)) best = meta
   }
   if (!best && soonest < Infinity && typeof window !== 'undefined') {

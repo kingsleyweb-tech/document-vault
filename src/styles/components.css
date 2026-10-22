@@ -420,7 +420,7 @@ input[type='checkbox'] {
   display: flex;
   flex-direction: column;
   width: min(100%, 460px);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -827,4 +827,67 @@ input[type='checkbox'] {
   line-height: 1.45;
   resize: vertical;
   font: inherit;
+}
+
+/* Item menu on phones: a sheet from the bottom of the screen, always fully visible */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1299;
+  background: rgb(20 16 12 / 40%);
+  animation: fade-in 0.15s ease-out;
+}
+
+.menu.menu--sheet {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  max-height: min(75dvh, 560px);
+  padding: 8px 10px calc(12px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-width: 1px 0 0;
+  border-radius: 20px 20px 0 0;
+  animation: sheet-up 0.2s ease-out;
+}
+
+.menu.menu--sheet button {
+  min-height: 46px;
+  font-size: 15px;
+}
+
+.menu-sheet__title {
+  overflow: hidden;
+  padding: 10px 10px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-sheet__title::before {
+  content: '';
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 10px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Desktop menus never run off a short screen */
+.menu {
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
 }

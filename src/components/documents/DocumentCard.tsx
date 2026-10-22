@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Copy, Download, Eye, FolderInput, History, MoreHorizontal, Pencil, RotateCcw, Star, Tag, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -8,6 +8,10 @@ import { formatDate, formatFileSize } from '../../utils/formatters'
 import { kindLabel } from '../../utils/kinds'
 import { DocumentIcon } from './DocumentIcon'
 import { usePreviewStatus } from '../../hooks/usePreviewStatus'
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
+
+/** Below this width the item menu opens as a sheet from the bottom of the screen. */
+const SHEET_QUERY = '(max-width: 640px)'
 
 export interface ItemActions {
   onView: (documentRecord: VaultDocument) => void
@@ -198,7 +202,9 @@ export function DocumentRow({ documentRecord, actions, inTrash, itemCount, locat
 }
 
 function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultDocument; actions: ItemActions; inTrash?: boolean }) {
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  // `sheet`: a phone-sized screen, where the menu slides up from the bottom
+  // instead of hanging off the button (it would not fit above or below it).
+  const [position, setPosition] = useState<{ top: number; left: number; sheet: boolean } | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const open = useOpenItem(documentRecord, actions, inTrash)
@@ -207,14 +213,27 @@ function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultD
   const place = useCallback(() => {
     const trigger = triggerRef.current
     if (!trigger) return
+    if (window.matchMedia?.(SHEET_QUERY).matches) {
+      setPosition({ top: 0, left: 0, sheet: true })
+      return
+    }
     const rect = trigger.getBoundingClientRect()
     const width = 210
-    const height = menuRef.current?.offsetHeight ?? 260
-    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
-    const below = rect.bottom + 6
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below
-    setPosition({ top, left })
+    // Measured once shown (see below); this first guess only decides the side.
+    const height = menuRef.current?.offsetHeight ?? 380
+    setPosition({ ...menuPlacement(rect, width, height), sheet: false })
   }, [])
+
+  // The real height is only known once the menu is on screen: move it so it fits.
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    const trigger = triggerRef.current
+    if (!position || position.sheet || !menu || !trigger) return
+    const next = menuPlacement(trigger.getBoundingClientRect(), menu.offsetWidth, menu.offsetHeight)
+    if (Math.abs(next.top - position.top) > 1 || Math.abs(next.left - position.left) > 1) setPosition({ ...next, sheet: false })
+  }, [position])
+
+  useBodyScrollLock(Boolean(position?.sheet))
 
   const close = useCallback(() => setPosition(null), [])
 
@@ -230,14 +249,18 @@ function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultD
         triggerRef.current?.focus()
       }
     }
+    // Scrolling the page moves the button away from the menu; scrolling inside the menu does not.
+    const handleScroll = (event: Event) => {
+      if (!menuRef.current?.contains(event.target as Node)) close()
+    }
     document.addEventListener('mousedown', handlePointer, true)
-    document.addEventListener('scroll', close, true)
+    document.addEventListener('scroll', handleScroll, true)
     window.addEventListener('resize', close)
     document.addEventListener('keydown', handleKey)
     menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
     return () => {
       document.removeEventListener('mousedown', handlePointer, true)
-      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('resize', close)
       document.removeEventListener('keydown', handleKey)
     }
@@ -268,7 +291,16 @@ function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultD
       </button>
       {position
         ? createPortal(
-            <div ref={menuRef} className="menu" role="menu" style={{ top: position.top, left: position.left }}>
+            <>
+            {position.sheet ? <div className="menu-backdrop" aria-hidden="true" onClick={close} /> : null}
+            <div
+              ref={menuRef}
+              className={position.sheet ? 'menu menu--sheet' : 'menu'}
+              role="menu"
+              aria-label={documentRecord.name}
+              style={position.sheet ? undefined : { top: position.top, left: position.left }}
+            >
+              {position.sheet ? <div className="menu-sheet__title">{documentRecord.name}</div> : null}
               {inTrash ? (
                 <>
                   {actions.onRestore ? (
@@ -343,12 +375,22 @@ function ItemMenu({ documentRecord, actions, inTrash }: { documentRecord: VaultD
                   </button>
                 </>
               )}
-            </div>,
+            </div>
+            </>,
             document.body,
           )
         : null}
     </>
   )
+}
+
+/** Below the button when it fits, above it otherwise, and always fully on screen. */
+function menuPlacement(rect: DOMRect, width: number, height: number) {
+  const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+  const below = rect.bottom + 6
+  const above = rect.top - height - 6
+  const top = below + height <= window.innerHeight - 8 ? below : above >= 8 ? above : Math.max(8, window.innerHeight - height - 8)
+  return { top, left }
 }
 
 function driveThumbnailUrl(documentRecord: VaultDocument, size: number) {
@@ -370,7 +412,7 @@ export function DocumentThumbnail({ documentRecord, accessToken }: { documentRec
   useEffect(() => {
     if (!canLoadAuthenticated || !accessToken) return undefined
     let cancelled = false
-    loadThumbnailObjectUrl(accessToken, { driveFileId: fileId, fileType: documentRecord.fileType, thumbnailUrl: documentRecord.thumbnailUrl, version })
+    loadThumbnailObjectUrl(accessToken, { driveFileId: fileId, fileType: documentRecord.fileType, thumbnailUrl: documentRecord.thumbnailUrl, version, fileSize: documentRecord.fileSize })
       .then((objectUrl) => {
         if (!cancelled) setPreview({ fileId: previewKey, objectUrl })
       })
@@ -380,7 +422,7 @@ export function DocumentThumbnail({ documentRecord, accessToken }: { documentRec
     return () => {
       cancelled = true
     }
-  }, [accessToken, canLoadAuthenticated, fileId, previewKey, version, documentRecord.fileType, documentRecord.thumbnailUrl])
+  }, [accessToken, canLoadAuthenticated, fileId, previewKey, version, documentRecord.fileType, documentRecord.thumbnailUrl, documentRecord.fileSize])
 
   if (activePreview?.objectUrl) {
     return <img className="doc-thumb" src={activePreview.objectUrl} alt="" decoding="async" />

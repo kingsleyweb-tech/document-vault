@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 
 interface DialogProps {
   open: boolean
@@ -46,6 +48,8 @@ export function Dialog({ open, title, description, icon, tone = 'default', wide,
     }
   }, [open])
 
+  useBodyScrollLock(open)
+
   if (!open) return null
 
   const content = (
@@ -55,7 +59,7 @@ export function Dialog({ open, title, description, icon, tone = 'default', wide,
     </>
   )
 
-  return (
+  return createPortal(
     <div
       className="dialog-backdrop"
       role="presentation"
@@ -93,6 +97,7 @@ export function Dialog({ open, title, description, icon, tone = 'default', wide,
           content
         )}
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }

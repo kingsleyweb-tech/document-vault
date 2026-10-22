@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -228,6 +230,8 @@ export function DocumentViewer({
     return highlightPlainText(currentPreviewText, textSearch)
   }, [preview?.text, previewDocumentId, documentRecord?.id, textSearch])
 
+  useBodyScrollLock(Boolean(documentRecord))
+
   if (!documentRecord) return null
 
   const activePreview = previewDocumentId === documentRecord.id ? preview : null
@@ -269,7 +273,7 @@ export function DocumentViewer({
     return false
   }
 
-  return (
+  return createPortal(
     <div
       className={isFullscreen ? 'viewer is-fullscreen' : 'viewer'}
       ref={viewerRef}
@@ -524,7 +528,8 @@ export function DocumentViewer({
           </button>
         </div>
       ) : null}
-    </div>
+    </div>,
+    document.body,
   )
 }
 

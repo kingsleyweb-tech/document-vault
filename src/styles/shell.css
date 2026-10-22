@@ -232,6 +232,16 @@
   height: var(--topbar-height);
   padding: 0 28px;
   border-bottom: 1px solid var(--border);
+  isolation: isolate;
+}
+
+/* The blur sits on its own layer: on the bar itself it would trap the
+   pop-ups' full-screen backdrop inside the bar. */
+.topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: saturate(1.4) blur(10px);
 }
@@ -290,6 +300,9 @@
   z-index: 50;
   width: 320px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - var(--topbar-height) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -548,7 +561,10 @@ button.progress-pill:hover {
   width: 100%;
   max-width: 1440px;
   padding: 32px 28px 56px;
-  animation: fade-up 0.25s ease-out both;
+  /* Opacity only: an animated (or kept) transform here would make every
+     fixed-position viewer, dialog and menu inside size and place itself
+     against the whole page instead of the screen. */
+  animation: fade-in 0.2s ease-out;
 }
 
 /* ── Mobile tab bar ─────────────────────────────────────────────────── */
