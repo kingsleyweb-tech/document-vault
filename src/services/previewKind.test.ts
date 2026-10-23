@@ -34,7 +34,7 @@ describe('getPreviewKind', () => {
     ['Book.epub', 'ebook', 'epub'],
     ['Site.url', 'other', 'link'],
     ['Site.webloc', 'other', 'link'],
-    ['Shortcut.lnk', 'other', 'fallback'],
+    ['Shortcut.lnk', 'other', 'link'],
     ['Setup.exe', 'other', 'fallback'],
     ['Install.bat', 'other', 'text'],
   ])('%s opens as %s', (name, fileType, expected) => {

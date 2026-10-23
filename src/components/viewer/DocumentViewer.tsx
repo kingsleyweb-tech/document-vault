@@ -17,6 +17,7 @@ import {
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { VaultDocument } from '../../types/document'
 import { getPreviewKind, loadDocumentPreview, type DocumentPreview } from '../../services/documentViewer'
+import type { ShellLinkTarget } from '../../services/shellLink'
 import { queueContentIndex } from '../../services/contentIndex'
 import { backfillContentHash } from '../../services/contentHash'
 import { GoogleDriveError, isDriveAuthorizationError } from '../../services/googleDrive'
@@ -24,6 +25,7 @@ import { getPageImage, getPreviewMeta, SLIDE_SNAPSHOT_PAGE } from '../../service
 import type { PptxDocument, PptxSnapshot } from '../../services/pptx'
 import { enqueuePreview, setForegroundDocument } from '../../services/previewQueue'
 import { normalizeRelativePath } from '../../utils/fileUtils'
+import { linkFileName, safeDecode, wireHtmlLinks } from '../../utils/htmlLinks'
 import { formatFileSize, highlightPlainText } from '../../utils/formatters'
 import { ArchiveListing } from './ArchiveListing'
 import { PdfVirtualizedViewer, type PdfManifest } from './PdfViewer'
@@ -205,6 +207,13 @@ export function DocumentViewer({
   }, [])
 
   const documentPathIndex = useMemo(() => buildDocumentPathIndex(documents), [documents])
+  // A short message when a link or shortcut leads somewhere the vault cannot open.
+  const [linkNotice, setLinkNotice] = useState<{ documentId: string; text: string } | null>(null)
+  useEffect(() => {
+    if (!linkNotice) return undefined
+    const timer = window.setTimeout(() => setLinkNotice(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [linkNotice])
   const openableDocuments = useMemo(
     () => documents.filter((document) => document.fileType !== 'folder' && !document.isDeleted),
     [documents],
@@ -292,14 +301,21 @@ export function DocumentViewer({
     activePreview?.text && textSearch.trim()
       ? activePreview.text.toLowerCase().includes(textSearch.trim().toLowerCase())
       : true
-  const openRelativeHtmlLink = (href: string) => {
+  const followFileLink = (href: string) => {
     const matchedDocument = resolveHtmlLink(documentRecord, href, documentPathIndex)
     if (matchedDocument) {
       onOpenDocument(matchedDocument)
-      return true
+      return
     }
-    return false
+    setLinkNotice({ documentId: documentRecord.id, text: `“${linkFileName(href)}” is not in your vault, so it cannot be opened here.` })
   }
+  const shortcutTarget =
+    activePreview?.kind === 'link' && activePreview.linkTarget
+      ? resolveShortcutTarget(documentRecord, activePreview.linkTarget, documentPathIndex)
+      : null
+  const shortcutTargetName = activePreview?.linkTarget
+    ? linkFileName(activePreview.linkTarget.absolute ?? activePreview.linkTarget.relative ?? '')
+    : ''
 
   return createPortal(
     <div
@@ -429,7 +445,7 @@ export function DocumentViewer({
             title={documentRecord.name}
             sandbox="allow-same-origin allow-popups allow-downloads"
             srcDoc={activePreview.html || ''}
-            onLoad={() => wireHtmlLinks(htmlFrameRef.current, openRelativeHtmlLink)}
+            onLoad={() => wireHtmlLinks(htmlFrameRef.current, followFileLink)}
             style={{ transform: `scale(${zoom})` }}
           />
         ) : null}
@@ -462,6 +478,7 @@ export function DocumentViewer({
             title={documentRecord.name}
             sandbox="allow-same-origin allow-popups allow-downloads"
             srcDoc={activePreview.html}
+            onLoad={(event) => wireHtmlLinks(event.currentTarget, followFileLink)}
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
           />
         ) : null}
@@ -529,7 +546,39 @@ export function DocumentViewer({
           </Suspense>
         ) : null}
 
-        {!loading && !activeError && activePreview?.kind === 'link' ? (
+        {!loading && !activeError && activePreview?.kind === 'link' && /\.lnk$/i.test(documentRecord.originalName ?? '') ? (
+          <div className="office-fallback">
+            <strong>Shortcut</strong>
+            {shortcutTarget ? (
+              <>
+                <span>
+                  This shortcut points to <strong>{shortcutTarget.name}</strong>, which is in your vault.
+                </span>
+                <button type="button" className="primary-button" onClick={() => onOpenDocument(shortcutTarget)}>
+                  <ExternalLink aria-hidden="true" />
+                  <span>Open {shortcutTarget.originalName || shortcutTarget.name}</span>
+                </button>
+              </>
+            ) : activePreview.linkTarget && !/\.[^\\/.]+$/.test(shortcutTargetName) ? (
+              <span>
+                This shortcut points to the folder <strong className="link-preview__url">{shortcutTargetName}</strong>. Open that
+                folder from your files to see what is in it.
+              </span>
+            ) : activePreview.linkTarget ? (
+              <>
+                <span>
+                  This shortcut points to <strong className="link-preview__url">{shortcutTargetName}</strong>, which is not in your
+                  vault. Upload that file too, or open the shortcut from This computer.
+                </span>
+                <span className="link-preview__url">{activePreview.linkTarget.absolute ?? activePreview.linkTarget.relative}</span>
+              </>
+            ) : (
+              <span>Document Vault could not tell where this shortcut points.</span>
+            )}
+          </div>
+        ) : null}
+
+        {!loading && !activeError && activePreview?.kind === 'link' && !/\.lnk$/i.test(documentRecord.originalName ?? '') ? (
           <div className="office-fallback">
             <strong>Internet shortcut</strong>
             {activePreview.linkUrl ? (
@@ -558,6 +607,12 @@ export function DocumentViewer({
               <Download aria-hidden="true" />
               <span>Download File</span>
             </button>
+          </div>
+        ) : null}
+
+        {linkNotice?.documentId === documentRecord.id ? (
+          <div className="notice viewer-link-notice" role="status">
+            {linkNotice.text}
           </div>
         ) : null}
       </div>
@@ -642,7 +697,7 @@ function buildDocumentPathIndex(documents: VaultDocument[]) {
 function resolveHtmlLink(currentDocument: VaultDocument, href: string, index: Map<string, VaultDocument>) {
   if (!href || /^(https?:|mailto:|tel:|#)/i.test(href)) return null
 
-  const decodedHref = normalizeRelativePath(decodeURIComponent(href.split('#')[0].split('?')[0]))
+  const decodedHref = normalizeRelativePath(safeDecode(href.split('#')[0].split('?')[0]))
   const currentFolderParts = normalizeRelativePath(currentDocument.folderPath ?? '').split('/').filter(Boolean)
   const targetParts = [...currentFolderParts]
 
@@ -659,16 +714,32 @@ function resolveHtmlLink(currentDocument: VaultDocument, href: string, index: Ma
   return index.get(resolvedPath) ?? index.get(decodedHref.toLowerCase()) ?? null
 }
 
-function wireHtmlLinks(frame: HTMLIFrameElement | null, openRelativeHtmlLink: (href: string) => boolean) {
-  const frameDocument = frame?.contentDocument
-  if (!frameDocument) return
+/**
+ * Finds the vault document a Windows shortcut points to. The relative path is
+ * tried first, as Windows would; then the end of the full path, since the
+ * uploaded folder rarely sits where it did on the computer it came from.
+ */
+function resolveShortcutTarget(currentDocument: VaultDocument, target: ShellLinkTarget, index: Map<string, VaultDocument>) {
+  if (target.relative) {
+    const found = resolveHtmlLink(currentDocument, target.relative, index)
+    if (found) return found
+  }
+  if (!target.absolute) return null
 
-  frameDocument.querySelectorAll('a[href]').forEach((anchor) => {
-    anchor.addEventListener('click', (event) => {
-      const href = anchor.getAttribute('href')
-      if (href && openRelativeHtmlLink(href)) {
-        event.preventDefault()
-      }
-    })
-  })
+  const parts = normalizeRelativePath(target.absolute).split('/').filter(Boolean)
+  const shortcutFolder = normalizeRelativePath(currentDocument.folderPath ?? '').toLowerCase()
+  for (let take = parts.length; take >= 1; take -= 1) {
+    const suffix = parts.slice(-take).join('/').toLowerCase()
+    const matches = new Set<VaultDocument>()
+    for (const [path, documentRecord] of index) {
+      if (path === suffix || path.endsWith(`/${suffix}`)) matches.add(documentRecord)
+    }
+    if (matches.size === 0) continue
+    const sameFolder = [...matches].find((documentRecord) => normalizeRelativePath(documentRecord.folderPath ?? '').toLowerCase() === shortcutFolder)
+    if (sameFolder) return sameFolder
+    // A bare file name found in several folders is too uncertain to open.
+    if (matches.size === 1 || take > 1) return [...matches][0]
+  }
+  return null
 }
+

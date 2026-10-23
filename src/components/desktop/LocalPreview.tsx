@@ -5,6 +5,7 @@ import { ExternalLink, FolderOpen, X } from 'lucide-react'
 import { companion, CompanionError, type LocalEntry } from '../../services/desktopCompanion'
 import { decodeHtml, renderDocx, renderSpreadsheet, sanitizeHtml, type SpreadsheetSheet } from '../../services/documentViewer'
 import { PdfVirtualizedViewer } from '../viewer/PdfViewer'
+import { linkFileName, safeDecode, wireHtmlLinks } from '../../utils/htmlLinks'
 
 const PresentationViewer = lazy(() =>
   import('../viewer/PresentationViewer').then((module) => ({ default: module.PresentationViewer })),
@@ -36,14 +37,61 @@ interface LocalPreviewProps {
   onClose: () => void
   onOpen: (entry: LocalEntry) => void
   onReveal: (entry: LocalEntry) => void
+  /** Shows another file in this preview, for links between pages. */
+  onNavigate: (entry: LocalEntry) => void
+}
+
+/** Resolves a link in a page against the folder the page is in, as a path on this computer. */
+function resolveLocalPath(folder: string, href: string) {
+  const separator = folder.includes('\\') ? '\\' : '/'
+  const parts = folder.replace(/[\\/]+$/, '').split(/[\\/]/)
+  for (const part of safeDecode(href.split('#')[0].split('?')[0]).split(/[\\/]/)) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length > 1) parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+  return { path: parts.join(separator), folder: parts.slice(0, -1).join(separator) || separator, caseless: separator === '\\' }
 }
 
 // Read-only preview of a file on this computer, streamed through the companion.
 // Nothing is uploaded; the bytes stay in this tab's memory.
-export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewProps) {
+export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate }: LocalPreviewProps) {
   const [loaded, setLoaded] = useState<{ id: number; value: Loaded } | null>(null)
   const [failure, setFailure] = useState<{ id: number; message: string } | null>(null)
   const [activeSheet, setActiveSheet] = useState(0)
+  const [linkNotice, setLinkNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!linkNotice) return undefined
+    const timer = window.setTimeout(() => setLinkNotice(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [linkNotice])
+
+  // A link to another file is looked up in the index: pages and documents open
+  // in this preview, shortcuts and other files open as they would from a result.
+  const followFileLink = async (href: string) => {
+    const name = linkFileName(href)
+    const target = resolveLocalPath(entry.folder, href)
+    const same = (path: string) => (target.caseless ? path.toLowerCase() === target.path.toLowerCase() : path === target.path)
+    try {
+      const result = await companion.search({ q: name, within: target.folder, limit: 50 })
+      const match = result.items.find((item) => same(item.path))
+      if (!match) {
+        setLinkNotice(`“${name}” is not in a folder Document Vault searches, so it cannot be opened from here.`)
+      } else if (match.canPreview) {
+        onNavigate(match)
+      } else if (match.canOpen) {
+        await companion.open(match.id)
+      } else {
+        setLinkNotice(`“${name}” is a program, and programs are not run from Document Vault.`)
+      }
+    } catch (error) {
+      setLinkNotice(error instanceof CompanionError ? error.message : 'That link could not be opened.')
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -155,7 +203,13 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
           ) : current.kind === 'video' ? (
             <video className="local-preview__media" src={current.url} controls />
           ) : current.kind === 'word' || current.kind === 'html' ? (
-            <iframe className="word-frame" title={entry.name} sandbox="allow-same-origin" srcDoc={current.html} />
+            <iframe
+              className="word-frame"
+              title={entry.name}
+              sandbox="allow-same-origin"
+              srcDoc={current.html}
+              onLoad={(event) => wireHtmlLinks(event.currentTarget, (href) => void followFileLink(href))}
+            />
           ) : current.kind === 'spreadsheet' ? (
             <div className="spreadsheet-viewer">
               <div className="spreadsheet-content">
@@ -183,6 +237,11 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
             </div>
           ) : null}
         </div>
+        {linkNotice ? (
+          <div className="notice viewer-link-notice" role="status">
+            {linkNotice}
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,

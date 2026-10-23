@@ -569,6 +569,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
           onClose={() => setPreview(null)}
           onOpen={(entry) => void act(entry, 'open')}
           onReveal={(entry) => void act(entry, 'reveal')}
+          onNavigate={setPreview}
         />
       ) : null}
     </section>
