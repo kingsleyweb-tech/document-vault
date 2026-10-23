@@ -101,6 +101,8 @@ async function startCompanion(origin) {
         const problem = await shell.openPath(target)
         if (problem) throw new Error(problem)
       },
+      // Only http and https links reach here (see companion/src/shortcuts.js).
+      openLink: async (url) => shell.openExternal(url),
       reveal: async (target) => shell.showItemInFolder(target),
       pickFolder: async () => {
         const result = await dialog.showOpenDialog(mainWindow ?? undefined, {

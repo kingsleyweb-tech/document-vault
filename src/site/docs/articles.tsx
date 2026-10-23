@@ -124,6 +124,7 @@ export const articles: DocArticle[] = [
             <ul>
               <li>PDF, of any length. Long documents open on page one and draw pages as you scroll.</li>
               <li>Word (.docx), spreadsheets (.xlsx, .xls, .ods, .csv, .tsv) and PowerPoint (.pptx) with a slideshow.</li>
+              <li>Web pages saved as .htm or .html, shown as the page rather than its code.</li>
               <li>Images, text and data files, e-books (.epub), audio and video.</li>
               <li>ZIP files show their list of contents; nothing is extracted.</li>
             </ul>
@@ -131,7 +132,10 @@ export const articles: DocArticle[] = [
               Older Office formats (.doc, .ppt) and OpenDocument text and presentations use Google Drive’s own preview. Anything
               else can be downloaded.
             </p>
-            <p>Program files and shortcuts (.exe, .lnk and similar) are never run; the viewer says so instead.</p>
+            <p>
+              An internet shortcut (.url or .webloc) shows its web address with a button to open it. Program files and Windows
+              shortcuts (.exe, .lnk and similar) are never run; the viewer says so instead.
+            </p>
           </>
         ),
       },
@@ -571,8 +575,9 @@ export const articles: DocArticle[] = [
               <li>Wait for the first scan, then search. The index stays current as files change.</li>
             </ol>
             <p>
-              From a result you can preview the file, open it with its usual program, or show it in its folder. Programs,
-              scripts and shortcuts are never opened. System folders (such as Windows, Program Files, /System or /usr) are never
+              From a result you can preview the file, open it with its usual program, or show it in its folder. Opening a
+              shortcut opens the document, folder or website it points to. Programs and scripts are never opened, not even
+              through a shortcut. System folders (such as Windows, Program Files, /System or /usr) are never
               indexed.
             </p>
             <p>

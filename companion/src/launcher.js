@@ -25,7 +25,7 @@ const OPEN_SCRIPT =
   '$info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = $env:DV_TARGET; $info.UseShellExecute = $true; ' +
   '[void][System.Diagnostics.Process]::Start($info)'
 
-/** Opens a document with its associated app, or a folder in File Explorer. */
+/** Opens a document with its associated app, a folder in File Explorer, or a web link in the default browser. */
 export function openWithDefaultApp(target) {
   return runPowerShell(OPEN_SCRIPT, { DV_TARGET: target })
 }

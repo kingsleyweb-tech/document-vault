@@ -57,7 +57,7 @@ export async function startCompanion({ dataDir: requestedDataDir = defaultDataDi
     indexer,
     config,
     saveConfig,
-    launcher: launcher ?? { open: openWithDefaultApp, reveal: revealInExplorer, pickFolder },
+    launcher: launcher ?? { open: openWithDefaultApp, openLink: openWithDefaultApp, reveal: revealInExplorer, pickFolder },
     dataDir,
     port,
     log,

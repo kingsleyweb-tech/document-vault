@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  ExternalLink,
   Heart,
   Maximize2,
   Minimize2,
@@ -526,6 +527,23 @@ export function DocumentViewer({
           <Suspense fallback={<div className="viewer-message">Opening book...</div>}>
             <EpubViewer key={documentRecord.id} blob={activePreview.blob} documentId={documentRecord.id} zoom={zoom} />
           </Suspense>
+        ) : null}
+
+        {!loading && !activeError && activePreview?.kind === 'link' ? (
+          <div className="office-fallback">
+            <strong>Internet shortcut</strong>
+            {activePreview.linkUrl ? (
+              <>
+                <span className="link-preview__url">{activePreview.linkUrl}</span>
+                <a className="primary-button" href={activePreview.linkUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink aria-hidden="true" />
+                  <span>Open link</span>
+                </a>
+              </>
+            ) : (
+              <span>This shortcut does not point to a web page, so it cannot be opened here.</span>
+            )}
+          </div>
         ) : null}
 
         {!loading && !activeError && (activePreview?.kind === 'office' || activePreview?.kind === 'fallback') ? (

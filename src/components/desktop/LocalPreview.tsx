@@ -3,7 +3,7 @@ import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { ExternalLink, FolderOpen, X } from 'lucide-react'
 import { companion, CompanionError, type LocalEntry } from '../../services/desktopCompanion'
-import { renderDocx, renderSpreadsheet, type SpreadsheetSheet } from '../../services/documentViewer'
+import { decodeHtml, renderDocx, renderSpreadsheet, sanitizeHtml, type SpreadsheetSheet } from '../../services/documentViewer'
 import { PdfVirtualizedViewer } from '../viewer/PdfViewer'
 
 const PresentationViewer = lazy(() =>
@@ -17,7 +17,7 @@ type Loaded =
   | { kind: 'pdf' | 'presentation'; blob: Blob }
   | { kind: 'image' | 'audio' | 'video'; url: string }
   | { kind: 'text'; text: string; truncated: boolean }
-  | { kind: 'word'; html: string }
+  | { kind: 'word' | 'html'; html: string }
   | { kind: 'spreadsheet'; sheets: SpreadsheetSheet[] }
 
 function previewKind(entry: LocalEntry) {
@@ -26,6 +26,7 @@ function previewKind(entry: LocalEntry) {
   if (extension === 'docx') return 'word'
   if (extension === 'xlsx' || extension === 'xls') return 'spreadsheet'
   if (extension === 'pptx') return 'presentation'
+  if (entry.kind === 'html') return 'html'
   if (entry.kind === 'image' || entry.kind === 'audio' || entry.kind === 'video') return entry.kind
   return 'text'
 }
@@ -61,6 +62,8 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
           return { kind, url: objectUrl }
         case 'word':
           return { kind, html: await renderDocx(blob) }
+        case 'html':
+          return { kind, html: sanitizeHtml(await decodeHtml(blob)) }
         case 'spreadsheet':
           return { kind, sheets: await renderSpreadsheet(blob) }
         default: {
@@ -151,7 +154,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal }: LocalPreviewP
             <audio className="local-preview__media" src={current.url} controls />
           ) : current.kind === 'video' ? (
             <video className="local-preview__media" src={current.url} controls />
-          ) : current.kind === 'word' ? (
+          ) : current.kind === 'word' || current.kind === 'html' ? (
             <iframe className="word-frame" title={entry.name} sandbox="allow-same-origin" srcDoc={current.html} />
           ) : current.kind === 'spreadsheet' ? (
             <div className="spreadsheet-viewer">

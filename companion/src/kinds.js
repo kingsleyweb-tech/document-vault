@@ -13,19 +13,20 @@ const KIND_BY_EXTENSION = {
   mp3: 'audio', wav: 'audio', m4a: 'audio', flac: 'audio', ogg: 'audio', aac: 'audio', wma: 'audio', opus: 'audio',
   mp4: 'video', mkv: 'video', avi: 'video', mov: 'video', webm: 'video', wmv: 'video', m4v: 'video',
   zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive', tgz: 'archive', bz2: 'archive', xz: 'archive', iso: 'archive',
-  lnk: 'shortcut', url: 'shortcut',
+  lnk: 'shortcut', url: 'shortcut', webloc: 'shortcut',
 }
 
 export const KINDS = ['folder', 'pdf', 'word', 'spreadsheet', 'presentation', 'image', 'text', 'html', 'ebook', 'audio', 'video', 'archive', 'shortcut', 'program', 'other']
 
 // Files that run code when opened through their association. Document Vault
 // never launches these; it only shows them in File Explorer. Shortcuts are in
-// the list because a .lnk or .url can point at any program or website.
+// the list because a .lnk or .url can point at any program or website; the
+// companion reads their target instead (see shortcuts.js).
 const NEVER_LAUNCH = new Set([
   'exe', 'com', 'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'msi', 'msp', 'mst', 'scr',
   'pif', 'cpl', 'hta', 'jar', 'reg', 'lnk', 'url', 'appref-ms', 'application', 'gadget', 'msc', 'inf', 'sys', 'dll',
   'ocx', 'scf', 'settingcontent-ms', 'chm', 'appx', 'msix', 'appxbundle', 'msixbundle', 'sct', 'shb', 'ws', 'xbap', 'vb',
-  'psc1', 'cab', 'diagcab', 'library-ms', 'search-ms', 'searchconnector-ms',
+  'psc1', 'cab', 'diagcab', 'library-ms', 'search-ms', 'searchconnector-ms', 'webloc', 'inetloc', 'fileloc',
 ])
 
 const PROGRAM_EXTENSIONS = new Set(['exe', 'com', 'bat', 'cmd', 'ps1', 'vbs', 'msi', 'scr', 'jar', 'appx', 'msix', 'dll', 'sys'])
@@ -36,6 +37,8 @@ const PREVIEW_TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
   txt: 'text/plain', md: 'text/plain', markdown: 'text/plain', log: 'text/plain', csv: 'text/plain', tsv: 'text/plain',
   json: 'text/plain', xml: 'text/plain', yaml: 'text/plain', yml: 'text/plain', ini: 'text/plain',
+  // Served as plain text; the web app sanitises the page and shows it in a sandboxed frame.
+  html: 'text/plain', htm: 'text/plain', xhtml: 'text/plain',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xls: 'application/vnd.ms-excel',

@@ -31,14 +31,34 @@ const FILES = {
   'Documents/tools/setup.exe': 'MZ',
   'Documents/tools/run.bat': '@echo off',
   'Documents/Old link.lnk': 'L',
+  'Documents/links/Example site.url': '[InternetShortcut]\r\nURL=https://example.com/page?a=1\r\n',
+  'Documents/links/Script site.url': '[InternetShortcut]\r\nURL=javascript:alert(1)\r\n',
+  'Documents/links/Mac site.webloc': '<?xml version="1.0"?><plist><dict><key>URL</key><string>https://example.org/?x=1&amp;y=2</string></dict></plist>',
+  'Outside/Lettre à Zoé.docx': 'docx',
   'Documents/node_modules/pkg/index.js': 'skipped',
   'Documents/Locked/secret plans.docx': 'x',
   'Desktop/document.pdf': 'pdf',
 }
 
+// Windows shortcuts made the way Explorer makes them, through the Shell's COM object.
+const SHORTCUTS = {
+  'Documents/links/Schedule.lnk': 'Documents/Military Reports/Training Schedule.pdf',
+  'Documents/links/Letter.lnk': 'Outside/Lettre à Zoé.docx',
+  'Documents/links/Reports folder.lnk': 'Documents/Military Reports',
+  'Documents/links/Setup.lnk': 'Documents/tools/setup.exe',
+}
+
+function createShortcuts() {
+  const script = Object.entries(SHORTCUTS)
+    .map(([link, target]) => `$s = $shell.CreateShortcut('${path.join(home, link).replace(/'/g, "''")}'); $s.TargetPath = '${path.join(home, target).replace(/'/g, "''")}'; $s.Save()`)
+    .join('; ')
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$shell = New-Object -ComObject WScript.Shell; ${script}`], { stdio: 'ignore' })
+}
+
 const calls = []
 const launcher = {
   open: async (target) => void calls.push(['open', target]),
+  openLink: async (url) => void calls.push(['openLink', url]),
   reveal: async (target) => void calls.push(['reveal', target]),
   pickFolder: async () => documents,
 }
@@ -87,6 +107,7 @@ before(async () => {
     fs.mkdirSync(path.dirname(target), { recursive: true })
     fs.writeFileSync(target, content)
   }
+  if (process.platform === 'win32') createShortcuts()
   // Make one folder unreadable with a Windows deny rule for the current user.
   if (process.platform === 'win32') {
     try {
@@ -232,7 +253,7 @@ describe('opening local files', () => {
     assert.deepEqual(calls, [['open', hit.path]])
   })
 
-  for (const name of ['setup.exe', 'run.bat', 'Old link.lnk']) {
+  for (const name of ['setup.exe', 'run.bat']) {
     it(`never launches ${name}, but can show it in Explorer`, async () => {
       const [hit] = (await find(name)).items
       assert.equal(hit.canOpen, false)
@@ -244,6 +265,62 @@ describe('opening local files', () => {
       assert.deepEqual(calls, [['reveal', hit.path]])
     })
   }
+
+  it('opens the website an internet shortcut points to', async () => {
+    for (const [name, url] of [['Example site.url', 'https://example.com/page?a=1'], ['Mac site.webloc', 'https://example.org/?x=1&y=2']]) {
+      const [hit] = (await find(name)).items
+      assert.equal(hit.canOpen, true)
+      calls.length = 0
+      assert.equal((await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })).status, 200)
+      assert.deepEqual(calls, [['openLink', url]])
+    }
+  })
+
+  it('refuses shortcuts to anything but a web page', async () => {
+    for (const name of ['Script site.url', 'Old link.lnk']) {
+      const [hit] = (await find(name)).items
+      calls.length = 0
+      assert.equal((await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })).status, 422)
+      assert.deepEqual(calls, [])
+    }
+  })
+
+  describe('Windows shortcuts', { skip: process.platform !== 'win32' && 'shortcuts are made with the Windows Shell' }, () => {
+    for (const [name, target] of [
+      ['Schedule.lnk', 'Documents/Military Reports/Training Schedule.pdf'],
+      ['Letter.lnk', 'Outside/Lettre à Zoé.docx'],
+      ['Reports folder.lnk', 'Documents/Military Reports'],
+    ]) {
+      it(`opens what ${name} points to`, async () => {
+        const [hit] = (await find(name)).items
+        assert.equal(hit.canOpen, true)
+        calls.length = 0
+        assert.equal((await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })).status, 200)
+        assert.deepEqual(calls, [['open', path.join(home, target)]])
+      })
+    }
+
+    it('never runs a program through a shortcut', async () => {
+      const [hit] = (await find('Setup.lnk')).items
+      calls.length = 0
+      const opened = await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })
+      assert.equal(opened.status, 403)
+      assert.match(opened.body.error, /program/)
+      assert.deepEqual(calls, [])
+    })
+  })
+
+  it('serves web pages for preview as plain text', async () => {
+    const page = path.join(documents, 'notes', 'page.htm')
+    fs.writeFileSync(page, '<p>Hello</p>')
+    await waitFor(async () => (await find('page.htm')).items[0])
+    const [hit] = (await find('page.htm')).items
+    assert.equal(hit.canPreview, true)
+    const response = await request('GET', `/v1/entries/${hit.id}/content`)
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-type'), /^text\/plain/)
+    assert.equal(await response.text(), '<p>Hello</p>')
+  })
 
   it('serves previewable files to the web app and refuses others', async () => {
     const [text] = (await find('readme.txt')).items

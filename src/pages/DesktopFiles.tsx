@@ -636,7 +636,7 @@ function LocalResultRow({ entry, onOpen, onReveal, onPreview, onSearchInside, on
             <span>Open</span>
           </button>
         ) : (
-          <span className="chip" title="Programs, scripts and shortcuts are never started from Document Vault">
+          <span className="chip" title="Programs and scripts are never started from Document Vault">
             Not opened from here
           </span>
         )}

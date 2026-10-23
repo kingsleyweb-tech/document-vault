@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto
 import { canLaunch, previewType } from './kinds.js'
 import { isInside, rootProblem } from './paths.js'
 import { parseSearch, search } from './search.js'
+import { isShortcut, readShortcut } from './shortcuts.js'
 import { friendlyError } from './indexer.js'
 
 // Local HTTP API used by the Document Vault web app.
@@ -18,7 +19,9 @@ import { friendlyError } from './indexer.js'
 //   only SHA-256 hashes of tokens are stored.
 // - Requests name index entries by id. The companion never takes a free-form
 //   path to open, and never runs commands from the request.
-// - Programs, scripts and shortcuts are never launched, only shown in Explorer.
+// - Programs and scripts are never launched, only shown in Explorer. A
+//   shortcut is never launched either: the companion reads where it points and
+//   opens that instead, if it is a website, a folder or a document.
 // - Only folders the user added are indexed, and system folders are refused.
 
 export const VERSION = '1.0.0'
@@ -111,7 +114,7 @@ export function createCompanionServer({ store, indexer, config, saveConfig, laun
     readOnly: Boolean(row.readonly),
     hidden: Boolean(row.hidden),
     availability,
-    canOpen: Boolean(row.is_dir) || canLaunch(row.name),
+    canOpen: Boolean(row.is_dir) || canLaunch(row.name) || isShortcut(row.name),
     canPreview: !row.is_dir && previewType(row.name) !== null && row.size <= MAX_PREVIEW_BYTES,
   })
 
@@ -149,6 +152,34 @@ export function createCompanionServer({ store, indexer, config, saveConfig, laun
     const [real, realRoot] = await Promise.all([fs.promises.realpath(row.path), fs.promises.realpath(root.path)])
     if (!isInside(real, realRoot)) throw new HttpError(403, 'This item points outside the indexed folders.')
     return { row, real }
+  }
+
+  // The target comes from the shortcut file, never from the request. It may lie
+  // outside the indexed folders, as most desktop shortcuts do; opening it is the
+  // same as double-clicking the shortcut, except that programs are refused and
+  // the shortcut's command-line arguments are dropped.
+  async function openShortcut(row) {
+    const target = await readShortcut(row.path).catch(() => null)
+    if (!target) throw new HttpError(422, 'Document Vault could not tell where this shortcut points. Use "Show in folder" instead.')
+    if (target.url) {
+      await launcher.openLink(target.url)
+      log(`Opened the link in shortcut #${row.id}`)
+      return { ok: true }
+    }
+    let info
+    let real
+    try {
+      info = await fs.promises.stat(target.path)
+      real = await fs.promises.realpath(target.path)
+    } catch {
+      throw new HttpError(410, 'This shortcut points to an item that was moved, deleted or is on a drive that is not connected.')
+    }
+    if (!info.isDirectory() && (!canLaunch(target.path) || !canLaunch(real))) {
+      throw new HttpError(403, 'This shortcut starts a program. Programs are not run from Document Vault; use "Show in folder" instead.')
+    }
+    await launcher.open(target.path)
+    log(`Opened the ${info.isDirectory() ? 'folder' : 'file'} shortcut #${row.id} points to`)
+    return { ok: true }
   }
 
   const routes = [
@@ -235,6 +266,7 @@ export function createCompanionServer({ store, indexer, config, saveConfig, laun
 
     ['POST', /^\/v1\/entries\/(\d+)\/open$/, true, async (_request, match) => {
       const { row, real } = await resolveEntry(Number(match[1]))
+      if (!row.is_dir && isShortcut(row.name)) return openShortcut(row)
       if (!row.is_dir && (!canLaunch(row.name) || !canLaunch(real))) {
         throw new HttpError(403, 'Programs, scripts and shortcuts are not opened from Document Vault. Use "Show in folder" instead.')
       }

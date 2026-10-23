@@ -17,6 +17,7 @@ export type PreviewKind =
   | 'embed'
   | 'media'
   | 'archive'
+  | 'link'
   | 'fallback'
 
 export interface SpreadsheetSheet {
@@ -32,6 +33,8 @@ export interface DocumentPreview {
   text?: string
   html?: string
   sheets?: SpreadsheetSheet[]
+  /** The web address of an internet shortcut, when it is one that can be opened. */
+  linkUrl?: string
   downloadable: boolean
 }
 
@@ -40,8 +43,9 @@ export interface DocumentPreview {
  * IndexedDB by an older build are ignored. Version 2 drops cached slide lists,
  * which older builds stored in file-name order rather than presentation order.
  * Version 3 drops spreadsheet HTML cached before it was sanitised as a fragment.
+ * Version 4 drops web pages and internet shortcuts that were cached as plain text.
  */
-export const PREVIEW_FORMAT_VERSION = 3
+export const PREVIEW_FORMAT_VERSION = 4
 
 // ─── Parsed-content cache ─────────────────────────────────────────────────────
 // Stores the expensive render results (Word HTML, spreadsheet sheets, slide
@@ -181,6 +185,7 @@ export async function loadDocumentPreview(
       text: cached.text,
       html: cached.html,
       sheets: cached.sheets,
+      linkUrl: linkUrlOf(cached.kind, cached.text, documentRecord),
       downloadable: true,
     }
   }
@@ -197,6 +202,7 @@ export async function loadDocumentPreview(
       text: offlinePreview.text,
       html: offlinePreview.html,
       sheets: offlinePreview.sheets,
+      linkUrl: linkUrlOf(offlinePreview.kind as PreviewKind, offlinePreview.text, documentRecord),
       downloadable: true,
     }
 
@@ -283,9 +289,13 @@ export async function loadDocumentPreview(
       kind,
       blob: typedBlob,
       objectUrl,
-      html: sanitizeHtml(await typedBlob.text()),
+      html: sanitizeHtml(await decodeHtml(typedBlob)),
       downloadable: true,
     }
+  } else if (kind === 'link') {
+    // The raw shortcut is kept as text, so a cached copy can be read again.
+    const text = await typedBlob.text()
+    result = { kind, blob: typedBlob, objectUrl, text, linkUrl: readInternetShortcut(text, fileName) ?? undefined, downloadable: true }
   } else if (kind === 'office' && isDocx) {
     try {
       result = {
@@ -342,11 +352,13 @@ export async function loadDocumentPreview(
 }
 
 // Formats decided by extension before the stored kind, since older uploads
-// recorded several of them as 'word', 'image' or 'other'.
+// recorded several of them as 'word', 'image', 'text' or 'other'.
 const kindByExtension: Array<[RegExp, PreviewKind]> = [
   [/\.(doc|ppt|pps|odt|odp|tiff?|heic)$/, 'embed'],
+  [/\.(html?|xhtml)$/, 'html'],
+  [/\.(url|webloc)$/, 'link'],
   // Scripts are shown as escaped text; nothing in the vault is ever run.
-  [/\.(rtf|json|xml|md|markdown|log|ya?ml|ini|cfg|url|tex|srt|vtt|bat|cmd|ps1|vbs|js|ts|py|sh|sql)$/, 'text'],
+  [/\.(rtf|json|xml|md|markdown|log|ya?ml|ini|cfg|tex|srt|vtt|bat|cmd|ps1|vbs|js|ts|py|sh|sql)$/, 'text'],
   [/\.(xlsx|xlsm|xls|ods|csv|tsv)$/, 'office'],
   [/\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|mp4|m4v|webm|ogv|mov)$/, 'media'],
   [/\.zip$/, 'archive'],
@@ -374,9 +386,49 @@ export function getPreviewKind(documentRecord: Pick<VaultDocument, 'fileType' | 
   if (documentRecord.mimeType.includes('word') || documentRecord.mimeType.includes('officedocument.word')) return 'office'
   if (documentRecord.mimeType.includes('excel') || documentRecord.mimeType.includes('officedocument.sheet')) return 'office'
   if (documentRecord.mimeType.includes('powerpoint') || documentRecord.mimeType.includes('officedocument.presentation')) return 'office'
+  if (documentRecord.mimeType === 'text/html' || documentRecord.mimeType === 'application/xhtml+xml') return 'html'
   if (documentRecord.mimeType.startsWith('text/')) return 'text'
-  if (/\.(html?|xhtml)$/i.test(documentRecord.originalName ?? '')) return 'html'
   return 'fallback'
+}
+
+/**
+ * Reads the web address out of a Windows internet shortcut (.url) or a Mac
+ * web location (.webloc). Only http and https links are returned.
+ */
+export function readInternetShortcut(text: string, fileName: string) {
+  const raw = /\.webloc$/i.test(fileName)
+    ? /<key>\s*URL\s*<\/key>\s*<string>([^<]*)<\/string>/i.exec(text)?.[1].replace(/&amp;/g, '&')
+    : /^\s*URL\s*=\s*(.+?)\s*$/im.exec(text)?.[1]
+  try {
+    const url = new URL(raw ?? '')
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+function linkUrlOf(kind: PreviewKind, text: string | undefined, documentRecord: VaultDocument) {
+  if (kind !== 'link' || !text) return undefined
+  return readInternetShortcut(text, documentRecord.originalName ?? documentRecord.name) ?? undefined
+}
+
+/**
+ * Reads an HTML file in the encoding it declares. Pages saved by Word and older
+ * browsers are often Windows-1252 or UTF-16 rather than UTF-8.
+ */
+export async function decodeHtml(blob: Blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const head = new TextDecoder('windows-1252').decode(bytes.subarray(0, 4096))
+  const label =
+    bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le'
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be'
+    : /<meta[^>]+charset\s*=\s*["']?([\w-]+)/i.exec(head)?.[1] ?? 'utf-8'
+  try {
+    return new TextDecoder(label).decode(bytes)
+  } catch {
+    // An encoding name the browser does not know.
+    return new TextDecoder().decode(bytes)
+  }
 }
 
 export function buildDownloadName(documentRecord: VaultDocument) {
