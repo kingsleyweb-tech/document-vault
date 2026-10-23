@@ -31,3 +31,6 @@ companion/.test-sandbox
 
 # Firebase emulator logs
 *-debug.log
+
+# Installed copy of the desktop app (not part of the source)
+/Document Vault/
