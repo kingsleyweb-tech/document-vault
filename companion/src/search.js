@@ -1,3 +1,4 @@
+import { scopeSql } from './access.js'
 import { KINDS } from './kinds.js'
 import { belowRange, pathKey } from './paths.js'
 
@@ -10,6 +11,11 @@ import { belowRange, pathKey } from './paths.js'
 const MAX_LIMIT = 200
 const COUNT_CAP = 5000
 const FUZZY_CANDIDATES = 3000
+// names: file and folder names only (the original search).
+// documents: titles, file names, authors and other metadata.
+// fulltext: the text inside documents.
+// all: everything, ranked together.
+const MODES = ['names', 'documents', 'fulltext', 'all']
 
 export function parseSearch(params) {
   const text = String(params.get('q') ?? '').trim().replace(/\s+/g, ' ').slice(0, 200)
@@ -21,11 +27,15 @@ export function parseSearch(params) {
   }
   const kinds = (params.get('kind') ?? '').split(',').filter((kind) => KINDS.includes(kind))
   const type = params.get('type')
+  const rootIds = (params.get('roots') ?? '').split(',').map(Number).filter((id) => Number.isSafeInteger(id) && id > 0).slice(0, 100)
   return {
     text,
+    mode: MODES.includes(params.get('mode')) ? params.get('mode') : 'names',
+    author: String(params.get('author') ?? '').trim().slice(0, 120) || null,
     kinds,
     type: type === 'file' || type === 'folder' ? type : null,
     rootId: number('root'),
+    rootIds,
     within: params.get('within') || null,
     minSize: number('minSize'),
     maxSize: number('maxSize'),
@@ -37,12 +47,18 @@ export function parseSearch(params) {
   }
 }
 
-const escapeLike = (value) => value.replace(/[\\%_]/g, (character) => '\\' + character)
-const ftsPhrase = (word) => '"' + word.replace(/"/g, '""') + '"'
+export const escapeLike = (value) => value.replace(/[\\%_]/g, (character) => '\\' + character)
+export const ftsPhrase = (word) => '"' + word.replace(/"/g, '""') + '"'
 
-function filterClauses(query) {
-  const clauses = []
-  const values = []
+export function filterClauses(query) {
+  // Every search is limited to libraries that may be read and to paths outside their exclusions.
+  const scope = scopeSql('e', query.rootIds)
+  const clauses = [scope.sql]
+  const values = [...scope.values]
+  if (query.author) {
+    clauses.push('e.id in (select rowid from meta_fts where meta_fts match ?)')
+    values.push(`author : ${ftsPhrase(query.author)}`)
+  }
   if (query.kinds.length > 0) {
     clauses.push(`e.kind in (${query.kinds.map(() => '?').join(', ')})`)
     values.push(...query.kinds)
@@ -135,7 +151,7 @@ export function search(db, query) {
   return fuzzySearch(db, query, words, clauses, values)
 }
 
-function fuzzySearch(db, query, words, clauses, values) {
+export function fuzzySearch(db, query, words, clauses, values) {
   const grams = new Set()
   for (const word of words) for (const gram of trigrams(word)) grams.add(gram)
   if (grams.size === 0) return { items: [], total: 0, totalCapped: false, fuzzy: true }

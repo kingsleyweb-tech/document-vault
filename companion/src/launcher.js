@@ -52,15 +52,16 @@ const PICK_SCRIPT = `
 Add-Type -AssemblyName System.Windows.Forms
 $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Choose a folder for Document Vault to index. Only file and folder names, sizes and dates are read.'
+$dialog.Description = 'Choose a folder for Document Vault to index. Document Vault reads the names and the text of documents in this folder only, on this computer.'
 $dialog.ShowNewFolderButton = $false
+if ($env:DV_START) { $dialog.SelectedPath = $env:DV_START }
 if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }
 $owner.Dispose()
 `
 
 /** Shows the Windows folder picker on this computer. Resolves to the chosen path, or null if cancelled. */
-export async function pickFolder() {
-  const output = await runPowerShell(PICK_SCRIPT, {}, { sta: true, timeout: 10 * 60 * 1000 })
+export async function pickFolder({ defaultPath } = {}) {
+  const output = await runPowerShell(PICK_SCRIPT, defaultPath ? { DV_START: defaultPath } : {}, { sta: true, timeout: 10 * 60 * 1000 })
   const chosen = output.trim()
   return chosen.length > 0 ? chosen : null
 }

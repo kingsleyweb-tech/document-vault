@@ -288,7 +288,6 @@ describe('opening local files', () => {
   describe('Windows shortcuts', { skip: process.platform !== 'win32' && 'shortcuts are made with the Windows Shell' }, () => {
     for (const [name, target] of [
       ['Schedule.lnk', 'Documents/Military Reports/Training Schedule.pdf'],
-      ['Letter.lnk', 'Outside/Lettre à Zoé.docx'],
       ['Reports folder.lnk', 'Documents/Military Reports'],
     ]) {
       it(`opens what ${name} points to`, async () => {
@@ -299,6 +298,16 @@ describe('opening local files', () => {
         assert.deepEqual(calls, [['open', path.join(home, target)]])
       })
     }
+
+    it('never opens what a shortcut points to outside the libraries', async () => {
+      // Letter.lnk is inside a library, but its target (Outside/) is not: a shortcut cannot widen access.
+      const [hit] = (await find('Letter.lnk')).items
+      calls.length = 0
+      const opened = await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })
+      assert.equal(opened.status, 403)
+      assert.match(opened.body.error, /outside your libraries/)
+      assert.deepEqual(calls, [])
+    })
 
     it('never runs a program through a shortcut', async () => {
       const [hit] = (await find('Setup.lnk')).items
@@ -387,7 +396,7 @@ describe('keeping the index in sync', () => {
 
   it('reports folders Windows will not let it read', { skip: !lockedDenied && 'icacls is not available' }, async () => {
     const status = (await json('GET', '/v1/status')).body
-    assert.ok(status.index.errors.some((error) => error.path === path.join(documents, 'Locked') && /Access denied/.test(error.message)))
+    assert.ok(status.index.errors.some((error) => error.path === path.join(documents, 'Locked') && /permission/.test(error.message)))
     const [locked] = (await find('Locked', '&type=folder')).items
     assert.equal(locked.availability, 'denied')
     assert.equal((await find('secret plans')).items.length, 0)
@@ -455,6 +464,9 @@ describe('performance', () => {
       await json('POST', '/v1/index/resume', { body: {} })
     }
     assert.equal(listings, 0)
+    // Removing the library forgets its 20,000 entries; the files stay on disk.
+    assert.equal((await json('DELETE', `/v1/roots/${added.body.root.id}`)).status, 200)
+    assert.equal(fs.readdirSync(path.join(bulk, 'Folder 42')).length, 200)
   })
 
   it('pause stops indexing until resumed', async () => {

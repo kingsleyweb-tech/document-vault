@@ -1,4 +1,7 @@
+import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
+import { KINDS } from './kinds.js'
+import { checkIntegrity, migrate } from './migrations.js'
 import { belowRange, pathKey } from './paths.js'
 
 // One SQLite file holds the index. Names and paths are searched through an
@@ -63,9 +66,45 @@ create trigger if not exists entries_au after update of name, path on entries be
 end;
 `
 
+// Library settings the web app may change, with how each is stored.
+const ROOT_SETTINGS = {
+  name: (value) => (value === null ? null : String(value).trim().slice(0, 120) || null),
+  recursive: (value) => (value ? 1 : 0),
+  max_depth: (value) => Math.min(Math.max(Math.round(Number(value) || 0), 0), 256),
+  file_types: (value) => (Array.isArray(value) ? JSON.stringify(value.filter((kind) => KINDS.includes(kind))) : null),
+  extract_text: (value) => (value ? 1 : 0),
+  // Text recognition of scanned pages: 'ask' (offer it when scans are found), 'on' or 'off'.
+  ocr_pref: (value) => (['ask', 'on', 'off'].includes(value) ? value : 'ask'),
+}
+
+/**
+ * Opens the index, creating or upgrading it. A damaged file is moved aside
+ * and a new, empty index is started; `recovered` then describes what happened.
+ */
 export function openStore(file) {
-  const db = new DatabaseSync(file)
-  db.exec(SCHEMA)
+  let db
+  let recovered = null
+  try {
+    db = new DatabaseSync(file)
+    const problem = file === ':memory:' ? null : checkIntegrity(db)
+    if (problem) throw new Error(problem)
+  } catch (error) {
+    if (file === ':memory:') throw error
+    db?.close()
+    const aside = `${file}.damaged-${Date.now()}`
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (fs.existsSync(file + suffix)) fs.renameSync(file + suffix, aside + suffix)
+    }
+    recovered = { at: Date.now(), movedTo: aside, problem: String(error?.message ?? error).slice(0, 300) }
+    db = new DatabaseSync(file)
+  }
+  try {
+    db.exec(SCHEMA)
+    migrate(db, file === ':memory:' ? null : file)
+  } catch (error) {
+    db.close()
+    throw error
+  }
 
   const statements = {
     listRoots: db.prepare(`
@@ -73,9 +112,10 @@ export function openStore(file) {
         (select count(*) from entries e where e.root_id = r.id and e.is_dir = 0) as file_count,
         (select count(*) from entries e where e.root_id = r.id and e.is_dir = 1) as folder_count
       from roots r order by r.path`),
+    rootRows: db.prepare('select * from roots order by path'),
     getRoot: db.prepare('select * from roots where id = ?'),
     rootByKey: db.prepare('select * from roots where path_key = ?'),
-    insertRoot: db.prepare('insert into roots (path, path_key, added_at) values (?, ?, ?)'),
+    insertRoot: db.prepare("insert into roots (path, path_key, added_at, ocr_pref) values (?, ?, ?, 'ask')"),
     deleteRoot: db.prepare('delete from roots where id = ?'),
     setRootStatus: db.prepare('update roots set status = ?, error = ? where id = ?'),
     finishRootScan: db.prepare('update roots set status = ?, error = ?, last_scan_at = ?, last_scan_ms = ? where id = ?'),
@@ -95,24 +135,116 @@ export function openStore(file) {
     getEntry: db.prepare('select * from entries where id = ?'),
     entryByKey: db.prepare('select * from entries where path_key = ?'),
     setAccessible: db.prepare('update entries set accessible = ? where id = ?'),
-    counts: db.prepare('select count(*) as total, sum(is_dir) as folders from entries'),
+    counts: db.prepare(`select count(*) as total, sum(e.is_dir) as folders from entries e join roots r on r.id = e.root_id where r.state <> 'revoked'`),
+    bumpEpoch: db.prepare('update roots set epoch = epoch + 1 where id = ?'),
+    setState: db.prepare('update roots set state = ?, revoked_at = ? where id = ?'),
+    setSynced: db.prepare('update roots set last_sync_at = ? where id = ?'),
+    setTypeSkipped: db.prepare('update roots set type_skipped = ? where id = ?'),
+    listExclusions: db.prepare('select * from exclusions where root_id = ? order by path'),
+    allExclusions: db.prepare('select * from exclusions'),
+    getExclusion: db.prepare('select * from exclusions where id = ?'),
+    insertExclusion: db.prepare('insert or ignore into exclusions (root_id, path, path_key, key_lo, key_hi, added_at) values (?, ?, ?, ?, ?, ?)'),
+    deleteExclusion: db.prepare('delete from exclusions where id = ?'),
+    recordSkip: db.prepare(`insert into skips (path_key, root_id, path, reason, at) values (?, ?, ?, ?, ?)
+      on conflict (path_key) do update set root_id = excluded.root_id, reason = excluded.reason, at = excluded.at`),
+    clearSkipsBelow: db.prepare('delete from skips where root_id = ? and (path_key = ? or (path_key >= ? and path_key < ?))'),
+    clearSkips: db.prepare('delete from skips where root_id = ?'),
+    deleteRootEntries: db.prepare('delete from entries where root_id = ?'),
+    deleteRootLinks: db.prepare('delete from doc_links where root_id = ?'),
+    deleteRootDocs: db.prepare('delete from docs where root_id = ?'),
+    // Links into a folder that is no longer authorized are reported as outside, not broken.
+    linksOutside: db.prepare("update doc_links set status = 'outside', target_id = null where status <> 'external' and (target_key = ? or (target_key >= ? and target_key < ?))"),
+    linksRecheck: db.prepare("update doc_links set status = 'broken' where status = 'outside' and (target_key = ? or (target_key >= ? and target_key < ?))"),
+    event: db.prepare('insert into events (at, kind, root_id, detail) values (?, ?, ?, ?)'),
+    recentEvents: db.prepare('select * from events order by id desc limit ?'),
   }
 
   const below = belowRange
 
+  function transaction(work) {
+    db.exec('begin')
+    try {
+      const result = work()
+      db.exec('commit')
+      return result
+    } catch (error) {
+      db.exec('rollback')
+      throw error
+    }
+  }
+
   return {
     db,
+    recovered,
+    transaction,
     close: () => db.close(),
     listRoots: () => statements.listRoots.all(),
+    /** Libraries without the file counts, for frequent checks. */
+    listRootRows: () => statements.rootRows.all(),
     getRoot: (id) => statements.getRoot.get(id),
     rootByPath: (value) => statements.rootByKey.get(pathKey(value)),
-    addRoot(value) {
+    addRoot(value, settings = {}) {
       const info = statements.insertRoot.run(value, pathKey(value), Date.now())
-      return statements.getRoot.get(info.lastInsertRowid)
+      const id = Number(info.lastInsertRowid)
+      this.updateRoot(id, settings)
+      return statements.getRoot.get(id)
+    },
+    /** Changes library settings. Only the names in ROOT_SETTINGS are accepted. */
+    updateRoot(id, settings) {
+      const columns = Object.keys(settings).filter((key) => Object.hasOwn(ROOT_SETTINGS, key) && settings[key] !== undefined)
+      if (columns.length === 0) return
+      const values = columns.map((key) => ROOT_SETTINGS[key](settings[key]))
+      db.prepare(`update roots set ${columns.map((key) => `${key} = ?`).join(', ')} where id = ?`).run(...values, id)
     },
     removeRoot(id) {
-      statements.deleteRoot.run(id)
+      // The cascade removes entries, extracted text, metadata, skips and exclusions.
+      transaction(() => {
+        statements.deleteRootLinks.run(id)
+        statements.deleteRoot.run(id)
+      })
     },
+    /** Deletes everything indexed for a library but keeps the library itself. Files on disk are untouched. */
+    purgeRoot(id) {
+      transaction(() => {
+        statements.deleteRootLinks.run(id)
+        statements.deleteRootDocs.run(id)
+        statements.deleteRootEntries.run(id)
+        statements.clearSkips.run(id)
+      })
+    },
+    bumpEpoch: (id) => statements.bumpEpoch.run(id),
+    setState: (id, state) => statements.setState.run(state, state === 'revoked' ? Date.now() : null, id),
+    setSynced: (id) => statements.setSynced.run(Date.now(), id),
+    setTypeSkipped: (id, count) => statements.setTypeSkipped.run(count, id),
+
+    listExclusions: (rootId) => statements.listExclusions.all(rootId),
+    allExclusions: () => statements.allExclusions.all(),
+    getExclusion: (id) => statements.getExclusion.get(id),
+    /** Excludes a folder: removes what was indexed below it and marks links into it as outside. */
+    addExclusion(rootId, folder) {
+      const key = pathKey(folder)
+      const [lo, hi] = below(key)
+      transaction(() => {
+        statements.insertExclusion.run(rootId, folder, key, lo, hi, Date.now())
+        statements.deleteKey.run(key)
+        statements.deleteBelow.run(lo, hi)
+        statements.clearSkipsBelow.run(rootId, key, lo, hi)
+        statements.linksOutside.run(key, lo, hi)
+      })
+    },
+    removeExclusion(exclusion) {
+      transaction(() => {
+        statements.deleteExclusion.run(exclusion.id)
+        statements.linksRecheck.run(exclusion.path_key, exclusion.key_lo, exclusion.key_hi)
+      })
+    },
+    recordSkip: (rootId, target, reason) => statements.recordSkip.run(pathKey(target), rootId, target, reason, Date.now()),
+    clearSkipsBelow(rootId, folder) {
+      const key = pathKey(folder)
+      statements.clearSkipsBelow.run(rootId, key, ...below(key))
+    },
+    event: (kind, rootId = null, detail = null) => statements.event.run(Date.now(), kind, rootId, detail),
+    recentEvents: (limit = 50) => statements.recentEvents.all(limit),
     setRootStatus: (id, status, error = null) => statements.setRootStatus.run(status, error, id),
     finishRootScan: (id, status, error, ms) => statements.finishRootScan.run(status, error, Date.now(), ms, id),
 

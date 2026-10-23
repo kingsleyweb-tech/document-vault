@@ -87,7 +87,8 @@ export const articles: DocArticle[] = [
               <li><strong>Home</strong>: recent activity, storage use and your folders.</li>
               <li><strong>All files</strong> and <strong>Folders</strong>: everything in your vault.</li>
               <li><strong>Recent</strong>, <strong>Favorites</strong> and <strong>Categories</strong>: quick views.</li>
-              <li><strong>Desktop Files</strong>: files on your computer, when using the desktop app.</li>
+              <li><strong>My Libraries</strong>: folders on your computer you chose to search, when using the desktop app.</li>
+              <li><strong>Search</strong>: your libraries and your uploaded documents, by title, name or the text inside.</li>
               <li><strong>Trash</strong> and <strong>Settings</strong>.</li>
             </ul>
             <p>
@@ -366,13 +367,21 @@ export const articles: DocArticle[] = [
       {
         id: 'this-computer',
         title: 'Files on this computer',
-        keywords: 'desktop local search typo filters',
+        keywords: 'desktop local library search typo filters full text page phrase',
         body: (
-          <p>
-            In the <Link to="/documentation/desktop-app">desktop app</Link>, Desktop Files searches folders you chose on your
-            computer as well. Use “Where to search” to pick This computer, Uploaded or All sources. Local search tolerates small
-            typing mistakes and can filter by type, location, date and size.
-          </p>
+          <>
+            <p>
+              In the <Link to="/documentation/desktop-app">desktop app</Link>, the Search page also searches your{' '}
+              <Link to="/documentation/desktop-app#libraries">libraries</Link>. Choose Local Library, Document Vault or Both, and
+              whether to search Everything, Titles and names, or Full text. Each result says where it came from and why it
+              matched, and text matches show the passage and its page number, with Open at page to go straight to it.
+            </p>
+            <p>
+              Use quotes for an exact phrase (<code>"reasonable person"</code>), OR for either word, and a minus to leave a word
+              out (<code>-draft</code>). Name search tolerates small typing mistakes. Results can be narrowed by library, type,
+              author and date.
+            </p>
+          </>
         ),
       },
     ],
@@ -466,7 +475,7 @@ export const articles: DocArticle[] = [
   {
     slug: 'desktop-app',
     title: 'Desktop app',
-    summary: 'Install the app on Windows, macOS or Linux and search files on your computer.',
+    summary: 'Install the app on Windows, macOS or Linux and search the books and documents on your computer.',
     sections: [
       {
         id: 'what-it-adds',
@@ -475,10 +484,10 @@ export const articles: DocArticle[] = [
         body: (
           <>
             <p>
-              The desktop app is the Document Vault workspace in its own window, plus <strong>Desktop Files</strong>: search,
-              preview and open files that are already on your computer, without uploading them.
+              The desktop app is the Document Vault workspace in its own window, plus <strong>My Libraries</strong>: search,
+              preview and open books and documents that are already on your computer, without uploading them.
             </p>
-            <p>It indexes only folders you choose. Nothing on your computer is uploaded unless you upload it yourself.</p>
+            <p>It reads only folders you choose. Nothing on your computer is uploaded unless you upload it yourself.</p>
           </>
         ),
       },
@@ -564,36 +573,105 @@ export const articles: DocArticle[] = [
         ),
       },
       {
-        id: 'desktop-files',
-        title: 'Searching files on your computer',
-        keywords: 'index folders add folder rescan show in folder open',
+        id: 'libraries',
+        title: 'Libraries: searching folders on your computer',
+        keywords: 'library add folder index subfolders exclude rescan show in folder open desktop files',
         body: (
           <>
+            <p>
+              A library is a folder you allow Document Vault to read, such as the folder that holds your law books. Document
+              Vault reads nothing else on your computer.
+            </p>
             <ol>
-              <li>Open Desktop Files from the sidebar.</li>
-              <li>Choose Add folder and pick a folder, such as Documents.</li>
-              <li>Wait for the first scan, then search. The index stays current as files change.</li>
+              <li>Open My Libraries from the sidebar and choose Add library.</li>
+              <li>Pick the folder in your computer’s own folder window.</li>
+              <li>
+                Name the library and choose whether to include subfolders (and how deep), which file types to include, and
+                whether to read the text inside documents.
+              </li>
+              <li>Names are indexed first, so titles can be searched within seconds; the text is read in the background.</li>
             </ol>
             <p>
-              From a result you can preview the file, open it with its usual program, or show it in its folder. Opening a
-              shortcut opens the document, folder or website it points to. Programs and scripts are never opened, not even
-              through a shortcut. System folders (such as Windows, Program Files, /System or /usr) are never
-              indexed.
+              Text is read from PDF, Word (.docx), EPUB, PowerPoint (.pptx), web pages (.htm, .html), text and RTF files, with
+              page numbers for PDFs. Other files are searchable by name. Every file that is skipped is listed with the reason on
+              the library’s Health tab.
             </p>
             <p>
-              Removing a folder from the list removes it from the index; the files themselves are not touched.
+              Scanned books are pictures of pages, so their words cannot be read directly. When a library holds scans, Document
+              Vault asks once whether to recognise their text (OCR). If you agree, it recognises the scanned pages in the
+              background on this computer, in English, about 5 to 10 seconds per page (a 300-page book can take 30 to 50 minutes); nothing is uploaded and no extra download is
+              needed. Recognised passages are marked “Recognised text (OCR)” in search results because they may contain errors.
+              You can turn recognition on or off for each library under Settings &amp; access; turning it off keeps the text
+              already recognised. JPEG and PNG pictures are recognised too when the library includes images.
+            </p>
+            <p>
+              On the library’s Folders tab you can exclude a subfolder: its files leave the index and search at once. The
+              library stays current as files are added, changed, moved or deleted. Programs and scripts are never opened, and
+              system folders (such as Windows, Program Files, /System or /usr) cannot be added.
+            </p>
+            <Callout>The extracted text and the index stay on this computer. They are not uploaded.</Callout>
+          </>
+        ),
+      },
+      {
+        id: 'book-links',
+        title: 'Catalog pages and book links',
+        keywords: 'htm html catalog index page link broken reference',
+        body: (
+          <>
+            <p>
+              Many collections use .htm pages as catalogs that link to the books. Document Vault reads those links without
+              running the page. The Book links tab lists each one as Found, Broken, Not indexed, Outside library or Web link,
+              and a search result shows which catalog pages refer to that book.
+            </p>
+            <p>Links that point outside your libraries are never followed, and web links are never fetched.</p>
+          </>
+        ),
+      },
+      {
+        id: 'library-access',
+        title: 'Pause, revoke, clear or remove a library',
+        keywords: 'revoke permission access remove purge clear index pause privacy ai',
+        body: (
+          <>
+            <ul>
+              <li>
+                <strong>Pause</strong>: changes on disk are no longer picked up; search still uses what was already indexed.
+              </li>
+              <li>
+                <strong>Revoke access</strong>: Document Vault stops reading the folder at once, and nothing from it appears
+                in search, lists or links until you grant access again.
+              </li>
+              <li>
+                <strong>Clear the index</strong>: deletes the names, text, metadata and links indexed from the folder,
+                including corrections you made to titles or authors. The library stays, paused.
+              </li>
+              <li>
+                <strong>Remove library</strong>: removes the library and its index from Document Vault.
+              </li>
+            </ul>
+            <p>None of these touch the folder or its files. Document Vault never deletes, moves or edits your books.</p>
+            <p>
+              If a folder becomes unreadable (on a Mac, for example, after access to it was withdrawn), the library shows
+              Permission needed. Choose Grant access again and pick the same folder. If the drive holding a library is
+              disconnected, it shows Not available and its index is kept until the drive returns.
+            </p>
+            <p>
+              The Library access page lists every library, its exclusions and recent changes. AI search is off: no AI feature
+              can read your libraries.
             </p>
           </>
         ),
       },
       {
         id: 'connect-a-browser',
-        title: 'Using Desktop Files from a browser',
+        title: 'Using your libraries from a browser',
         keywords: 'pairing code companion browser',
         body: (
           <p>
-            While the desktop app is open, a browser on the same computer can use Desktop Files too. In the desktop app, choose
-            Help, then Connect a browser, to see a one-time pairing code; type it on the Desktop Files page in the browser.
+            While the desktop app is open, a browser on the same computer can search your libraries too. In the desktop app,
+            choose Help, then Connect a browser, to see a one-time pairing code; type it on the My Libraries page in the
+            browser.
           </p>
         ),
       },
@@ -714,13 +792,19 @@ export const articles: DocArticle[] = [
       },
       {
         id: 'desktop-files-empty',
-        title: 'Desktop Files finds nothing',
-        keywords: 'desktop files no results index pairing',
+        title: 'Searching my libraries finds nothing',
+        keywords: 'desktop files libraries no results index pairing full text scanned',
         body: (
           <ul>
-            <li>Make sure you added at least one folder and that its first scan has finished.</li>
-            <li>System folders are never indexed by design.</li>
-            <li>In a browser, the desktop app must be open and paired; see “Using Desktop Files from a browser”.</li>
+            <li>Make sure you added at least one library and that it shows Up to date on My Libraries.</li>
+            <li>Text is read in the background after names; while a library shows Reading text, some text is not searchable yet.</li>
+            <li>
+              Scanned PDFs are found by name only until their text is recognised. Turn on text recognition for the library under
+              Settings &amp; access; the Health tab lists scans waiting, scans that could not be recognised and those recognised with
+              low confidence.
+            </li>
+            <li>Check that the library is not revoked and that the folder you expect is not excluded.</li>
+            <li>In a browser, the desktop app must be open and paired; see “Using your libraries from a browser”.</li>
           </ul>
         ),
       },

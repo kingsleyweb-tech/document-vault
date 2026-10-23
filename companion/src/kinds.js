@@ -18,15 +18,31 @@ const KIND_BY_EXTENSION = {
 
 export const KINDS = ['folder', 'pdf', 'word', 'spreadsheet', 'presentation', 'image', 'text', 'html', 'ebook', 'audio', 'video', 'archive', 'shortcut', 'program', 'other']
 
-// Files that run code when opened through their association. Document Vault
-// never launches these; it only shows them in File Explorer. Shortcuts are in
-// the list because a .lnk or .url can point at any program or website; the
-// companion reads their target instead (see shortcuts.js).
-const NEVER_LAUNCH = new Set([
-  'exe', 'com', 'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'msi', 'msp', 'mst', 'scr',
-  'pif', 'cpl', 'hta', 'jar', 'reg', 'lnk', 'url', 'appref-ms', 'application', 'gadget', 'msc', 'inf', 'sys', 'dll',
-  'ocx', 'scf', 'settingcontent-ms', 'chm', 'appx', 'msix', 'appxbundle', 'msixbundle', 'sct', 'shb', 'ws', 'xbap', 'vb',
-  'psc1', 'cab', 'diagcab', 'library-ms', 'search-ms', 'searchconnector-ms', 'webloc', 'inetloc', 'fileloc',
+// Only these file types are opened with their associated app. Everything else
+// (programs, scripts, installers, macro-enabled Office files, shortcuts, SVG
+// images, which can carry scripts, and any type not listed) is only shown in
+// its folder. This is an allowlist on purpose: an unknown extension may be
+// associated with a program that runs code. Shortcuts are opened through the
+// target they name instead (see shortcuts.js), which must pass the same checks.
+const OPENABLE = new Set([
+  'pdf',
+  'doc', 'docx', 'dot', 'dotx', 'odt', 'rtf', 'wpd', 'pages',
+  'xls', 'xlsx', 'xlsb', 'csv', 'tsv', 'ods', 'numbers',
+  'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key',
+  'txt', 'md', 'markdown', 'log', 'json', 'xml', 'yaml', 'yml',
+  'html', 'htm', 'xhtml', 'mht', 'mhtml',
+  'epub', 'mobi', 'azw', 'azw3', 'djvu',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic',
+  'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma', 'opus',
+  'mp4', 'mkv', 'avi', 'mov', 'webm', 'wmv', 'm4v',
+  'zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz',
+])
+
+// Folders that macOS treats as a single item which runs when opened
+// (applications, installers, plug-ins). They are only shown in Finder.
+const BUNDLE_EXTENSIONS = new Set([
+  'app', 'bundle', 'framework', 'pkg', 'mpkg', 'prefpane', 'plugin', 'kext', 'workflow', 'action', 'saver', 'appex', 'xpc',
+  'qlgenerator', 'mdimporter', 'scptd',
 ])
 
 const PROGRAM_EXTENSIONS = new Set(['exe', 'com', 'bat', 'cmd', 'ps1', 'vbs', 'msi', 'scr', 'jar', 'appx', 'msix', 'dll', 'sys'])
@@ -43,6 +59,7 @@ const PREVIEW_TYPES = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xls: 'application/vnd.ms-excel',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  epub: 'application/epub+zip',
   mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
   mp4: 'video/mp4', webm: 'video/webm',
 }
@@ -59,8 +76,14 @@ export function kindOf(name, isDirectory) {
   return KIND_BY_EXTENSION[extension] ?? 'other'
 }
 
+/** Whether a file of this name may be opened with its associated app. */
 export function canLaunch(name) {
-  return !NEVER_LAUNCH.has(extensionOf(name))
+  return OPENABLE.has(extensionOf(name))
+}
+
+/** Whether a folder may be opened in Finder or File Explorer (false for app bundles). */
+export function canOpenFolder(name) {
+  return !BUNDLE_EXTENSIONS.has(extensionOf(name))
 }
 
 export function previewType(name) {

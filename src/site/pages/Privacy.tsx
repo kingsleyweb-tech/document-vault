@@ -43,7 +43,7 @@ export default function Privacy() {
               </li>
               <li>
                 <strong>On your device only</strong>: offline copies, prepared previews, your theme and view preferences, a Google
-                Drive access token (for at most 55 minutes) and, in the desktop app, the index of folders you chose.
+                Drive access token (for at most 55 minutes) and, in the desktop app, the index of the library folders you chose, including the text read from their documents.
               </li>
             </ul>
             <p>

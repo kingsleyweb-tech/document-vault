@@ -1,7 +1,7 @@
 # Document Vault: implementation audit and report
 
-Branch `feature/desktop-search-audit`. All changes are uncommitted. Nothing has been pushed or deployed.
-Last updated 2026-10-21 (section K added).
+Sections A–L were written on `feature/desktop-search-audit`; sections M and N on `feature/product-website`, uncommitted. Nothing has been pushed or deployed.
+Last updated 2026-10-23 (section N added).
 
 Status words used throughout:
 
@@ -524,3 +524,109 @@ The fix has three parts:
 - The store now gives up at once when the upgrade is blocked, and the document opens from Google Drive. The upgrade completes as soon as the old connection closes.
 - Opening a document also pauses any background preparation that is downloading from Drive, so the two do not share the connection. The paused job goes back to the queue without counting as a failed attempt.
 - Tests: `offlineStore.blocked.test.ts` and a new case in `previewQueue.test.ts`.
+
+## M. Local law libraries: authorized folders, full-text search, book links (23 October 2026)
+
+All of this is in the desktop app's local companion and the workspace pages that use it. Nothing is uploaded; the index and extracted text stay in the companion's data folder on the computer.
+
+| ID | Item | Before | Now | Evidence |
+|---|---|---|---|---|
+| DV-053 | Libraries (named, authorized folders with settings) | Missing | Verified | Add, rename, subfolders and depth, file types, pause, resume, clear, remove. `companion/test/libraries.test.js` |
+| DV-054 | Exclusions | Missing | Verified | An excluded subfolder leaves search, lists and links at once and returns when included again |
+| DV-055 | Revoke and grant access again | Missing | Verified | Revoked libraries are absent from search, lists and evidence; text read during revocation is discarded (per-library epoch); granting again needs the same folder |
+| DV-056 | One enforcement point | Missing | Verified | `companion/src/access.js` (`scopeSql`, `checkReal`) is used by search, tree, health, links, preview, open and evidence |
+| DV-057 | Text extraction (PDF with pages, DOCX, EPUB, PPTX, HTML, TXT, RTF) | Missing | Verified | Worker threads with memory, time and size limits; damaged and slow files recorded as failed with a reason; unchanged files not read again; PowerPoint slides read in deck order |
+| DV-058 | Full-text search with page numbers and excerpts | Missing | Verified | FTS5 (porter, unicode61). Ranking: exact title, file name, phrase, text, metadata, fuzzy name. Phrase, OR and minus syntax |
+| DV-059 | Metadata and corrections | Missing | Verified | Titles and authors from the files; user corrections are kept and never overwritten |
+| DV-060 | HTML catalog links | Missing | Verified | Found, broken, not indexed, outside, web link; links outside the libraries never followed, web links never fetched, scripts never run or indexed |
+| DV-061 | Library Health | Missing | Verified (server), Unverified (UI) | Inaccessible, failed, broken and outside links, needs OCR, truncated, waiting, skipped with reasons, exact duplicates (listed only, never deleted) |
+| DV-062 | Index migrations and recovery | Missing | Verified | `pragma user_version`, copy of the old file before upgrading, refuses a newer index, moves a damaged index aside and rebuilds |
+| DV-063 | Opening allowlist, shortcuts and junctions | Partial | Verified | Allowlist of document types; shortcuts to network locations or outside the libraries refused; junctions out of a library not followed |
+| DV-064 | Desktop CSP and allowed origins | Missing | Verified | Enforced CSP naming the companion port; development origins only in development builds. `desktop/test/static-server.test.cjs` |
+| DV-065 | Evidence for a future assistant | Missing | Verified (no model connected) | `companion/src/evidence.js` returns short authorized passages with library-relative locations, never full paths. No AI feature calls it; Library access shows "AI search: off" |
+| DV-066 | Workspace pages: My Libraries, library detail, Search, Library access | Missing | Unverified | Type-checked, linted and unit-tested (`src/pages/Search.test.tsx`); not clicked through, because the workspace needs Google sign-in |
+| DV-067 | Open a PDF at the matching page, step between matches | Missing | Unverified | `PdfViewer` `goToPage`, `LocalPreview` match bar; not exercised in a signed-in window |
+
+### Measured performance
+
+`companion/scripts/bench.js`, on a generated library of 3,000 text and web files plus 300 PDFs of 30 pages (9,000 pages). Machine: i7-10510U, 8 threads, 16 GB, Windows 11, Node 24.11.1.
+
+| Measure | Result |
+|---|---|
+| Name indexing | 3,300 files in 4.9 s (677 files/s) |
+| Text reading | all 3,300 documents (9,000 PDF pages) within 60 s of adding the library, 0 failed |
+| Search, Everything | p50 560 ms, p95 649 ms (was 2,860 / 3,069 ms before the passage lookup fix) |
+| Search, Full text | p50 361 ms, p95 497 ms (was 1,169 / 3,095 ms) |
+| Search, Titles and names | p50 20 ms, p95 29 ms |
+| Index size | 21 MB |
+| Memory | 59 MB before adding the library, peak 360 MB including text-reading workers |
+
+Times are over HTTP with result details. Searches for very common words in this vocabulary match 2,000 documents; real libraries with more varied text should match fewer.
+
+### Windows run of the MacBook checklist (23 October 2026)
+
+A script drove a separate instance of the local service over HTTP, as the app does, against a generated library in a temporary folder (deleted afterwards). 25 of 25 checks passed:
+
+1. Adding a library: indexed, no Permission needed.
+2. Restarting: the library stays ready and searchable.
+3. A phrase finds the book with page 3 and the passage.
+4. Exclude and include a subfolder.
+5. Catalog links classified (found, broken, outside, web); the catalog's script is not indexed; the book shows which page refers to it.
+6. Revoke hides everything. Granting access with a different folder is refused; with the same folder, search is restored.
+   - 6b. Folder made unreadable (Windows permissions standing in for macOS): Permission needed, index kept; it recovers after access is granted again.
+7. Show in folder opens Explorer at the file.
+8. Library folder disconnected: Not available, index kept; it recovers when reconnected.
+
+The original files were untouched throughout.
+
+Found and fixed during the run: excluding a folder by a path through a mapped drive or link was refused, because libraries are stored by their real path. The app itself excludes by folder id, so it was not affected. The path is now resolved first (new test in `libraries.test.js`).
+
+Not covered: the clicks in the signed-in window, and the PDF viewer landing on the page (the service returns the right page; the viewer was not opened).
+
+### Not verified
+
+- Anything on macOS: the folder window, Permission needed after access is withdrawn, Finder reveal, external drives.
+- The workspace pages in a signed-in window, on any system.
+- OCR of scanned PDFs: built in Round 2, see section N.
+
+## N. Text recognition (OCR) of scanned books in local libraries (23 October 2026)
+
+Scanned pages (pictures, no text layer) in a library can now be searched by their words. Recognition runs in the companion on the computer: Tesseract.js 7 (LSTM, English data bundled in the app, `4.0.0_best_int`), pages drawn with pdf.js and `@napi-rs/canvas`. Nothing is uploaded or downloaded.
+
+| ID | Item | Before | Now | Evidence |
+|---|---|---|---|---|
+| DV-068 | Asked once per library | Missing | Verified (server), Unverified (UI) | New libraries are `ask`; nothing is recognised until the owner answers "Recognise text"; "Not now" turns it off. `companion/test/ocr.test.js`, `src/components/library/OcrOffer.test.tsx` |
+| DV-069 | Recognised pages searchable with page numbers | Missing | Verified | Stored as pages with `source = 'ocr'` in the same text index; page 2 of a scan is found as page 2; mixed PDFs recognise only their scanned pages; JPEG/PNG scans recognised when images are indexed |
+| DV-070 | Marked as recognised text | Missing | Verified (server), Unverified (UI) | `excerpt.source = 'ocr'`; Search shows "Recognised text (OCR)" and "may contain errors"; evidence passages carry `recognised: true` |
+| DV-071 | Revoke, exclusion, turning off | Missing | Verified | Revoking stops the current page at once and keeps nothing more; exclusion removes the recognised text; turning off stops recognition and keeps text already recognised |
+| DV-072 | Resume and reuse | Missing | Verified | Progress is saved per page; after a restart it continues from the page reached, without repeating pages. Identical copies reuse the recognised text |
+| DV-073 | Failures and Health | Missing | Verified (server) | Damaged scans and failed pages listed in Health (`ocr-failed`), low average confidence (below 60%) in `ocr-low-confidence`; a hung page times out (120 s) and is skipped |
+| DV-074 | No download of language data | Missing | Verified | With the language folder empty, the document fails with "recognition data is missing" and the folder stays empty |
+| DV-075 | Index migration v3 | Missing | Verified | Additive columns only; copy of the old file kept before upgrading |
+| DV-076 | Packaging | Missing | Verified on Windows (prepared copy), Unverified (installer, macOS) | `prepare.cjs` installs the native canvas binary, adds both Mac binaries with `--mac`, and leaves out unused engine builds and the larger language copy (companion modules 98 MB). The prepared copy recognised a two-page scan under Electron 44 (Node 24) with network calls blocked on the main thread |
+
+### Measured
+
+`companion/scripts/bench.js --scanned 5 --scanned-pages 10`: 50 dense scanned pages (a heading and 18 lines each, 150 dpi), i7-10510U, Windows 11, Node 24.11.1.
+
+| Measure | Result |
+|---|---|
+| Recognition speed | 8.5 s per page (423 s for 50 pages), 0 pages failed |
+| Average confidence | 95% |
+| Peak memory | about 500 MB (process, including the recognition worker) |
+| Phrase search in recognised text | found on the right page in 11 ms |
+
+The app tells the owner "about 5 to 10 seconds per page"; a 300-page book takes roughly 30 to 50 minutes on a laptop like this one. Speed on the MacBook is not measured.
+
+### Tests
+
+- Companion: 106 of 106 (12 new OCR tests, migration test extended).
+- Desktop: 9 of 9. Web: 231 passed, 10 skipped (OCR chip, note, offer and progress tests added). In one full run, 7 database policy tests failed with a DNS error reaching the database host; re-run on their own, all 12 passed.
+- Windows checklist (section M) re-run: 25 of 25.
+
+### Not verified
+
+- macOS: the canvas binaries on Apple Silicon and Intel, recognition speed, the packaged app.
+- The Windows installer itself (the prepared files were tested under Electron; the installer was not built or run).
+- The OCR offer, progress and settings in a signed-in window.
+- Languages other than English, handwriting, TIFF scans (not supported; TIFF files are found by name).

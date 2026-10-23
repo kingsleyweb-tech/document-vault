@@ -1,4 +1,4 @@
-/* Desktop Files: searching folders on this computer through the companion. */
+/* Local library search results, previews and pairing, through the companion. */
 
 .desktop-page {
   display: grid;
@@ -283,40 +283,6 @@
   justify-self: center;
 }
 
-/* Indexed folders panel */
-.local-roots {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.local-roots__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.local-roots__header h2 {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.local-roots__header p {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.local-roots__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .index-progress {
   display: flex;
   align-items: center;
@@ -347,123 +313,6 @@
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.local-roots__empty {
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.local-roots__list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.local-root {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.local-root__icon {
-  width: 20px;
-  height: 20px;
-  color: var(--accent);
-}
-
-.local-root__text {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.local-root__path {
-  justify-self: start;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.local-root__path:hover {
-  color: var(--accent-strong);
-  text-decoration: underline;
-}
-
-.local-root__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.local-root__error {
-  color: var(--danger);
-  font-size: 12px;
-}
-
-.local-root__actions {
-  display: flex;
-  gap: 2px;
-}
-
-.local-roots__add {
-  display: flex;
-  gap: 8px;
-}
-
-.local-roots__add .field-input {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.local-roots__errors ul {
-  display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: 12px;
-}
-
-.local-roots__errors li {
-  display: grid;
-  gap: 2px;
-  color: var(--muted);
-}
-
-.local-roots__error-path {
-  color: var(--subtle);
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
-
-.local-roots__footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
 }
 
 /* Setup and pairing */
@@ -666,10 +515,6 @@
   .companion-setup {
     grid-template-columns: minmax(0, 1fr);
     padding: 16px;
-  }
-
-  .local-roots {
-    padding: 14px;
   }
 
   .local-preview__header {

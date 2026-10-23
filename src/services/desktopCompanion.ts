@@ -30,17 +30,82 @@ export interface LocalEntry {
   canPreview: boolean
 }
 
-export interface LocalRoot {
+export type LibraryState = 'active' | 'paused' | 'revoked'
+
+export interface LibrarySettings {
+  recursive: boolean
+  /** Folder levels below the library folder that are indexed; null means all. */
+  maxDepth: number | null
+  /** File types indexed; null means every type. */
+  fileTypes: LocalKind[] | null
+  /** Whether the text inside documents is read for full-text search. */
+  extractText: boolean
+  /** Whether the words on scanned pages are recognised (OCR). Present from companion 1.2. */
+  ocr?: boolean
+}
+
+export interface LibraryExclusion {
   id: number
   path: string
-  status: 'pending' | 'indexing' | 'ready' | 'unavailable'
+  addedAt: number
+}
+
+export type TextState =
+  | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  | 'waiting_permission' | 'waiting_drive' | 'unsupported'
+
+/** 'ask': not decided yet (offered once scanned pages are found). */
+export type OcrPref = 'ask' | 'on' | 'off'
+export type OcrState = 'none' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'changed'
+
+export interface OcrProgress {
+  entryId: number
+  rootId: number
+  name: string | null
+  page: number | null
+  done: number
+  total: number | null
+}
+
+/** Text recognition of a library's scanned pages. */
+export interface LibraryOcr {
+  pref: OcrPref
+  /** Documents with pages that have no text layer (scans). */
+  scannedDocs: number
+  scannedPages: number
+  recognisedPages: number
+  pending: number
+  completed: number
+  failed: number
+  states: Partial<Record<OcrState, number>>
+  current: OcrProgress | null
+}
+
+export interface LocalRoot {
+  id: number
+  name: string
+  path: string
+  state: LibraryState
+  status: 'pending' | 'indexing' | 'ready' | 'denied' | 'unavailable'
   error: string | null
+  /** The system withdrew access to the folder; it must be granted again. */
+  needsPermission: boolean
   addedAt: number
   lastScanAt: number | null
   lastScanMs: number | null
+  lastSyncAt: number | null
+  revokedAt: number | null
   files: number
   folders: number
   watching: boolean
+  settings: LibrarySettings
+  skippedByType: number
+  exclusions: LibraryExclusion[]
+  /** Documents per text-reading state. */
+  extraction: Partial<Record<TextState, number>>
+  /** Present from companion 1.2. */
+  ocr?: LibraryOcr
+  ai: 'off'
 }
 
 export interface IndexStatus {
@@ -52,14 +117,186 @@ export interface IndexStatus {
   errors: Array<{ path: string | null; code: string; message: string; at: number }>
 }
 
+export interface TextStatus {
+  state: 'idle' | 'reading' | 'paused'
+  counts: Partial<Record<TextState, number>>
+  current: Array<{ entryId: number; name: string }>
+}
+
+export interface OcrStatus {
+  state: 'idle' | 'recognising' | 'paused'
+  counts: Partial<Record<OcrState, number>>
+  /** Scanned pages planned and recognised, across all libraries. */
+  pages: number
+  done: number
+  current: OcrProgress | null
+}
+
 export interface CompanionStatus {
   version: string
   index: IndexStatus
+  /** Present from companion 1.1. */
+  text?: TextStatus
+  /** Present from companion 1.2. */
+  ocr?: OcrStatus
   roots: LocalRoot[]
+  /** The index was damaged and rebuilt at the last start. */
+  recovered?: boolean
+}
+
+export type SearchMode = 'names' | 'documents' | 'fulltext' | 'all'
+export type MatchType = 'title' | 'filename' | 'phrase' | 'text' | 'metadata' | 'name' | 'fuzzy'
+
+export interface TextExcerpt {
+  /** Page number, for formats that have pages (PDF). */
+  page: number | null
+  /** A chapter or slide title, where the format has one. */
+  label: string | null
+  /** Position of the passage in the document, counting from 1. */
+  section: number
+  /** The passage, with matching words between << and >>. */
+  text: string
+  /** 'ocr' when the words were recognised from a scan and may contain errors. Present from companion 1.2. */
+  source?: 'text' | 'ocr'
+  /** Average recognition confidence of the page (0-100), for recognised text. */
+  confidence?: number
+}
+
+export type MetaField = 'title' | 'author' | 'subject' | 'keywords' | 'publisher'
+export type DocumentMeta = Partial<Record<MetaField, { value: string; source: 'user' | 'original' | 'extracted' }>>
+
+export interface LocalHit extends LocalEntry {
+  match?: MatchType | null
+  excerpt?: TextExcerpt | null
+  matchingSections?: number
+  meta?: DocumentMeta | null
+  referencedBy?: { count: number; example: string } | null
+}
+
+export interface DocumentText {
+  state: TextState
+  error: string | null
+  pages: number | null
+  textPages: number | null
+  needsOcr: boolean
+  truncated: boolean
+  role: 'catalog' | null
+  extractedAt: number | null
+  /** Text recognition of the scanned pages, when the document has any. Present from companion 1.2. */
+  ocr?: {
+    state: OcrState
+    pages: number
+    done: number
+    failed: number
+    confidence: number | null
+    error: string | null
+    at: number | null
+  } | null
+}
+
+export interface LibraryEntryDetail extends LocalEntry {
+  text: DocumentText | null
+  meta: DocumentMeta | null
+}
+
+export type LinkStatus = 'verified' | 'unindexed' | 'broken' | 'outside' | 'external'
+
+export interface LibraryLink {
+  entryId: number
+  name: string
+  folder: string
+  href: string
+  label: string | null
+  status: LinkStatus
+  targetId: number | null
+}
+
+export interface PageLink {
+  href: string
+  label: string | null
+  status: LinkStatus
+  targetId: number | null
+  targetName: string | null
+  targetKind: LocalKind | null
+}
+
+export interface TreeFolder extends LocalEntry {
+  /** Documents anywhere inside this folder. */
+  files: number
+}
+
+export interface HealthSummary {
+  files: number
+  folders: number
+  inaccessible: number
+  namesOnly: number
+  needsOcr: number
+  /** Present from companion 1.2. */
+  ocrFailed?: number
+  ocrLowConfidence?: number
+  truncated: number
+  duplicateGroups: number
+  catalogs: number
+  skippedByType: number
+  text: Partial<Record<TextState, number>>
+  links: Partial<Record<LinkStatus, number>>
+  skipped: Record<string, number>
+}
+
+export type HealthSection =
+  | 'inaccessible' | 'failed' | 'waiting' | 'needs-ocr' | 'ocr-failed' | 'ocr-low-confidence' | 'truncated' | 'names-only' | 'skipped'
+  | 'broken-links' | 'outside-links' | 'unindexed-links' | 'duplicates'
+
+export interface HealthItem {
+  entryId: number | null
+  name: string
+  folder: string
+  detail?: string | null
+  reason?: string
+  state?: TextState
+  href?: string
+  label?: string | null
+  status?: LinkStatus
+}
+
+export interface DuplicateGroup {
+  hash: string
+  copies: Array<{ entryId: number; name: string; folder: string; size: number }>
+}
+
+export interface AccessEvent {
+  at: number
+  kind: string
+  libraryId: number | null
+  detail: string | null
+}
+
+export interface AccessOverview {
+  libraries: LocalRoot[]
+  ai: { enabled: false; provider: null; note: string }
+  events: AccessEvent[]
+  recovered: boolean
+}
+
+export interface PickedFolder {
+  path: string
+  suggestedName: string
+  /** Why this folder cannot be a library, if it cannot. */
+  problem: string | null
+  existingId: number | null
+}
+
+export interface NewLibrary extends Partial<LibrarySettings> {
+  path: string
+  name?: string
 }
 
 export interface LocalSearchParams {
   q: string
+  /** names (default) searches names only; the others need companion 1.1. */
+  mode?: SearchMode
+  roots?: number[]
+  author?: string | null
   kind?: LocalKind[]
   type?: 'file' | 'folder' | null
   root?: number | null
@@ -74,7 +311,7 @@ export interface LocalSearchParams {
 }
 
 export interface LocalSearchResult {
-  items: LocalEntry[]
+  items: LocalHit[]
   total: number
   totalCapped: boolean
   fuzzy: boolean
@@ -212,9 +449,34 @@ export const companion = {
   },
 
   status: (signal?: AbortSignal) => call<CompanionStatus>('GET', '/v1/status', { signal }),
+  access: (signal?: AbortSignal) => call<AccessOverview>('GET', '/v1/access', { signal }),
   addRoot: (path: string) => call<{ root: LocalRoot; alreadyIndexed?: boolean }>('POST', '/v1/roots', { body: { path } }),
+  addLibrary: (library: NewLibrary) => call<{ root: LocalRoot; alreadyIndexed?: boolean; merged?: string[] }>('POST', '/v1/roots', { body: library }),
   pickRoot: () => call<{ root?: LocalRoot; cancelled?: boolean; alreadyIndexed?: boolean }>('POST', '/v1/roots/pick', { body: {} }),
+  /** Shows the system folder picker and describes the choice without adding it. */
+  pickFolder: () => call<PickedFolder | { cancelled: true }>('POST', '/v1/roots/pick', { body: { add: false } }),
   removeRoot: (id: number) => call<{ ok: true }>('DELETE', `/v1/roots/${id}`),
+  updateLibrary: (id: number, changes: Partial<LibrarySettings> & { name?: string }) =>
+    call<{ root: LocalRoot; rescanning: boolean }>('PATCH', `/v1/roots/${id}`, { body: changes }),
+  pauseLibrary: (id: number) => call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/pause`, { body: {} }),
+  resumeLibrary: (id: number) => call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/resume`, { body: {} }),
+  revokeLibrary: (id: number) => call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/revoke`, { body: {} }),
+  /** Shows the system folder picker at the library's folder; only that folder is accepted. */
+  reauthorizeLibrary: (id: number) => call<{ root?: LocalRoot; cancelled?: true }>('POST', `/v1/roots/${id}/reauthorize`, { body: {} }),
+  /** The answer to "Recognise the text of the scanned books?": 'not-now' turns it off for the library. */
+  decideOcr: (id: number, decision: 'on' | 'not-now') => call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/ocr`, { body: { decision } }),
+  purgeLibrary: (id: number) => call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/purge`, { body: {} }),
+  rescanLibrary: (id: number) => call<{ queued: true }>('POST', `/v1/roots/${id}/rescan`, { body: {} }),
+  excludeFolder: (id: number, folder: { entryId: number } | { path: string }) =>
+    call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/exclusions`, { body: folder }),
+  removeExclusion: (id: number, exclusionId: number) => call<{ root: LocalRoot }>('DELETE', `/v1/roots/${id}/exclusions/${exclusionId}`),
+  tree: (id: number, parent: number | null, signal?: AbortSignal) =>
+    call<{ parent: number | null; folders: TreeFolder[]; files: LocalEntry[] }>('GET', `/v1/roots/${id}/tree${parent ? `?parent=${parent}` : ''}`, { signal }),
+  health: (id: number, signal?: AbortSignal) => call<{ library: LocalRoot; summary: HealthSummary }>('GET', `/v1/roots/${id}/health`, { signal }),
+  healthSection: <T extends HealthItem | DuplicateGroup = HealthItem>(id: number, section: HealthSection, signal?: AbortSignal) =>
+    call<{ section: HealthSection; items: T[] }>('GET', `/v1/roots/${id}/health?section=${section}&limit=200`, { signal }),
+  libraryLinks: (id: number, status: LinkStatus, signal?: AbortSignal) =>
+    call<{ status: LinkStatus; items: LibraryLink[] }>('GET', `/v1/roots/${id}/references?status=${status}&limit=200`, { signal }),
   rescan: (rootId?: number) => call<{ queued: number[] }>('POST', '/v1/index/rescan', { body: rootId ? { rootId } : {} }),
   pause: () => call<IndexStatus>('POST', '/v1/index/pause', { body: {} }),
   resume: () => call<IndexStatus>('POST', '/v1/index/resume', { body: {} }),
@@ -222,7 +484,10 @@ export const companion = {
   search(params: LocalSearchParams, signal?: AbortSignal) {
     const query = new URLSearchParams({ q: params.q })
     if (params.kind?.length) query.set('kind', params.kind.join(','))
+    if (params.roots?.length) query.set('roots', params.roots.join(','))
     const optional: Array<[string, string | number | null | undefined]> = [
+      ['mode', params.mode],
+      ['author', params.author],
       ['type', params.type],
       ['root', params.root],
       ['within', params.within],
@@ -238,6 +503,16 @@ export const companion = {
     return call<LocalSearchResult>('GET', `/v1/search?${query}`, { signal })
   },
 
+  entry: (id: number, signal?: AbortSignal) => call<LibraryEntryDetail>('GET', `/v1/entries/${id}`, { signal }),
+  matches: (id: number, q: string, signal?: AbortSignal) =>
+    call<{ entryId: number; matches: TextExcerpt[] }>('GET', `/v1/entries/${id}/matches?q=${encodeURIComponent(q)}`, { signal }),
+  references: (id: number, signal?: AbortSignal) => call<{ entryId: number; items: LibraryLink[] }>('GET', `/v1/entries/${id}/references`, { signal }),
+  links: (id: number, signal?: AbortSignal) =>
+    call<{ entryId: number; role: 'catalog' | null; items: PageLink[] }>('GET', `/v1/entries/${id}/links`, { signal }),
+  /** Corrects metadata; null removes a correction. The file itself is not changed. */
+  updateMetadata: (id: number, changes: Partial<Record<MetaField, string | null>>) =>
+    call<{ meta: DocumentMeta | null }>('PATCH', `/v1/entries/${id}/metadata`, { body: changes }),
+  readText: (id: number) => call<{ text: DocumentText | null }>('POST', `/v1/entries/${id}/extract`, { body: {} }),
   open: (id: number) => call<{ ok: true }>('POST', `/v1/entries/${id}/open`, { body: {} }),
   reveal: (id: number) => call<{ ok: true }>('POST', `/v1/entries/${id}/reveal`, { body: {} }),
   content: (id: number, signal?: AbortSignal) => call<Blob>('GET', `/v1/entries/${id}/content`, { signal, raw: true }),

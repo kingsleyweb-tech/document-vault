@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, ExternalLink, Eye, FolderOpen, FolderSearch, HardDrive, Search, X } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { BookOpen, Copy, ExternalLink, Eye, FileSearch, FolderOpen, FolderSearch, Library, Search as SearchIcon, X } from 'lucide-react'
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
-import { IndexedFolders } from '../components/desktop/IndexedFolders'
 import { LocalPreview } from '../components/desktop/LocalPreview'
 import { DocumentIcon } from '../components/documents/DocumentIcon'
+import { Highlighted } from '../components/library/Highlighted'
+import { errorText, kindLabels, matchLabels, OCR_NOTE, whereLabel } from '../components/library/libraryText'
 import { EmptyState } from '../components/ui/EmptyState'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
+import { mergeUploadedMatches, SOURCE_LABELS } from '../services/combinedSearch'
 import { searchDocumentContent, snippetParts, type ContentMatch } from '../services/contentIndex'
 import {
   companion,
   CompanionError,
-  type LocalEntry,
+  type LocalHit,
   type LocalKind,
   type LocalSearchParams,
   type LocalSearchResult,
+  type SearchMode,
 } from '../services/desktopCompanion'
 import type { DocumentKind, VaultDocument } from '../types/document'
 import { formatFileSize } from '../utils/formatters'
@@ -23,7 +27,7 @@ import { locationResolver } from '../utils/trash'
 
 type Source = 'local' | 'uploaded' | 'all'
 
-interface DesktopFilesProps {
+interface SearchPageProps {
   documents: VaultDocument[]
   allDocuments: VaultDocument[]
   search: string
@@ -33,13 +37,19 @@ interface DesktopFilesProps {
 const PAGE_SIZE = 50
 const UPLOADED_LIMIT = 100
 const CONTENT_PAGE = 30
-const DEBOUNCE_MS = 180
+const DEBOUNCE_MS = 200
 const DAY = 24 * 60 * 60 * 1000
 
 const sourceOptions: Array<{ value: Source; label: string }> = [
-  { value: 'local', label: 'This computer' },
-  { value: 'uploaded', label: 'Uploaded documents' },
-  { value: 'all', label: 'All sources' },
+  { value: 'local', label: SOURCE_LABELS.local },
+  { value: 'uploaded', label: SOURCE_LABELS.vault },
+  { value: 'all', label: 'Both' },
+]
+
+const modeOptions: Array<{ value: SearchMode; label: string; hint: string }> = [
+  { value: 'all', label: 'Everything', hint: 'Titles, names, authors and the text inside documents' },
+  { value: 'documents', label: 'Titles and names', hint: 'Titles, file names, authors and subjects' },
+  { value: 'fulltext', label: 'Full text', hint: 'Only the text inside documents' },
 ]
 
 const typeOptions: Array<{ value: string; label: string }> = [
@@ -48,33 +58,22 @@ const typeOptions: Array<{ value: string; label: string }> = [
   { value: 'folder', label: 'Folders only' },
   { value: 'pdf', label: 'PDF' },
   { value: 'word', label: 'Word documents' },
-  { value: 'spreadsheet', label: 'Spreadsheets' },
-  { value: 'presentation', label: 'Presentations' },
-  { value: 'image', label: 'Images' },
-  { value: 'text', label: 'Text and data' },
   { value: 'ebook', label: 'eBooks' },
-  { value: 'audio', label: 'Audio' },
-  { value: 'video', label: 'Video' },
-  { value: 'archive', label: 'Archives' },
+  { value: 'html', label: 'Web pages' },
+  { value: 'presentation', label: 'Presentations' },
+  { value: 'spreadsheet', label: 'Spreadsheets' },
+  { value: 'text', label: 'Text and data' },
+  { value: 'image', label: 'Images' },
   { value: 'shortcut', label: 'Shortcuts' },
-  { value: 'program', label: 'Programs and scripts' },
   { value: 'other', label: 'Other files' },
 ]
 
 const modifiedOptions = [
   { value: '', label: 'Any date' },
-  { value: '1', label: 'Last 24 hours' },
   { value: '7', label: 'Last 7 days' },
   { value: '30', label: 'Last 30 days' },
   { value: '365', label: 'Last year' },
   { value: 'older', label: 'Older than a year' },
-]
-
-const sizeOptions = [
-  { value: '', label: 'Any size' },
-  { value: 'small', label: 'Under 1 MB' },
-  { value: 'medium', label: '1 MB to 100 MB' },
-  { value: 'large', label: 'Over 100 MB' },
 ]
 
 const sortOptions: Array<{ value: NonNullable<LocalSearchParams['sort']>; label: string }> = [
@@ -84,28 +83,8 @@ const sortOptions: Array<{ value: NonNullable<LocalSearchParams['sort']>; label:
   { value: 'size', label: 'Largest first' },
 ]
 
-const MB = 1024 * 1024
-
 // Local kinds that DocumentIcon has a tile for; the rest use the generic one.
 const iconKinds = new Set<DocumentKind>(['pdf', 'image', 'word', 'spreadsheet', 'presentation', 'folder', 'html', 'text', 'ebook'])
-
-const kindLabels: Record<LocalKind, string> = {
-  folder: 'Folder',
-  pdf: 'PDF',
-  word: 'Word',
-  spreadsheet: 'Spreadsheet',
-  presentation: 'Presentation',
-  image: 'Image',
-  text: 'Text',
-  html: 'Web page',
-  ebook: 'eBook',
-  audio: 'Audio',
-  video: 'Video',
-  archive: 'Archive',
-  shortcut: 'Shortcut',
-  program: 'Program',
-  other: 'File',
-}
 
 const availabilityLabels = {
   missing: 'No longer at this location',
@@ -113,31 +92,30 @@ const availabilityLabels = {
   denied: 'Access denied',
 } as const
 
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
 
 interface Filters {
+  mode: SearchMode
+  library: string
   type: string
-  root: string
+  author: string
   within: string | null
   modified: string
-  size: string
   sort: NonNullable<LocalSearchParams['sort']>
 }
 
-const emptyFilters: Filters = { type: '', root: '', within: null, modified: '', size: '', sort: 'relevance' }
+const defaultFilters: Filters = { mode: 'all', library: '', type: '', author: '', within: null, modified: '', sort: 'relevance' }
 
 function toParams(query: string, filters: Filters, offset: number): LocalSearchParams {
-  const params: LocalSearchParams = { q: query, sort: filters.sort, limit: PAGE_SIZE, offset }
+  const params: LocalSearchParams = { q: query, mode: filters.mode, sort: filters.sort, limit: PAGE_SIZE, offset }
   if (filters.type === 'files') params.type = 'file'
   else if (filters.type === 'folder') params.type = 'folder'
   else if (filters.type) params.kind = [filters.type as LocalKind]
-  if (filters.root) params.root = Number(filters.root)
+  if (filters.library) params.roots = [Number(filters.library)]
+  if (filters.author.trim()) params.author = filters.author.trim()
   if (filters.within) params.within = filters.within
   if (filters.modified === 'older') params.modifiedBefore = Date.now() - 365 * DAY
   else if (filters.modified) params.modifiedAfter = Date.now() - Number(filters.modified) * DAY
-  if (filters.size === 'small') params.maxSize = MB - 1
-  else if (filters.size === 'medium') Object.assign(params, { minSize: MB, maxSize: 100 * MB })
-  else if (filters.size === 'large') params.minSize = 100 * MB + 1
   return params
 }
 
@@ -148,29 +126,31 @@ interface ContentResults {
   error: string | null
 }
 
-interface LocalResults {
+interface LocalResults extends Omit<LocalSearchResult, 'items'> {
   key: string
-  items: LocalEntry[]
-  total: number
-  totalCapped: boolean
-  fuzzy: boolean
-  tookMs: number
+  items: LocalHit[]
   error: string | null
 }
 
-// Finds files and folders on this computer through the local companion, and
-// optionally the uploaded vault too. Every result says where it comes from.
-export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }: DesktopFilesProps) {
-  const { connection, status, version, refresh } = useCompanion()
+interface PreviewTarget {
+  entry: LocalHit
+  page: number | null
+}
+
+// Search across local libraries (titles, names, metadata and the text inside
+// documents) and, optionally, documents uploaded to Document Vault. Every
+// result says where it comes from and why it matched.
+export function SearchPage({ documents, allDocuments, search, onOpenDocument }: SearchPageProps) {
+  const { connection, status, refresh } = useCompanion()
+  const [params] = useSearchParams()
   const [source, setSource] = useState<Source>('local')
-  const [query, setQuery] = useState(search)
-  const [debouncedQuery, setDebouncedQuery] = useState(search)
-  const [filters, setFilters] = useState<Filters>(emptyFilters)
+  const [query, setQuery] = useState(() => params.get('q') ?? search)
+  const [debouncedQuery, setDebouncedQuery] = useState(() => (params.get('q') ?? search).trim())
+  const [filters, setFilters] = useState<Filters>(() => ({ ...defaultFilters, library: params.get('library') ?? '' }))
   const [results, setResults] = useState<LocalResults | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [preview, setPreview] = useState<LocalEntry | null>(null)
+  const [preview, setPreview] = useState<PreviewTarget | null>(null)
   const [toast, setToast] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
-  const [showFolders, setShowFolders] = useState(false)
   const [contentResults, setContentResults] = useState<ContentResults | null>(null)
   const [loadingMoreContent, setLoadingMoreContent] = useState(false)
   const moreController = useRef<AbortController | null>(null)
@@ -178,7 +158,8 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
   const wantsLocal = source !== 'uploaded'
   const ready = connection === 'ready'
   const searchKey = JSON.stringify([debouncedQuery, filters])
-  const indexVersion = status ? `${status.index.totals.files}:${status.index.totals.folders}:${status.index.state}` : ''
+  const textRead = status?.text ? (status.text.counts.completed ?? 0) : 0
+  const indexVersion = status ? `${status.index.totals.files}:${status.index.totals.folders}:${status.index.state}:${textRead}` : ''
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), DEBOUNCE_MS)
@@ -190,11 +171,10 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
     if (!wantsLocal || !ready) return undefined
     const controller = new AbortController()
     companion.search(toParams(debouncedQuery, filters, 0), controller.signal).then(
-      (result: LocalSearchResult) => setResults({ key: searchKey, ...result, error: null }),
+      (result) => setResults({ key: searchKey, ...result, error: null }),
       (error: unknown) => {
         if (controller.signal.aborted) return
-        const message = error instanceof CompanionError ? error.message : 'Search failed.'
-        setResults({ key: searchKey, items: [], total: 0, totalCapped: false, fuzzy: false, tookMs: 0, error: message })
+        setResults({ key: searchKey, items: [], total: 0, totalCapped: false, fuzzy: false, tookMs: 0, error: errorText(error, 'Search failed.') })
         if (error instanceof CompanionError && error.problem !== 'failed') void refresh()
       },
     )
@@ -202,7 +182,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
       controller.abort()
       moreController.current?.abort()
     }
-    // indexVersion re-runs the search when indexing adds or removes entries.
+    // indexVersion re-runs the search when indexing adds, removes or reads documents.
   }, [wantsLocal, ready, debouncedQuery, filters, searchKey, indexVersion, refresh])
 
   const searching = wantsLocal && ready && (results?.key !== searchKey || query.trim() !== debouncedQuery)
@@ -219,7 +199,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
       .then(
         (next) => setResults((previous) => (previous && previous.key === searchKey ? { ...previous, items: [...previous.items, ...next.items] } : previous)),
         (error: unknown) => {
-          if (!controller.signal.aborted) setToast({ tone: 'error', text: error instanceof CompanionError ? error.message : 'Could not load more results.' })
+          if (!controller.signal.aborted) setToast({ tone: 'error', text: errorText(error, 'Could not load more results.') })
         },
       )
       .finally(() => setLoadingMore(false))
@@ -228,9 +208,8 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
   const resolveLocation = useMemo(() => locationResolver(allDocuments), [allDocuments])
   const uploaded = useMemo(() => {
     if (source === 'local') return []
-    const text = debouncedQuery
     return documents
-      .filter((record) => matchesSearch(record, text) && (filters.type !== 'folder' || record.fileType === 'folder'))
+      .filter((record) => matchesSearch(record, debouncedQuery) && (filters.type !== 'folder' || record.fileType === 'folder'))
       .filter((record) => filters.type !== 'files' || record.fileType !== 'folder')
       .slice(0, UPLOADED_LIMIT)
   }, [documents, debouncedQuery, filters.type, source])
@@ -267,35 +246,22 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
       .finally(() => setLoadingMoreContent(false))
   }
 
-  // Only documents still in the visible library are listed, so a stale database row never shows as available.
-  const { snippets, textOnly } = useMemo(() => {
-    const byId = new Map(documents.map((record) => [record.id, record]))
-    const nameMatched = new Set(uploaded.map((record) => record.id))
-    const snippetById = new Map<string, string>()
-    const extra: VaultDocument[] = []
-    for (const match of content?.items ?? []) {
-      const record = byId.get(match.id)
-      if (!record) continue
-      if (match.snippet) snippetById.set(match.id, match.snippet)
-      if (match.matchedContent && !nameMatched.has(match.id)) extra.push(record)
-    }
-    return { snippets: snippetById, textOnly: extra }
-  }, [content, documents, uploaded])
+  const { snippets, textOnly } = useMemo(() => mergeUploadedMatches(documents, uploaded, content?.items ?? []), [content, documents, uploaded])
 
-  const act = async (entry: LocalEntry, action: 'open' | 'reveal') => {
+  const act = async (entry: LocalHit, action: 'open' | 'reveal') => {
     setToast(null)
     try {
       await (action === 'open' ? companion.open(entry.id) : companion.reveal(entry.id))
-      setToast({ tone: 'info', text: action === 'open' ? `Opening ${entry.name} on this computer.` : `Showing ${entry.name} in File Explorer.` })
+      setToast({ tone: 'info', text: action === 'open' ? `Opening ${entry.name} on this computer.` : `Showing ${entry.name} in its folder.` })
     } catch (error) {
-      setToast({ tone: 'error', text: error instanceof CompanionError ? error.message : 'The companion could not do that.' })
+      setToast({ tone: 'error', text: errorText(error) })
       if (error instanceof CompanionError && error.problem === 'gone') {
         setResults((previous) => previous && { ...previous, items: previous.items.filter((item) => item.id !== entry.id), total: Math.max(0, previous.total - 1) })
       }
     }
   }
 
-  const copyPath = async (entry: LocalEntry) => {
+  const copyPath = async (entry: LocalHit) => {
     try {
       await navigator.clipboard.writeText(entry.path)
       setToast({ tone: 'info', text: 'Path copied.' })
@@ -305,18 +271,30 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
   }
 
   const setFilter = <K extends keyof Filters>(name: K, value: Filters[K]) => setFilters((previous) => ({ ...previous, [name]: value }))
-  const filtersActive = JSON.stringify(filters) !== JSON.stringify(emptyFilters)
-  const roots = status?.roots ?? []
-  const noRoots = ready && roots.length === 0
+  const filtersActive = JSON.stringify({ ...filters, mode: 'all' }) !== JSON.stringify(defaultFilters)
+  const libraries = (status?.roots ?? []).filter((root) => root.state !== 'revoked')
+  const libraryNames = new Map(libraries.map((root) => [root.id, root.name]))
+  const noLibraries = ready && libraries.length === 0
 
-  const localSection = !wantsLocal ? null : !ready ? (
+  const localSection = !wantsLocal ? null : connection !== 'ready' ? (
     <CompanionSetup connection={connection} onConnected={() => void refresh()} onRetry={() => void refresh()} />
-  ) : noRoots ? null : (
+  ) : noLibraries ? (
+    <EmptyState
+      icon={<Library aria-hidden="true" />}
+      title="No libraries to search"
+      message="Add the folder that holds your books as a library. Its names and the text inside its documents can then be searched here."
+      action={
+        <Link to="/libraries" className="primary-button">
+          My Libraries
+        </Link>
+      }
+    />
+  ) : (
     <section className="local-results" aria-labelledby="local-results-title" aria-busy={searching}>
       <header className="results-heading">
         <h2 id="local-results-title">
-          <HardDrive aria-hidden="true" />
-          {debouncedQuery || filtersActive ? 'On this computer' : 'Recently changed on this computer'}
+          <BookOpen aria-hidden="true" />
+          {debouncedQuery || filtersActive ? SOURCE_LABELS.local : 'Recently changed in your libraries'}
         </h2>
         <span className="results-heading__count" role="status">
           {searching ? (
@@ -324,7 +302,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
               <span className="app-spinner app-spinner--small" aria-hidden="true" /> Searching...
             </>
           ) : local?.error ? null : local ? (
-            `${local.totalCapped ? 'More than ' : ''}${local.total.toLocaleString()} ${local.total === 1 ? 'result' : 'results'}${local.fuzzy ? ' (close matches)' : ''} in ${local.tookMs} ms`
+            `${local.totalCapped ? 'More than ' : ''}${local.total.toLocaleString()} ${local.total === 1 ? 'result' : 'results'}${local.fuzzy ? ' (similar names)' : ''} in ${local.tookMs} ms`
           ) : null}
         </span>
       </header>
@@ -336,21 +314,26 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
       {local && !local.error && local.items.length === 0 && !searching ? (
         <EmptyState
           icon={<FolderSearch aria-hidden="true" />}
-          title={debouncedQuery ? `Nothing on this computer matches "${debouncedQuery}"` : 'Nothing indexed matches these filters'}
-          message="Check the spelling, clear filters, or add the folder that holds the file to the indexed folders."
+          title={debouncedQuery ? `Nothing in your libraries matches "${debouncedQuery}"` : 'Nothing indexed matches these filters'}
+          message={
+            filters.mode === 'fulltext'
+              ? 'Only text already read is searched. Scanned PDFs are searched by their words only after their text is recognised (OCR), which you can turn on for each library; see Library Health.'
+              : 'Check the spelling, try fewer words, or clear filters.'
+          }
         />
       ) : null}
       {local && local.items.length > 0 ? (
-        <ul className="result-list" aria-label="Files and folders on this computer">
+        <ul className="result-list" aria-label="Results from your libraries">
           {local.items.map((entry) => (
             <LocalResultRow
               key={entry.id}
               entry={entry}
+              libraryName={libraryNames.get(entry.rootId) ?? null}
               onOpen={() => void act(entry, 'open')}
               onReveal={() => void act(entry, 'reveal')}
-              onPreview={() => setPreview(entry)}
+              onPreview={(page) => setPreview({ entry, page })}
               onSearchInside={() => {
-                setFilters((previous) => ({ ...previous, within: entry.path, root: '' }))
+                setFilters((previous) => ({ ...previous, within: entry.path, library: '' }))
                 setQuery('')
               }}
               onCopyPath={() => void copyPath(entry)}
@@ -370,7 +353,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
     source === 'local' ? null : (
       <section className="local-results" aria-labelledby="uploaded-results-title">
         <header className="results-heading">
-          <h2 id="uploaded-results-title">Uploaded to Document Vault</h2>
+          <h2 id="uploaded-results-title">{SOURCE_LABELS.vault}</h2>
           <span className="results-heading__count" role="status">
             {wantsContent && !content ? (
               <>
@@ -391,13 +374,7 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
         ) : (
           <ul className="result-list" aria-label="Uploaded documents">
             {uploaded.map((record) => (
-              <UploadedResultRow
-                key={record.id}
-                record={record}
-                location={resolveLocation(record)}
-                snippet={snippets.get(record.id)}
-                onOpen={() => onOpenDocument(record)}
-              />
+              <UploadedResultRow key={record.id} record={record} location={resolveLocation(record)} snippet={snippets.get(record.id)} onOpen={() => onOpenDocument(record)} />
             ))}
             {textOnly.map((record) => (
               <UploadedResultRow
@@ -419,18 +396,18 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
       </section>
     )
 
+  const showLocalFilters = wantsLocal && ready && !noLibraries
+
   return (
-    <section className="page desktop-page">
+    <section className="page desktop-page search-page">
       <PageHeader
-        title="Desktop Files"
-        description="Find files and folders that are already on this computer, see exactly where they are and open them. Nothing is uploaded."
+        title="Search"
+        description="Search your libraries by title, author, file name or the words inside documents. Results show the page where the words were found."
         actions={
-          ready ? (
-            <button type="button" className="secondary-button" onClick={() => setShowFolders((open) => !open)} aria-expanded={showFolders}>
-              <FolderOpen aria-hidden="true" />
-              <span>Indexed folders ({roots.length})</span>
-            </button>
-          ) : null
+          <Link to="/libraries" className="secondary-button">
+            <Library aria-hidden="true" />
+            <span>My Libraries</span>
+          </Link>
         }
       />
 
@@ -449,87 +426,83 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
         ))}
       </div>
 
-      {ready && status && (showFolders || noRoots) ? (
-        <IndexedFolders
-          status={status}
-          version={version}
-          onChanged={() => {
-            setShowFolders(true)
-            void refresh()
-          }}
-          onDisconnected={() => void refresh()}
-          onSearchRoot={(root) => {
-            setFilters((previous) => ({ ...previous, root: String(root.id), within: null }))
-            setShowFolders(false)
-          }}
-        />
-      ) : null}
-
       <div className="desktop-search">
         <label className="search-box desktop-search__box">
-          <Search aria-hidden="true" />
+          <SearchIcon aria-hidden="true" />
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={source === 'uploaded' ? 'Search uploaded documents' : 'Search file and folder names, e.g. "annual report"'}
-            aria-label="Search files and folders"
+            placeholder={source === 'uploaded' ? 'Search uploaded documents' : 'Search titles, authors and text, e.g. "duty of care"'}
+            aria-label="Search"
             autoFocus
           />
         </label>
 
-        {wantsLocal && ready && !noRoots ? (
-          <div className="desktop-filters">
-            <select value={filters.type} onChange={(event) => setFilter('type', event.target.value)} aria-label="Type">
-              {typeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
+        {showLocalFilters ? (
+          <>
+            <div className="search-modes" role="radiogroup" aria-label="What to search">
+              {modeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={filters.mode === option.value}
+                  className={filters.mode === option.value ? 'is-active' : ''}
+                  onClick={() => setFilter('mode', option.value)}
+                  title={option.hint}
+                >
                   {option.label}
-                </option>
+                </button>
               ))}
-            </select>
-            <select
-              value={filters.root}
-              onChange={(event) => setFilters((previous) => ({ ...previous, root: event.target.value, within: null }))}
-              aria-label="Location"
-            >
-              <option value="">All indexed folders</option>
-              {roots.map((root) => (
-                <option key={root.id} value={root.id}>
-                  {root.path}
-                </option>
-              ))}
-            </select>
-            <select value={filters.modified} onChange={(event) => setFilter('modified', event.target.value)} aria-label="Modified">
-              {modifiedOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <select value={filters.size} onChange={(event) => setFilter('size', event.target.value)} aria-label="Size">
-              {sizeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filters.sort}
-              onChange={(event) => setFilter('sort', event.target.value as Filters['sort'])}
-              aria-label="Sort by"
-            >
-              {sortOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {filtersActive ? (
-              <button type="button" className="text-button" onClick={() => setFilters(emptyFilters)}>
-                Clear filters
-              </button>
-            ) : null}
-          </div>
+            </div>
+            <div className="desktop-filters">
+              <select value={filters.library} onChange={(event) => setFilters((previous) => ({ ...previous, library: event.target.value, within: null }))} aria-label="Library">
+                <option value="">All libraries</option>
+                {libraries.map((root) => (
+                  <option key={root.id} value={root.id}>
+                    {root.name}
+                  </option>
+                ))}
+              </select>
+              <select value={filters.type} onChange={(event) => setFilter('type', event.target.value)} aria-label="Type">
+                {typeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="field-input search-author"
+                value={filters.author}
+                onChange={(event) => setFilter('author', event.target.value)}
+                placeholder="Author"
+                aria-label="Author"
+              />
+              <select value={filters.modified} onChange={(event) => setFilter('modified', event.target.value)} aria-label="Modified">
+                {modifiedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select value={filters.sort} onChange={(event) => setFilter('sort', event.target.value as Filters['sort'])} aria-label="Sort by">
+                {sortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {filtersActive ? (
+                <button type="button" className="text-button" onClick={() => setFilters((previous) => ({ ...defaultFilters, mode: previous.mode }))}>
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+            <p className="search-syntax field-hint">
+              Use quotes for an exact phrase ("reasonable person"), OR for either word, and a minus to leave a word out (-draft).
+            </p>
+          </>
         ) : null}
 
         {filters.within ? (
@@ -564,12 +537,14 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
 
       {preview ? (
         <LocalPreview
-          key={preview.id}
-          entry={preview}
+          key={preview.entry.id}
+          entry={preview.entry}
+          query={filters.mode === 'documents' ? '' : debouncedQuery}
+          initialPage={preview.page}
           onClose={() => setPreview(null)}
           onOpen={(entry) => void act(entry, 'open')}
           onReveal={(entry) => void act(entry, 'reveal')}
-          onNavigate={setPreview}
+          onNavigate={(entry) => setPreview({ entry, page: null })}
         />
       ) : null}
     </section>
@@ -577,32 +552,46 @@ export function DesktopFiles({ documents, allDocuments, search, onOpenDocument }
 }
 
 interface LocalResultRowProps {
-  entry: LocalEntry
+  entry: LocalHit
+  libraryName: string | null
   onOpen: () => void
   onReveal: () => void
-  onPreview: () => void
+  onPreview: (page: number | null) => void
   onSearchInside: () => void
   onCopyPath: () => void
 }
 
-function LocalResultRow({ entry, onOpen, onReveal, onPreview, onSearchInside, onCopyPath }: LocalResultRowProps) {
+function LocalResultRow({ entry, libraryName, onOpen, onReveal, onPreview, onSearchInside, onCopyPath }: LocalResultRowProps) {
   const unavailable = entry.availability !== 'available'
   const iconKind: DocumentKind = iconKinds.has(entry.kind as DocumentKind) ? (entry.kind as DocumentKind) : 'other'
-  const primary = entry.isFolder ? onSearchInside : entry.canPreview ? onPreview : entry.canOpen ? onOpen : onReveal
+  const excerpt = entry.excerpt ?? null
+  const page = excerpt?.page ?? null
+  const primary = entry.isFolder ? onSearchInside : entry.canPreview ? () => onPreview(page) : entry.canOpen ? onOpen : onReveal
+  const title = entry.meta?.title?.value
+  const author = entry.meta?.author?.value
+  const sections = entry.matchingSections ?? 0
 
   return (
     <li className={`result-row${unavailable ? ' is-unavailable' : ''}`}>
       <DocumentIcon kind={iconKind} />
       <div className="result-row__text">
         <button type="button" className="result-row__name" onClick={primary} disabled={unavailable} title={entry.name}>
-          {entry.name}
+          {title && title.toLowerCase() !== entry.name.toLowerCase().replace(/\.[^.]+$/, '') ? title : entry.name}
         </button>
+        {title && title.toLowerCase() !== entry.name.toLowerCase().replace(/\.[^.]+$/, '') ? <span className="result-row__filename">{entry.name}</span> : null}
         <span className="result-row__path" title={entry.path}>
-          <span className="source-badge source-badge--local">This computer</span>
-          <span className="result-row__full-path">{entry.path}</span>
+          <span className="source-badge source-badge--local">{SOURCE_LABELS.local}</span>
+          {libraryName ? <span className="result-row__library">{libraryName}</span> : null}
+          <span className="result-row__full-path">{entry.folder}</span>
         </span>
         <span className="result-row__meta">
           <span>{entry.isFolder ? 'Folder' : `${kindLabels[entry.kind]}${entry.extension ? ` (.${entry.extension})` : ''}`}</span>
+          {author ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{author}</span>
+            </>
+          ) : null}
           {!entry.isFolder ? (
             <>
               <span aria-hidden="true">·</span>
@@ -612,12 +601,27 @@ function LocalResultRow({ entry, onOpen, onReveal, onPreview, onSearchInside, on
           {entry.modifiedAt ? (
             <>
               <span aria-hidden="true">·</span>
-              <span>Modified {dateFormat.format(entry.modifiedAt)}</span>
+              <span>{dateFormat.format(entry.modifiedAt)}</span>
             </>
           ) : null}
+          {entry.match ? <span className="chip chip--accent">{matchLabels[entry.match]}</span> : null}
+          {excerpt?.source === 'ocr' ? <span className="chip">Recognised text (OCR)</span> : null}
           {unavailable ? <span className="chip chip--danger">{availabilityLabels[entry.availability as keyof typeof availabilityLabels]}</span> : null}
-          {entry.readOnly ? <span className="chip">Read-only</span> : null}
         </span>
+        {excerpt ? (
+          <p className="result-row__snippet">
+            <span className="result-row__where">{whereLabel(excerpt)}</span>
+            <Highlighted text={excerpt.text} />
+            {sections > 1 ? <span className="result-row__more-matches"> Found in {sections.toLocaleString()} {page ? 'pages' : 'places'}.</span> : null}
+            {excerpt.source === 'ocr' ? <span className="ocr-note"> {OCR_NOTE}</span> : null}
+          </p>
+        ) : null}
+        {entry.referencedBy ? (
+          <span className="result-row__reference">
+            Referenced in {entry.referencedBy.example}
+            {entry.referencedBy.count > 1 ? ` and ${entry.referencedBy.count - 1} more ${entry.referencedBy.count === 2 ? 'page' : 'pages'}` : ''}
+          </span>
+        ) : null}
       </div>
       <div className="result-row__actions">
         {entry.isFolder ? (
@@ -626,9 +630,9 @@ function LocalResultRow({ entry, onOpen, onReveal, onPreview, onSearchInside, on
             <span>Search inside</span>
           </button>
         ) : entry.canPreview ? (
-          <button type="button" className="secondary-button button--small" onClick={onPreview} disabled={unavailable}>
-            <Eye aria-hidden="true" />
-            <span>Preview</span>
+          <button type="button" className="secondary-button button--small" onClick={() => onPreview(page)} disabled={unavailable}>
+            {page ? <FileSearch aria-hidden="true" /> : <Eye aria-hidden="true" />}
+            <span>{page ? `Open at page ${page}` : 'Preview'}</span>
           </button>
         ) : null}
         {entry.canOpen ? (
@@ -641,7 +645,14 @@ function LocalResultRow({ entry, onOpen, onReveal, onPreview, onSearchInside, on
             Not opened from here
           </span>
         )}
-        <button type="button" className="icon-button" onClick={onReveal} disabled={entry.availability === 'missing' || entry.availability === 'offline'} aria-label={`Show ${entry.name} in File Explorer`} title="Show in folder">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onReveal}
+          disabled={entry.availability === 'missing' || entry.availability === 'offline'}
+          aria-label={`Show ${entry.name} in its folder`}
+          title="Show in folder"
+        >
           <FolderOpen aria-hidden="true" />
         </button>
         <button type="button" className="icon-button" onClick={onCopyPath} aria-label={`Copy the path of ${entry.name}`} title="Copy path">
@@ -670,7 +681,7 @@ function UploadedResultRow({ record, location, snippet, foundInText = false, onO
           {record.name}
         </button>
         <span className="result-row__path">
-          <span className="source-badge source-badge--vault">Uploaded</span>
+          <span className="source-badge source-badge--vault">{SOURCE_LABELS.vault}</span>
           {location}
         </span>
         <span className="result-row__meta">

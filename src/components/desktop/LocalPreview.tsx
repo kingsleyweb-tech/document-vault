@@ -1,8 +1,10 @@
 import { createPortal } from 'react-dom'
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ExternalLink, FolderOpen, X } from 'lucide-react'
-import { companion, CompanionError, type LocalEntry } from '../../services/desktopCompanion'
+import { ChevronDown, ChevronUp, ExternalLink, FolderOpen, X } from 'lucide-react'
+import { companion, CompanionError, type LocalEntry, type TextExcerpt } from '../../services/desktopCompanion'
+import { Highlighted } from '../library/Highlighted'
+import { OCR_NOTE, whereLabel } from '../library/libraryText'
 import { decodeHtml, renderDocx, renderSpreadsheet, sanitizeHtml, type SpreadsheetSheet } from '../../services/documentViewer'
 import { PdfVirtualizedViewer } from '../viewer/PdfViewer'
 import { linkFileName, safeDecode, wireHtmlLinks } from '../../utils/htmlLinks'
@@ -39,6 +41,10 @@ interface LocalPreviewProps {
   onReveal: (entry: LocalEntry) => void
   /** Shows another file in this preview, for links between pages. */
   onNavigate: (entry: LocalEntry) => void
+  /** Words searched for; the passages that match can then be stepped through. */
+  query?: string
+  /** The page to show first (from a search match). */
+  initialPage?: number | null
 }
 
 /** Resolves a link in a page against the folder the page is in, as a path on this computer. */
@@ -58,11 +64,41 @@ function resolveLocalPath(folder: string, href: string) {
 
 // Read-only preview of a file on this computer, streamed through the companion.
 // Nothing is uploaded; the bytes stay in this tab's memory.
-export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate }: LocalPreviewProps) {
+export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, query = '', initialPage = null }: LocalPreviewProps) {
   const [loaded, setLoaded] = useState<{ id: number; value: Loaded } | null>(null)
   const [failure, setFailure] = useState<{ id: number; message: string } | null>(null)
   const [activeSheet, setActiveSheet] = useState(0)
   const [linkNotice, setLinkNotice] = useState<string | null>(null)
+  const [matches, setMatches] = useState<{ id: number; items: TextExcerpt[] } | null>(null)
+  const [matchIndex, setMatchIndex] = useState(-1)
+  const [goToPage, setGoToPage] = useState(() => (initialPage ? { page: initialPage, key: 0 } : null))
+
+  // Passages are read from the local index, never from the file again.
+  const words = query.trim()
+  useEffect(() => {
+    if (!words || entry.isFolder) return undefined
+    const controller = new AbortController()
+    companion.matches(entry.id, words, controller.signal).then(
+      (result) => {
+        if (controller.signal.aborted) return
+        setMatches({ id: entry.id, items: result.matches })
+        setMatchIndex(initialPage ? result.matches.findIndex((match) => match.page === initialPage) : -1)
+      },
+      () => {
+        // Older companions have no text index; the preview works without it.
+      },
+    )
+    return () => controller.abort()
+  }, [entry.id, entry.isFolder, words, initialPage])
+
+  const passages = matches?.id === entry.id ? matches.items : []
+  const showMatch = (index: number) => {
+    const match = passages[index]
+    if (!match) return
+    setMatchIndex(index)
+    if (match.page) setGoToPage((previous) => ({ page: match.page as number, key: (previous?.key ?? 0) + 1 }))
+  }
+  const currentMatch = matchIndex >= 0 ? passages[matchIndex] : null
 
   useEffect(() => {
     if (!linkNotice) return undefined
@@ -180,6 +216,31 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate }: L
           </div>
         </header>
 
+        {passages.length > 0 ? (
+          <div className="match-bar" role="region" aria-label="Matching passages">
+            <span className="match-bar__count" role="status">
+              {matchIndex >= 0 ? `Match ${matchIndex + 1} of ${passages.length}` : `${passages.length} matching ${passages.length === 1 ? 'passage' : 'passages'}`}
+              {currentMatch ? <span className="match-bar__where">{whereLabel(currentMatch)}</span> : null}
+            </span>
+            {currentMatch ? (
+              <span className="match-bar__text">
+                <Highlighted text={currentMatch.text} />
+                {currentMatch.source === 'ocr' ? <span className="ocr-note"> {OCR_NOTE}</span> : null}
+              </span>
+            ) : (
+              <span className="match-bar__text">for “{words}”</span>
+            )}
+            <span className="match-bar__actions">
+              <button type="button" className="icon-button" onClick={() => showMatch(matchIndex <= 0 ? passages.length - 1 : matchIndex - 1)} aria-label="Previous match">
+                <ChevronUp aria-hidden="true" />
+              </button>
+              <button type="button" className="icon-button" onClick={() => showMatch(matchIndex >= passages.length - 1 ? 0 : matchIndex + 1)} aria-label="Next match">
+                <ChevronDown aria-hidden="true" />
+              </button>
+            </span>
+          </div>
+        ) : null}
+
         <div className="local-preview__body">
           {error ? (
             <p className="notice notice--error" role="alert">
@@ -191,7 +252,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate }: L
               <span>Loading preview...</span>
             </div>
           ) : current.kind === 'pdf' ? (
-            <PdfVirtualizedViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} />
+            <PdfVirtualizedViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} goToPage={goToPage} />
           ) : current.kind === 'presentation' ? (
             <Suspense fallback={<div className="local-preview__loading">Loading slides...</div>}>
               <PresentationViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} />

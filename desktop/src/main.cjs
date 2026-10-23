@@ -3,8 +3,9 @@
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, session, shell } = require('electron')
-const { createStaticServer } = require('./static-server.cjs')
+const { contentSecurityPolicy, createStaticServer } = require('./static-server.cjs')
 const { createBrowserSignIn } = require('./browser-sign-in.cjs')
+const { companionOrigins } = require('./origins.cjs')
 const { findUpdate } = require('./updates.cjs')
 
 const SITE = 'https://documents-vault.vercel.app'
@@ -70,7 +71,11 @@ app.userAgentFallback = app.userAgentFallback.replace(/\s(Electron|document-vaul
 async function start() {
   lockDownSessions()
 
-  staticServer = createStaticServer(WEB_ROOT, { routes: browserSignIn.routes })
+  staticServer = createStaticServer(WEB_ROOT, {
+    routes: browserSignIn.routes,
+    // Read per request: the companion starts after this server and may take another port.
+    csp: () => contentSecurityPolicy({ companionPort: companion?.port ?? COMPANION_PORT }),
+  })
   const port = await staticServer.listen(APP_PORTS)
   appOrigin = `http://localhost:${port}`
 
@@ -91,10 +96,12 @@ async function start() {
 }
 
 async function startCompanion(origin) {
-  const { startCompanion: startService } = await import(pathToFileURL(COMPANION_MAIN).href)
+  const { startCompanion: startService, DEVELOPMENT_ORIGINS } = await import(pathToFileURL(COMPANION_MAIN).href)
   const options = {
     dataDir: path.join(app.getPath('userData'), 'companion'),
-    extraOrigins: [origin],
+    // Exactly these origins, so origins saved by earlier runs (other ports) are dropped.
+    // Development servers are trusted only in development builds.
+    origins: companionOrigins(origin, { site: SITE, packaged: app.isPackaged, development: DEVELOPMENT_ORIGINS }),
     // Cross-platform replacements for the Windows-only launcher.
     launcher: {
       open: async (target) => {
@@ -104,10 +111,13 @@ async function startCompanion(origin) {
       // Only http and https links reach here (see companion/src/shortcuts.js).
       openLink: async (url) => shell.openExternal(url),
       reveal: async (target) => shell.showItemInFolder(target),
-      pickFolder: async () => {
+      // defaultPath opens the picker at a library's folder when access is granted again.
+      pickFolder: async ({ defaultPath } = {}) => {
         const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
-          title: 'Choose a folder for Document Vault to search',
-          buttonLabel: 'Index this folder',
+          title: defaultPath ? 'Choose the same folder to grant access again' : 'Choose a folder for Document Vault to search',
+          buttonLabel: defaultPath ? 'Grant access' : 'Use this folder',
+          message: 'Document Vault will read the names and the text of documents in this folder only, on this computer.',
+          ...(defaultPath ? { defaultPath } : {}),
           properties: ['openDirectory'],
         })
         return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]

@@ -59,6 +59,7 @@ export function PdfVirtualizedViewer({
   manifest,
   waitingLabel,
   zoom,
+  goToPage,
 }: {
   /** The PDF, or null while it is still downloading (stored pages show meanwhile). */
   blob: Blob | null
@@ -69,6 +70,8 @@ export function PdfVirtualizedViewer({
   manifest?: PdfManifest | null
   waitingLabel?: string
   zoom: number
+  /** Shows this page once the document is laid out; a new key jumps again, even to the same page. */
+  goToPage?: { page: number; key: number } | null
 }) {
   const [pdfProxy, setPdfProxy] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState<number | null>(manifest?.pageCount ?? null)
@@ -97,7 +100,8 @@ export function PdfVirtualizedViewer({
     const pageNum = Number.parseInt(localStorage.getItem(`vault_last_read_page_${documentId}`) ?? '', 10)
     return pageNum > 1 ? pageNum : null
   })
-  const [showResumeBanner, setShowResumeBanner] = useState(() => savedLastPage !== null)
+  // Not offered when the document was opened at a particular page (a search match).
+  const [showResumeBanner, setShowResumeBanner] = useState(() => savedLastPage !== null && !goToPage)
 
   const stageRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -395,6 +399,14 @@ export function PdfVirtualizedViewer({
     stage.scrollTop = contentTop() + tops[clamped - 1]
     setViewY(stage.scrollTop - contentTop())
   }
+
+  // Each requested page is shown once, as soon as the page count is known.
+  const appliedRequestRef = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    if (!goToPage || !numPages || appliedRequestRef.current === goToPage.key) return
+    appliedRequestRef.current = goToPage.key
+    jumpToPage(goToPage.page)
+  })
 
   const handlePageInputSubmit = (e: React.FormEvent) => {
     e.preventDefault()

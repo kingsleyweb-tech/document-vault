@@ -10,7 +10,7 @@ import {
   Home,
   LogOut,
   Menu,
-  Monitor,
+  Library,
   Moon,
   PauseCircle,
   RotateCw,
@@ -65,7 +65,8 @@ const libraryNav: NavItem[] = [
   { to: '/recent', label: 'Recent', icon: History },
   { to: '/favorites', label: 'Favorites', icon: Star },
   { to: '/categories', label: 'Categories', icon: Tags },
-  { to: '/desktop', label: 'Desktop Files', icon: Monitor },
+  { to: '/libraries', label: 'My Libraries', icon: Library },
+  { to: '/search', label: 'Search', icon: Search },
 ]
 
 const tabbarNav: NavItem[] = [

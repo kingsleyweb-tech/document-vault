@@ -58,6 +58,8 @@ export function protectedLocations(dataDir) {
     path.join(systemDrive, '$Recycle.Bin'),
     path.join(systemDrive, 'System Volume Information'),
     path.join(home, 'AppData'),
+    // Credentials and settings kept by developer and cloud tools.
+    ...['.ssh', '.gnupg', '.aws', '.azure', '.config', '.kube', '.docker', '.local', '.cache'].map((name) => path.join(home, name)),
     dataDir,
   ].filter(Boolean)
 }

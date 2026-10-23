@@ -26,6 +26,32 @@ const TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
+/**
+ * The Content Security Policy of the app window. It matches the website's
+ * (vercel.json) and is enforced here: scripts load only from the app and
+ * Google sign-in, nothing may be embedded in plugins, and the window may talk
+ * only to the services the app uses and to this computer's companion, on the
+ * port it actually listens on.
+ */
+function contentSecurityPolicy({ companionPort = null } = {}) {
+  const companion = companionPort ? ` http://127.0.0.1:${companionPort}` : ''
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' https://apis.google.com https://www.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https://*.googleusercontent.com https://drive.google.com https://www.gstatic.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.supabase.co wss://*.supabase.co${companion} blob:`,
+    "frame-src 'self' blob: https://*.firebaseapp.com https://drive.google.com https://docs.google.com https://accounts.google.com",
+    "worker-src 'self' blob:",
+    "media-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join('; ')
+}
+
 /** Resolves a request path to a file inside root, or null. Never leaves root. */
 function resolveFile(root, pathname) {
   let decoded
@@ -54,7 +80,7 @@ function resolveFile(root, pathname) {
  * routes maps a path to a handler for requests the static files cannot answer
  * (the browser sign-in hand-off). Handlers see every method; files only GET and HEAD.
  */
-function createStaticServer(rootDir, { routes = {} } = {}) {
+function createStaticServer(rootDir, { routes = {}, csp = null } = {}) {
   const root = path.resolve(rootDir)
   const fallback = path.join(root, 'index.html')
   let allowedHosts = new Set()
@@ -81,6 +107,8 @@ function createStaticServer(rootDir, { routes = {} } = {}) {
       'Content-Type': type,
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'X-Frame-Options': 'DENY',
+      ...(csp ? { 'Content-Security-Policy': typeof csp === 'function' ? csp() : csp } : {}),
       'Cache-Control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
     }
     fs.stat(file, (error, stat) => {
@@ -118,4 +146,4 @@ function createStaticServer(rootDir, { routes = {} } = {}) {
   return { server, listen, close: () => new Promise((resolve) => server.close(resolve)) }
 }
 
-module.exports = { createStaticServer, resolveFile }
+module.exports = { contentSecurityPolicy, createStaticServer, resolveFile }

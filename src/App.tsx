@@ -14,7 +14,10 @@ import { Settings } from './pages/Settings'
 import { VaultPage } from './pages/VaultPage'
 import { AllFiles } from './pages/AllFiles'
 import { AllFolders } from './pages/AllFolders'
-import { DesktopFiles } from './pages/DesktopFiles'
+import { Libraries } from './pages/Libraries'
+import { LibraryAccess } from './pages/LibraryAccess'
+import { LibraryDetail } from './pages/LibraryDetail'
+import { SearchPage } from './pages/Search'
 import { FolderTreePicker } from './components/documents/FolderTreePicker'
 import { TagEditor } from './components/documents/TagEditor'
 import { VersionHistoryDialog } from './components/documents/VersionHistoryDialog'
@@ -664,10 +667,15 @@ function AuthenticatedVaultInner() {
           <Route path="recent" element={<VaultPage {...libraryProps} variant="recent" />} />
           <Route path="favorites" element={<VaultPage {...libraryProps} variant="favorites" />} />
           <Route path="categories" element={<Categories {...libraryProps} />} />
+          <Route path="libraries" element={<Libraries />} />
+          <Route path="libraries/:libraryId" element={<LibraryDetail />} />
+          <Route path="access" element={<LibraryAccess />} />
           <Route
-            path="desktop"
-            element={<DesktopFiles documents={activeDocuments} allDocuments={documents} search={search} onOpenDocument={openDocument} />}
+            path="search"
+            element={<SearchPage documents={activeDocuments} allDocuments={documents} search={search} onOpenDocument={openDocument} />}
           />
+          {/* Desktop Files became My Libraries and Search; old links keep working. */}
+          <Route path="desktop" element={<Navigate to="/libraries" replace />} />
           <Route
             path="trash"
             element={

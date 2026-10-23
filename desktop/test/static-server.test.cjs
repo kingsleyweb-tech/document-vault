@@ -57,3 +57,44 @@ test('offers an update only when a newer build for this system is published', ()
   assert.equal(findUpdate(manifest, { version: '1.0.0', platform: 'darwin', arch: 'arm64' }), null)
   assert.equal(findUpdate(null, { version: '1.0.0', platform: 'win32', arch: 'x64' }), null)
 })
+
+test('the app window gets an enforced Content Security Policy naming the companion port', async () => {
+  const { contentSecurityPolicy } = require('../src/static-server.cjs')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dv-web-'))
+  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html>page')
+  let companionPort = 47615
+  const server = createStaticServer(root, { csp: () => contentSecurityPolicy({ companionPort }) })
+  const port = await server.listen([0])
+  const headers = () =>
+    new Promise((resolve, reject) => {
+      require('node:http')
+        .get({ host: '127.0.0.1', port, path: '/app', headers: { host: `localhost:${port}` } }, (response) => {
+          response.resume()
+          resolve(response.headers)
+        })
+        .on('error', reject)
+    })
+  try {
+    const first = (await headers())['content-security-policy']
+    assert.match(first, /connect-src [^;]*http:\/\/127\.0\.0\.1:47615/)
+    assert.match(first, /object-src 'none'/)
+    assert.match(first, /frame-ancestors 'none'/)
+    assert.doesNotMatch(first, /'unsafe-eval'/)
+    assert.doesNotMatch(first, /script-src [^;]*'unsafe-inline'/)
+    // The companion took another port: the policy follows it.
+    companionPort = 51234
+    const second = (await headers())['content-security-policy']
+    assert.match(second, /http:\/\/127\.0\.0\.1:51234/)
+    assert.doesNotMatch(second, /47615/)
+  } finally {
+    await server.close()
+  }
+})
+
+test('development servers may call the companion only from development builds', () => {
+  const { companionOrigins } = require('../src/origins.cjs')
+  const development = ['http://localhost:5173']
+  const site = 'https://documents-vault.vercel.app'
+  assert.deepEqual(companionOrigins('http://localhost:47616', { site, packaged: true, development }), ['http://localhost:47616', site])
+  assert.deepEqual(companionOrigins('http://localhost:47616', { site, packaged: false, development }), ['http://localhost:47616', site, 'http://localhost:5173'])
+})

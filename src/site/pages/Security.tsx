@@ -63,7 +63,7 @@ export default function Security() {
                     <td>That browser profile; removed when you sign out</td>
                   </tr>
                   <tr>
-                    <td>Desktop Files index (file and folder names on your computer)</td>
+                    <td>Library index on your computer (file and folder names, document titles and authors, the text read from documents, and links between pages)</td>
                     <td>A file in the desktop app’s data folder on your computer</td>
                     <td>Your computer only; never uploaded</td>
                   </tr>
@@ -101,8 +101,9 @@ export default function Security() {
                 isolation and sandbox, and a small, fixed set of checked requests.
               </li>
               <li>
-                Desktop Files only reads folders you add. System folders are refused, programs and scripts are never opened, and
-                its local service listens only on your own computer and accepts only paired, recognised callers.
+                The desktop app reads only the library folders you add, and stops at once when you revoke one. System folders are
+                refused, programs, scripts and the code in web pages are never run, and its local service listens only on your
+                own computer and accepts only paired, recognised callers.
               </li>
               <li>Links to other sites open in your normal browser, not inside the app.</li>
             </ul>
