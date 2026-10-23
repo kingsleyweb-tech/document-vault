@@ -4,9 +4,9 @@
   "version": "1.0.4",
   "releasedAt": "2026-10-23T17:22:18.281Z",
   "notes": [
-    "Shortcuts open what they point to: a document, a folder or a website. Shortcuts that start programs are still never run.",
-    "Saved web pages (.htm and .html) show as the page instead of its code, with the right characters.",
-    "Internet shortcuts stored in your vault show their web address with an Open link button."
+    "Links in web pages work: the contents list jumps to the chapter, links to other files open them, and web links open in your browser.",
+    "Shortcut files stored in your vault show what they point to and open that document when it is in your vault too.",
+    "Shortcuts on your computer open the document, folder or website they point to, and saved web pages (.htm) show as pages instead of code."
   ],
   "notesUrl": null,
   "builds": [
