@@ -878,6 +878,31 @@ input[type='radio'] {
   font-size: 12px;
 }
 
+.result-row__copies {
+  margin-top: 2px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.result-row__copies summary {
+  cursor: pointer;
+}
+
+.result-row__copies ul {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result-row__copies li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
 /* Matching passages in the preview */
 .match-bar {
   display: grid;
@@ -1030,4 +1055,120 @@ input[type='radio'] {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* Duplicate books */
+.duplicates-page {
+  display: grid;
+  gap: 14px;
+}
+
+.duplicates-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+
+.duplicates-toolbar__field,
+.duplicates-toolbar__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.duplicates-toolbar__field select {
+  max-width: 240px;
+}
+
+.duplicates-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.duplicate-groups {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.duplicate-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.duplicate-group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px 14px;
+}
+
+.duplicate-group__head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.duplicate-group__meta,
+.duplicate-copy__where,
+.duplicate-copy__meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.duplicate-group__copies {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.duplicate-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+}
+
+.duplicate-copy > .link-button {
+  justify-self: start;
+  text-align: left;
+}
+
+.duplicate-copy__where,
+.duplicate-copy__meta {
+  grid-column: 1;
+}
+
+.duplicate-copy__reveal {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+}
+
+@media (max-width: 560px) {
+  .duplicate-copy {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .duplicate-copy__reveal {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { companion, type DuplicateGroup, type HealthItem, type HealthSection, type HealthSummary } from '../../services/desktopCompanion'
 import { formatFileSize } from '../../utils/formatters'
 import { errorText, numberFormat } from './libraryText'
@@ -149,6 +150,11 @@ function HealthList({ libraryId, section, version, onOpenEntry, onReveal }: { li
 
   return (
     <ul className="health-list">
+      {section === 'duplicates' ? (
+        <li className="health-list__detail">
+          <Link to="/libraries/duplicates">See duplicates across all libraries</Link>, including files with the same text.
+        </li>
+      ) : null}
       {items.list.map((item, position) =>
         'copies' in item ? (
           <li key={item.hash} className="health-list__group">

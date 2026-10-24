@@ -20,9 +20,13 @@ vi.mock('../services/contentIndex', async (importOriginal) => ({
 }))
 
 const localSearch = vi.fn()
+const reveal = vi.fn()
 vi.mock('../services/desktopCompanion', async (importOriginal) => {
   const original = await importOriginal<typeof import('../services/desktopCompanion')>()
-  return { ...original, companion: { ...original.companion, search: (...args: unknown[]) => localSearch(...args) } }
+  return {
+    ...original,
+    companion: { ...original.companion, search: (...args: unknown[]) => localSearch(...args), reveal: (...args: unknown[]) => reveal(...args) },
+  }
 })
 
 const { SearchPage } = await import('./Search')
@@ -102,6 +106,7 @@ afterEach(() => {
   container = null
   searchDocumentContent.mockReset()
   localSearch.mockReset()
+  reveal.mockReset()
   companionState.connection = 'offline'
   companionState.status = null
 })
@@ -232,6 +237,29 @@ describe('Search: local libraries', () => {
     expect(row.textContent).toContain('Recognised text (OCR)')
     expect(row.querySelector('.result-row__where')?.textContent).toBe('Page 2')
     expect(row.querySelector('.ocr-note')?.textContent).toContain('Text recognised from a scan; it may contain errors.')
+  })
+
+  it('shows identical copies once, listing where the others are', async () => {
+    connect([library(1, 'Law'), library(2, 'Downloads')])
+    reveal.mockResolvedValue({ ok: true })
+    localSearch.mockResolvedValue({
+      items: [
+        hit({ copies: [{ entryId: 7, name: 'Contract Law Handbook (1).pdf', folder: 'C:\\Users\\Me\\Downloads', libraryId: 2, libraryName: 'Downloads' }] }),
+        hit({ id: 2, name: 'Torts.pdf', copies: [] }),
+      ],
+      total: 2,
+      totalCapped: false,
+      fuzzy: false,
+      tookMs: 3,
+    })
+    const view = await render([], 'contract')
+    const [row, other] = [...view.querySelectorAll('[aria-label="Results from your libraries"] > li')]
+    expect(row.querySelector('.result-row__copies summary')?.textContent).toBe('Identical copy also in 1 other place')
+    expect(row.querySelector('.result-row__copies li')?.textContent).toContain('Downloads · C:\\Users\\Me\\Downloads · Contract Law Handbook (1).pdf')
+    expect(other.querySelector('.result-row__copies')).toBeNull()
+    const show = [...row.querySelectorAll<HTMLButtonElement>('.result-row__copies button')].find((button) => button.textContent === 'Show in folder')!
+    await act(async () => show.click())
+    expect(reveal).toHaveBeenCalledWith(7)
   })
 
   it('does not mark passages read from the text of the file', async () => {

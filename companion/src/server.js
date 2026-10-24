@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { scopeSql } from './access.js'
 import { EXTRACTABLE } from './extract/formats.js'
+import { DUPLICATE_KINDS, dismissDuplicate, duplicateSummary, listDuplicates } from './duplicates.js'
 import { refreshMeta } from './extractor.js'
 import { friendlyError } from './indexer.js'
 import { canLaunch, canOpenFolder, KINDS, previewType } from './kinds.js'
@@ -66,13 +67,16 @@ const PROBLEM_MESSAGES = {
 }
 
 /** Paging values from a query string, kept within limits. */
+// A stored content hash still describes the file (it has not changed since).
+const CURRENT_HASH = 'h.size = e.size and h.mtime = e.mtime and e.size > 0'
+
 function paging(params, defaultLimit = 50) {
   const limit = Math.min(Math.max(Math.round(Number(params.get('limit')) || defaultLimit), 1), 200)
   const offset = Math.max(Math.round(Number(params.get('offset')) || 0), 0)
   return { limit, offset }
 }
 
-export function createCompanionServer({ store, indexer, extractor, ocr, access, config, saveConfig, launcher, dataDir, port, log = () => {} }) {
+export function createCompanionServer({ store, indexer, extractor, ocr, hasher, access, config, saveConfig, launcher, dataDir, port, log = () => {} }) {
   let pairing = null
   let pairingFailures = 0
   const db = store.db
@@ -227,6 +231,12 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
     canPreview: !row.is_dir && previewType(row.name) !== null && row.size <= MAX_PREVIEW_BYTES,
   })
 
+  /** Another place an identical copy of a search result is kept. */
+  const describeCopy = (row) => {
+    const root = store.getRoot(row.root_id)
+    return { entryId: row.id, name: row.name, folder: path.dirname(row.path), libraryId: row.root_id, libraryName: root?.name || path.basename(root?.path ?? '') }
+  }
+
   /** Checks a result against the disk, so moved or deleted files are flagged straight away. */
   async function availabilityOf(row) {
     try {
@@ -324,12 +334,14 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
     indexer.stopRoot(root.id)
     extractor.cancelRoot(root.id)
     ocr.cancelRoot(root.id)
+    hasher.cancelRoot(root.id)
   }
 
   function startLibrary(root) {
     indexer.enqueue(root.id)
     extractor.requeueRoot(root.id)
     ocr.queueRoot(root.id)
+    hasher.schedule()
   }
 
   // ── Folder tree, health and references ────────────────────────────────────
@@ -391,10 +403,11 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
     'broken-links': (root, scope, page) => linkRows(root, 'broken', page),
     'outside-links': (root, scope, page) => linkRows(root, 'outside', page),
     'unindexed-links': (root, scope, page) => linkRows(root, 'unindexed', page),
+    // Identical copies inside this library; the Duplicates page compares across libraries.
     duplicates: (root, scope, page) => {
-      const groups = db.prepare(`select d.sha256, count(*) as n from docs d join entries e on e.id = d.entry_id
-          where d.sha256 is not null and ${scope.sql} group by d.sha256 having n > 1 order by n desc, d.sha256 limit ? offset ?`).all(...scope.values, page.limit, page.offset)
-      const members = db.prepare(`select e.* from docs d join entries e on e.id = d.entry_id where d.sha256 = ? and ${scope.sql} order by e.path`)
+      const groups = db.prepare(`select h.sha256, count(*) as n from file_hashes h join entries e on e.id = h.entry_id
+          where ${CURRENT_HASH} and ${scope.sql} group by h.sha256 having n > 1 order by n desc, h.sha256 limit ? offset ?`).all(...scope.values, page.limit, page.offset)
+      const members = db.prepare(`select e.* from file_hashes h join entries e on e.id = h.entry_id where h.sha256 = ? and ${CURRENT_HASH} and ${scope.sql} order by e.path`)
       return groups.map((group) => ({
         hash: group.sha256.slice(0, 16),
         copies: members.all(group.sha256, ...scope.values).map((row) => ({ entryId: row.id, name: row.name, folder: path.dirname(row.path), size: row.size })),
@@ -441,8 +454,8 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
       ocrLowConfidence: one(`select count(*) as n from docs d join entries e on e.id = d.entry_id where d.ocr_state = 'completed'
           and d.ocr_confidence < ${LOW_CONFIDENCE} and ${scope.sql}`),
       truncated: one(`select count(*) as n from docs d join entries e on e.id = d.entry_id where d.truncated = 1 and ${scope.sql}`),
-      duplicateGroups: one(`select count(*) as n from (select d.sha256 from docs d join entries e on e.id = d.entry_id
-          where d.sha256 is not null and ${scope.sql} group by d.sha256 having count(*) > 1)`),
+      duplicateGroups: one(`select count(*) as n from (select h.sha256 from file_hashes h join entries e on e.id = h.entry_id
+          where ${CURRENT_HASH} and ${scope.sql} group by h.sha256 having count(*) > 1)`),
       catalogs: one(`select count(*) as n from docs d join entries e on e.id = d.entry_id where d.role = 'catalog' and ${scope.sql}`),
       skippedByType: root.type_skipped,
       text,
@@ -716,8 +729,31 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
       for (const root of active) startLibrary(root)
       return { queued: active.map((root) => root.id) }
     }],
-    ['POST', /^\/v1\/index\/pause$/, true, () => (indexer.pause(), extractor.pause(), ocr.pause(), indexer.status())],
-    ['POST', /^\/v1\/index\/resume$/, true, () => (indexer.resume(), extractor.resume(), ocr.resume(), indexer.status())],
+    ['POST', /^\/v1\/index\/pause$/, true, () => (indexer.pause(), extractor.pause(), ocr.pause(), hasher.pause(), indexer.status())],
+    ['POST', /^\/v1\/index\/resume$/, true, () => (indexer.resume(), extractor.resume(), ocr.resume(), hasher.resume(), indexer.status())],
+
+    // ── Duplicates ── (listed only; files are never changed)
+
+    ['GET', /^\/v1\/duplicates$/, true, (request) => {
+      const params = new URL(request.url, 'http://127.0.0.1').searchParams
+      const kind = params.get('kind') ?? 'exact'
+      if (!DUPLICATE_KINDS.includes(kind)) throw new HttpError(400, 'Choose "exact" or "text".')
+      let rootId = null
+      if (params.get('library')) rootId = readableLibrary([null, params.get('library')]).id
+      const groups = listDuplicates(db, { kind, rootId, dismissed: params.get('dismissed') === '1', ...paging(params, 50) })
+      return { kind, groups }
+    }],
+
+    ['GET', /^\/v1\/duplicates\/summary$/, true, () => ({ ...duplicateSummary(db), checking: hasher.status() })],
+
+    ['POST', /^\/v1\/duplicates\/dismiss$/, true, async (request) => {
+      const body = await readJson(request)
+      const kind = String(body.kind ?? '')
+      const key = String(body.key ?? '')
+      if (!DUPLICATE_KINDS.includes(kind) || !/^[0-9a-f]{64}$/.test(key)) throw new HttpError(400, 'Choose a group of duplicates.')
+      if (!dismissDuplicate(db, { kind, key, dismissed: body.dismissed !== false })) throw new HttpError(404, 'That group of duplicates no longer exists.')
+      return { ok: true }
+    }],
 
     // ── Search ──
 
@@ -735,6 +771,7 @@ export function createCompanionServer({ store, indexer, extractor, ocr, access, 
           matchingSections: hit.matchingSections ?? 0,
           meta: hit.meta ?? null,
           referencedBy: hit.referencedBy ?? null,
+          copies: (hit.copies ?? []).map(describeCopy),
         }
       }))
       return { ...result, items, tookMs: Math.round(performance.now() - started), query: { ...query } }

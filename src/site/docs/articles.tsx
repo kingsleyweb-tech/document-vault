@@ -614,6 +614,27 @@ export const articles: DocArticle[] = [
         ),
       },
       {
+        id: 'duplicate-books',
+        title: 'Duplicate books',
+        keywords: 'duplicate copy copies identical same book space tidy',
+        body: (
+          <>
+            <p>
+              On My Libraries, choose Duplicates to see books kept more than once, across all your libraries. Identical files lists
+              files with exactly the same content; Same text, different file lists files with the same words that are not
+              identical, such as a book saved again with a new title. The groups that take the most space come first.
+            </p>
+            <p>
+              Document Vault only compares files whose size matches another file, while it is not busy reading text. It never
+              deletes, moves or renames anything. To remove a copy, use Show in folder and delete it yourself; the library
+              updates by itself. If copies are meant to be kept, choose Keep all: not duplicates, and the group is listed again
+              only if another copy appears. In search results, identical copies are shown once, with the other places listed
+              under the result.
+            </p>
+          </>
+        ),
+      },
+      {
         id: 'book-links',
         title: 'Catalog pages and book links',
         keywords: 'htm html catalog index page link broken reference',

@@ -580,6 +580,34 @@ describe('upgrading the index', () => {
     }
   })
 
+  it('upgrades an index from version 3 and keeps the content hashes already known', () => {
+    fs.mkdirSync(folder, { recursive: true })
+    const file = path.join(folder, 'v3.sqlite')
+    // A current index taken back to version 3: without the duplicate tables and the text fingerprint.
+    const made = openStore(file)
+    made.db.exec(`
+      insert into roots (path, path_key, added_at, status) values ('C:\\Books', 'c:\\books', 1, 'ready');
+      insert into entries (root_id, path, path_key, parent_key, name, ext, kind, is_dir, size, mtime)
+        values (1, 'C:\\Books\\a.pdf', 'c:\\books\\a.pdf', 'c:\\books', 'a.pdf', 'pdf', 'pdf', 0, 10, 5);
+      insert into docs (entry_id, root_id, state, size, mtime, sha256, extracted_at) values (1, 1, 'completed', 10, 5, '${'a'.repeat(64)}', 9);
+      drop table file_hashes;
+      drop table dup_dismissed;
+      drop index docs_text_hash;
+      alter table docs drop column text_hash;
+      pragma user_version = 3;
+    `)
+    made.close()
+    const store = openStore(file)
+    try {
+      assert.equal(Number(store.db.prepare('pragma user_version').get().user_version), SCHEMA_VERSION)
+      assert.deepEqual({ ...store.db.prepare('select entry_id, size, mtime, sha256 from file_hashes').get() }, { entry_id: 1, size: 10, mtime: 5, sha256: 'a'.repeat(64) })
+      assert.equal(store.db.prepare('select text_hash from docs').get().text_hash, null)
+      assert.ok(fs.existsSync(`${file}.bak-v3`))
+    } finally {
+      store.close()
+    }
+  })
+
   it('refuses an index made by a newer version', () => {
     const file = path.join(folder, 'newer.sqlite')
     const db = new DatabaseSync(file)

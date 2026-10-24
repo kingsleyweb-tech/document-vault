@@ -163,7 +163,7 @@ export class OcrRunner extends EventEmitter {
   }
 
   extractorIdle() {
-    return this.extractor.active.size === 0 && this.extractor.sql.next.all(1).length === 0 && this.extractor.pendingRoots.size === 0
+    return this.extractor.isIdle()
   }
 
   hasWork() {

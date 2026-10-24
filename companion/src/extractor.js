@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { EXTRACTABLE, OCR_FORMATS } from './extract/formats.js'
+import { textFingerprint } from './fingerprint.js'
 import { friendlyError } from './indexer.js'
 import { extensionOf } from './kinds.js'
 import { pathKey } from './paths.js'
@@ -93,11 +94,16 @@ export class Extractor extends EventEmitter {
       deleteLinks: db.prepare('delete from doc_links where source_id = ?'),
       insertLink: db.prepare('insert into doc_links (source_id, root_id, href, label, target_key, target_id, status) values (?, ?, ?, ?, ?, ?, ?)'),
       finish: db.prepare(`update docs set state = 'completed', error = null, size = ?, mtime = ?, sha256 = ?, pages = ?, text_pages = ?,
-        needs_ocr = ?, truncated = ?, role = ?, extracted_at = ?, ms = ? where entry_id = ?`),
+        needs_ocr = ?, truncated = ?, role = ?, extracted_at = ?, ms = ?, text_hash = ? where entry_id = ?`),
       copyDoc: db.prepare(`update docs set state = 'completed', error = null, size = ?, mtime = ?, sha256 = ?, extracted_at = ?, ms = ?,
         pages = (select pages from docs where entry_id = ?), text_pages = (select text_pages from docs where entry_id = ?),
-        needs_ocr = (select needs_ocr from docs where entry_id = ?), truncated = (select truncated from docs where entry_id = ?)
+        needs_ocr = (select needs_ocr from docs where entry_id = ?), truncated = (select truncated from docs where entry_id = ?),
+        text_hash = (select text_hash from docs where entry_id = ?)
         where entry_id = ?`),
+      // The content hash of the bytes just read, for finding duplicate files.
+      fileHash: db.prepare(`insert into file_hashes (entry_id, root_id, size, mtime, sha256, at) values (?, ?, ?, ?, ?, ?)
+        on conflict (entry_id) do update set root_id = excluded.root_id, size = excluded.size, mtime = excluded.mtime,
+          sha256 = excluded.sha256, at = excluded.at`),
       counts: db.prepare(`select d.state, count(*) as n from docs d join roots r on r.id = d.root_id where r.state <> 'revoked' group by d.state`),
     }
   }
@@ -165,6 +171,11 @@ export class Extractor extends EventEmitter {
     clearTimeout(this.queueTimer)
     await this.pool.close()
     await Promise.allSettled([...this.active.values()].map((job) => job.promise))
+  }
+
+  /** True when nothing is being read or waiting to be read. */
+  isIdle() {
+    return this.active.size === 0 && this.pendingRoots.size === 0 && this.sql.next.all(1).length === 0
   }
 
   /** Resolves when the queue is empty. Used by tests and the benchmark. */
@@ -246,7 +257,12 @@ export class Extractor extends EventEmitter {
 
     // Same bytes as last time (only the date changed): keep what was read.
     if (doc.sha256 === sha256 && doc.extracted_at) {
-      if (valid()) this.sql.touch.run('completed', info.size, mtime, entry.id)
+      if (valid()) {
+        this.store.transaction(() => {
+          this.sql.touch.run('completed', info.size, mtime, entry.id)
+          this.sql.fileHash.run(entry.id, root.id, info.size, mtime, sha256, Date.now())
+        })
+      }
       return
     }
     // Same bytes as another document already read (a copy, or a moved file): reuse its text.
@@ -260,7 +276,8 @@ export class Extractor extends EventEmitter {
         this.sql.deleteMeta.run(entry.id)
         this.sql.copyMeta.run(entry.id, twin.entry_id)
         const t = twin.entry_id
-        this.sql.copyDoc.run(info.size, mtime, sha256, Date.now(), Date.now() - started, t, t, t, t, entry.id)
+        this.sql.copyDoc.run(info.size, mtime, sha256, Date.now(), Date.now() - started, t, t, t, t, t, entry.id)
+        this.sql.fileHash.run(entry.id, root.id, info.size, mtime, sha256, Date.now())
         refreshMeta(this.store.db, entry.id)
       })
       return
@@ -302,7 +319,9 @@ export class Extractor extends EventEmitter {
       refreshMeta(this.store.db, entry.id)
       this.sql.deleteLinks.run(entry.id)
       for (const link of links) this.sql.insertLink.run(entry.id, root.id, link.href, link.label || null, link.targetKey, link.targetId, link.status)
-      this.sql.finish.run(info.size, mtime, sha256, pages, result.textPages ?? null, OCR_FORMATS.has(extension) ? missingText : 0, result.truncated ? 1 : 0, role, Date.now(), Date.now() - started, entry.id)
+      const textHash = textFingerprint(result.sections.map((section) => section.text ?? ''))
+      this.sql.finish.run(info.size, mtime, sha256, pages, result.textPages ?? null, OCR_FORMATS.has(extension) ? missingText : 0, result.truncated ? 1 : 0, role, Date.now(), Date.now() - started, textHash, entry.id)
+      this.sql.fileHash.run(entry.id, root.id, info.size, mtime, sha256, Date.now())
     })
   }
 

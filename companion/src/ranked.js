@@ -1,5 +1,6 @@
 import { scopeSql } from './access.js'
 import { escapeLike, filterClauses, ftsPhrase, fuzzySearch, search } from './search.js'
+import { contentHashes } from './duplicates.js'
 
 // Searches titles, names, metadata and the text inside documents together,
 // and ranks the results in tiers so a close match on meaning never outranks
@@ -172,9 +173,11 @@ export function searchRanked(db, query) {
     size: (a, b) => b.row.size - a.row.size,
   }
   ranked.sort(orders[query.sort] ?? orders.relevance)
+  // Identical copies of a file (same bytes) are shown once, under the best-placed copy.
+  const shown = query.copies === 'all' ? ranked : collapseCopies(db, ranked)
 
-  const page = ranked.slice(query.offset, query.offset + query.limit)
-  const items = page.map(({ row, tier }) => {
+  const page = shown.slice(query.offset, query.offset + query.limit)
+  const items = page.map(({ row, tier, copies }) => {
     const text = textHits.get(row.id)
     return {
       row,
@@ -183,9 +186,29 @@ export function searchRanked(db, query) {
       matchingSections: text?.pages ?? 0,
       meta: metaOf(db, row.id),
       referencedBy: referencesTo(db, row.id),
+      copies: copies ?? [],
     }
   })
-  return { items, total: ranked.length, totalCapped: capped, fuzzy, mode: query.mode }
+  return { items, total: shown.length, totalCapped: capped, fuzzy, mode: query.mode }
+}
+
+/** Folds results with identical bytes into the first of them, which lists the others as copies. */
+function collapseCopies(db, ranked) {
+  const hashes = contentHashes(db, ranked.filter((hit) => !hit.row.is_dir).map((hit) => hit.row.id))
+  const first = new Map()
+  const shown = []
+  for (const hit of ranked) {
+    const hash = hashes.get(hit.row.id)
+    const primary = hash ? first.get(hash) : null
+    if (primary) {
+      primary.copies.push(hit.row)
+      continue
+    }
+    const kept = { ...hit, copies: [] }
+    if (hash) first.set(hash, kept)
+    shown.push(kept)
+  }
+  return shown
 }
 
 // The text index is searched by row id range of one document's pages, so a

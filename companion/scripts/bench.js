@@ -5,10 +5,13 @@
 // deletes afterwards; nothing else on the computer is read.
 //
 //   node --disable-warning=ExperimentalWarning scripts/bench.js [--text 3000] [--pdfs 300] [--pages 30]
-//     [--scanned 0] [--scanned-pages 10] [--keep]
+//     [--scanned 0] [--scanned-pages 10] [--duplicates 0] [--keep]
 //
 // --scanned N adds N scanned PDFs (pictures of pages, no text layer) and
 // measures text recognition (OCR) after the library's owner agrees to it.
+// --duplicates N copies N of the PDFs into another folder and adds N pairs of
+// identical Word 97 files (whose text is not read), and measures how long
+// finding the duplicates takes.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,6 +30,7 @@ const PAGES = option('pages', 30)
 const SEARCHES = option('searches', 40)
 const SCANNED = option('scanned', 0)
 const SCANNED_PAGES = option('scanned-pages', 10)
+const DUPLICATES = option('duplicates', 0)
 const keep = args.includes('--keep')
 
 // A small legal vocabulary, so searches have realistic, overlapping matches.
@@ -69,6 +73,15 @@ function generate() {
     // A page of a law report: a heading and 18 lines of words, as a 150 dpi scan.
     const pages = Array.from({ length: SCANNED_PAGES }, (_, page) => [`Report ${index} page ${page + 1}`, ...Array.from({ length: 18 }, () => sentence(7))])
     fs.writeFileSync(path.join(folder, `Scanned report ${index}.pdf`), makeScannedPdf(pages))
+  }
+  for (let index = 0; index < Math.min(DUPLICATES, PDFS); index++) {
+    const folder = path.join(library, 'Copies')
+    fs.mkdirSync(folder, { recursive: true })
+    fs.copyFileSync(path.join(library, 'Books', `Shelf ${index % 10}`, `Book ${index}.pdf`), path.join(folder, `Book ${index} copy.pdf`))
+    // A pair of identical files of a format whose text is not read, 200 KB to 1 MB.
+    const bytes = Buffer.alloc(200_000 + ((index * 7919) % 800_000), index % 251)
+    fs.writeFileSync(path.join(folder, `Statutes ${index}.doc`), bytes)
+    fs.writeFileSync(path.join(library, `Volume ${index % 20}`, `Statutes ${index}.doc`), bytes)
   }
 }
 
@@ -169,6 +182,23 @@ async function measure(companion, baselineRss) {
     const started = performance.now()
     const result = await call('GET', `/v1/search?mode=fulltext&q=${encodeURIComponent('"Report 3 page 7"')}&limit=5`)
     console.log(`  phrase search in recognised text: ${result.total} result(s), first ${result.items[0]?.name ?? '-'} page ${result.items[0]?.excerpt?.page ?? '-'} (${result.items[0]?.excerpt?.source ?? '-'}), ${(performance.now() - started).toFixed(0)} ms`)
+  }
+  if (DUPLICATES > 0) {
+    const started = performance.now()
+    await companion.hasher.idle(30 * 60_000)
+    const hashed = companion.hasher.reads
+    console.log(`Compared files with the same size as another: read ${hashed} files in ${((performance.now() - started) / 1000).toFixed(1)} s after the text was read`)
+    for (const route of ['/v1/duplicates/summary', '/v1/duplicates?kind=exact&limit=200', '/v1/duplicates?kind=text&limit=200']) {
+      const times = []
+      let result
+      for (let round = 0; round < 10; round++) {
+        const began = performance.now()
+        result = await call('GET', route)
+        times.push(performance.now() - began)
+      }
+      const detail = result.groups ? `${result.groups.length} groups` : `${result.exact.groups} identical groups, ${result.text.groups} same-text groups`
+      console.log(`  ${route.padEnd(38)} ${detail}; p50 ${percentile(times, 0.5).toFixed(0)} ms, max ${Math.max(...times).toFixed(0)} ms`)
+    }
   }
   const indexSize = fs.statSync(path.join(dataDir, 'index.sqlite')).size
   console.log(`Index size on disk: ${mb(indexSize)}`)

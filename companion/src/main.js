@@ -3,6 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { createAccess } from './access.js'
 import { Extractor } from './extractor.js'
+import { Hasher } from './hasher.js'
 import { OcrRunner } from './ocr.js'
 import { openStore } from './store.js'
 import { Indexer } from './indexer.js'
@@ -51,6 +52,7 @@ export async function startCompanion({
   launcher,
   extraction = {},
   recognition = {},
+  hashing = {},
   reconcileMs,
   log = console.log,
 } = {}) {
@@ -73,11 +75,15 @@ export async function startCompanion({
   indexer.on('scanned', ({ rootId }) => extractor.queueRoot(rootId))
   // Scanned pages are recognised after text reading, in libraries whose owner agreed.
   const ocr = new OcrRunner(store, access, extractor, recognition)
+  // Files with the same size as another are compared, to list duplicate books.
+  const hasher = new Hasher(store, access, extractor, hashing)
+  indexer.on('scanned', () => hasher.schedule())
   const { server, newPairingCode } = createCompanionServer({
     store,
     indexer,
     extractor,
     ocr,
+    hasher,
     access,
     config,
     saveConfig,
@@ -94,6 +100,7 @@ export async function startCompanion({
   indexer.start()
   extractor.start()
   ocr.start()
+  hasher.start()
 
   return {
     port: server.address().port,
@@ -101,6 +108,7 @@ export async function startCompanion({
     indexer,
     extractor,
     ocr,
+    hasher,
     access,
     config,
     newPairingCode,
@@ -109,6 +117,7 @@ export async function startCompanion({
       server.closeAllConnections?.()
       await indexer.close()
       await ocr.close()
+      await hasher.close()
       await extractor.close()
       store.close()
     },

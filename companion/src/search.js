@@ -44,6 +44,8 @@ export function parseSearch(params) {
     sort: ['relevance', 'name', 'modified', 'size'].includes(params.get('sort')) ? params.get('sort') : 'relevance',
     limit: Math.min(Math.max(number('limit') ?? 50, 1), MAX_LIMIT),
     offset: Math.max(number('offset') ?? 0, 0),
+    // 'all' lists identical copies separately; by default they are shown once.
+    copies: params.get('copies') === 'all' ? 'all' : 'once',
   }
 }
 

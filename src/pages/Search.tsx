@@ -14,6 +14,7 @@ import { searchDocumentContent, snippetParts, type ContentMatch } from '../servi
 import {
   companion,
   CompanionError,
+  type FileCopy,
   type LocalHit,
   type LocalKind,
   type LocalSearchParams,
@@ -331,6 +332,7 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
               libraryName={libraryNames.get(entry.rootId) ?? null}
               onOpen={() => void act(entry, 'open')}
               onReveal={() => void act(entry, 'reveal')}
+              onRevealCopy={(copy) => void act({ ...entry, id: copy.entryId, name: copy.name }, 'reveal')}
               onPreview={(page) => setPreview({ entry, page })}
               onSearchInside={() => {
                 setFilters((previous) => ({ ...previous, within: entry.path, library: '' }))
@@ -556,12 +558,13 @@ interface LocalResultRowProps {
   libraryName: string | null
   onOpen: () => void
   onReveal: () => void
+  onRevealCopy: (copy: FileCopy) => void
   onPreview: (page: number | null) => void
   onSearchInside: () => void
   onCopyPath: () => void
 }
 
-function LocalResultRow({ entry, libraryName, onOpen, onReveal, onPreview, onSearchInside, onCopyPath }: LocalResultRowProps) {
+function LocalResultRow({ entry, libraryName, onOpen, onReveal, onRevealCopy, onPreview, onSearchInside, onCopyPath }: LocalResultRowProps) {
   const unavailable = entry.availability !== 'available'
   const iconKind: DocumentKind = iconKinds.has(entry.kind as DocumentKind) ? (entry.kind as DocumentKind) : 'other'
   const excerpt = entry.excerpt ?? null
@@ -621,6 +624,26 @@ function LocalResultRow({ entry, libraryName, onOpen, onReveal, onPreview, onSea
             Referenced in {entry.referencedBy.example}
             {entry.referencedBy.count > 1 ? ` and ${entry.referencedBy.count - 1} more ${entry.referencedBy.count === 2 ? 'page' : 'pages'}` : ''}
           </span>
+        ) : null}
+        {entry.copies && entry.copies.length > 0 ? (
+          <details className="result-row__copies">
+            <summary>
+              Identical copy also in {entry.copies.length === 1 ? '1 other place' : `${entry.copies.length} other places`}
+            </summary>
+            <ul>
+              {entry.copies.map((copy) => (
+                <li key={copy.entryId}>
+                  <span className="break-anywhere">
+                    {copy.libraryName} · {copy.folder}
+                    {copy.name !== entry.name ? ` · ${copy.name}` : ''}
+                  </span>
+                  <button type="button" className="text-button" onClick={() => onRevealCopy(copy)}>
+                    Show in folder
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
         ) : null}
       </div>
       <div className="result-row__actions">

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { BookOpen, FolderPlus, Library, Pause, Play, RefreshCw, Search, ShieldCheck, Unplug } from 'lucide-react'
+import { BookOpen, Copy, FolderPlus, Library, Pause, Play, RefreshCw, Search, ShieldCheck, Unplug } from 'lucide-react'
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
 import { AddLibraryDialog } from '../components/library/AddLibraryDialog'
 import { OcrOffer } from '../components/library/OcrOffer'
@@ -9,6 +9,21 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
 import { companion, desktopBridge, type CompanionStatus, type LocalRoot } from '../services/desktopCompanion'
+
+/** How many books have identical copies, for the Duplicates button; null until known. */
+function useDuplicateCount(enabled: boolean) {
+  const [count, setCount] = useState<number | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    const controller = new AbortController()
+    companion.duplicateSummary(controller.signal).then(
+      (summary) => setCount(summary.exact.groups),
+      () => setCount(null),
+    )
+    return () => controller.abort()
+  }, [enabled])
+  return enabled ? count : null
+}
 
 // My Libraries: the folders on this computer that Document Vault may search.
 export function Libraries() {
@@ -36,6 +51,7 @@ export function Libraries() {
 
   const ready = connection === 'ready' && status
   const roots = status?.roots ?? []
+  const duplicates = useDuplicateCount(connection === 'ready' && roots.length > 0)
 
   return (
     <section className="page desktop-page libraries-page">
@@ -49,6 +65,12 @@ export function Libraries() {
                 <Search aria-hidden="true" />
                 <span>Search libraries</span>
               </Link>
+              {roots.length > 0 ? (
+                <Link to="/libraries/duplicates" className="secondary-button">
+                  <Copy aria-hidden="true" />
+                  <span>Duplicates{duplicates ? ` (${numberFormat.format(duplicates)})` : ''}</span>
+                </Link>
+              ) : null}
               <button type="button" className="primary-button" onClick={() => setAdding(true)}>
                 <FolderPlus aria-hidden="true" />
                 <span>Add library</span>

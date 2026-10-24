@@ -171,6 +171,37 @@ export interface LocalHit extends LocalEntry {
   matchingSections?: number
   meta?: DocumentMeta | null
   referencedBy?: { count: number; example: string } | null
+  /** Identical copies of this file (same bytes) elsewhere in the libraries, shown once. Present from companion 1.2. */
+  copies?: FileCopy[]
+}
+
+export interface FileCopy {
+  entryId: number
+  name: string
+  folder: string
+  libraryId: number
+  libraryName: string
+}
+
+/** 'exact': identical files. 'text': the same words in files whose bytes differ. */
+export type DuplicateKind = 'exact' | 'text'
+
+export interface DuplicateSet {
+  kind: DuplicateKind
+  /** Identifies the group (a content hash); used to dismiss it. */
+  key: string
+  copies: Array<FileCopy & { size: number; mtime: number }>
+  /** Space taken by every copy but the largest. */
+  extraBytes: number
+  sameName: boolean
+  dismissedAt: number | null
+}
+
+export interface DuplicateSummary {
+  exact: { groups: number; extraCopies: number; extraBytes: number }
+  text: { groups: number; extraCopies: number; extraBytes: number }
+  /** Files still being compared (those with the same size as another file). */
+  checking: { state: 'idle' | 'checking' | 'paused'; pending: number }
 }
 
 export interface DocumentText {
@@ -477,6 +508,16 @@ export const companion = {
     call<{ section: HealthSection; items: T[] }>('GET', `/v1/roots/${id}/health?section=${section}&limit=200`, { signal }),
   libraryLinks: (id: number, status: LinkStatus, signal?: AbortSignal) =>
     call<{ status: LinkStatus; items: LibraryLink[] }>('GET', `/v1/roots/${id}/references?status=${status}&limit=200`, { signal }),
+  duplicates(params: { kind: DuplicateKind; library?: number | null; dismissed?: boolean }, signal?: AbortSignal) {
+    const query = new URLSearchParams({ kind: params.kind, limit: '200' })
+    if (params.library) query.set('library', String(params.library))
+    if (params.dismissed) query.set('dismissed', '1')
+    return call<{ kind: DuplicateKind; groups: DuplicateSet[] }>('GET', `/v1/duplicates?${query}`, { signal })
+  },
+  duplicateSummary: (signal?: AbortSignal) => call<DuplicateSummary>('GET', '/v1/duplicates/summary', { signal }),
+  /** Marks a group as "not duplicates" (or shows it again). Only the index is changed, never a file. */
+  dismissDuplicate: (kind: DuplicateKind, key: string, dismissed = true) =>
+    call<{ ok: true }>('POST', '/v1/duplicates/dismiss', { body: { kind, key, dismissed } }),
   rescan: (rootId?: number) => call<{ queued: number[] }>('POST', '/v1/index/rescan', { body: rootId ? { rootId } : {} }),
   pause: () => call<IndexStatus>('POST', '/v1/index/pause', { body: {} }),
   resume: () => call<IndexStatus>('POST', '/v1/index/resume', { body: {} }),

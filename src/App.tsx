@@ -16,6 +16,7 @@ import { AllFiles } from './pages/AllFiles'
 import { AllFolders } from './pages/AllFolders'
 import { Libraries } from './pages/Libraries'
 import { LibraryAccess } from './pages/LibraryAccess'
+import { Duplicates } from './pages/Duplicates'
 import { LibraryDetail } from './pages/LibraryDetail'
 import { SearchPage } from './pages/Search'
 import { FolderTreePicker } from './components/documents/FolderTreePicker'
@@ -668,6 +669,7 @@ function AuthenticatedVaultInner() {
           <Route path="favorites" element={<VaultPage {...libraryProps} variant="favorites" />} />
           <Route path="categories" element={<Categories {...libraryProps} />} />
           <Route path="libraries" element={<Libraries />} />
+          <Route path="libraries/duplicates" element={<Duplicates />} />
           <Route path="libraries/:libraryId" element={<LibraryDetail />} />
           <Route path="access" element={<LibraryAccess />} />
           <Route

@@ -153,6 +153,35 @@ const MIGRATIONS = [
   alter table doc_pages add column source text not null default 'text';
   alter table doc_pages add column confidence integer;
   `,
+
+  // 4: duplicate books. file_hashes holds the content hash of each file whose
+  // bytes were read: by the text reader, or by the hasher when another file
+  // has the same size. A row is current while its size and mtime match the entry.
+  `
+  create table file_hashes (
+    entry_id integer primary key references entries(id) on delete cascade,
+    root_id integer not null references roots(id) on delete cascade,
+    size integer not null,
+    mtime integer not null,
+    sha256 text not null,
+    at integer not null
+  );
+  create index file_hashes_hash on file_hashes (sha256);
+  insert into file_hashes (entry_id, root_id, size, mtime, sha256, at)
+    select entry_id, root_id, size, mtime, sha256, coalesce(extracted_at, 0) from docs
+    where sha256 is not null and size is not null and mtime is not null;
+  -- Fingerprint of a document's own text; '' when it has too little text to compare.
+  alter table docs add column text_hash text;
+  create index docs_text_hash on docs (text_hash);
+  -- Groups the owner marked "not duplicates", with the copies they had then.
+  create table dup_dismissed (
+    kind text not null,
+    key text not null,
+    members text not null,
+    at integer not null,
+    primary key (kind, key)
+  );
+  `,
 ]
 
 export const SCHEMA_VERSION = 1 + MIGRATIONS.length
