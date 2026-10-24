@@ -240,8 +240,11 @@ export function AppLayout({
     </>
   )
 
+  // The web browser takes the whole window: no top bar on wide screens, no page scroll.
+  const fillsWindow = location.pathname === '/browser'
+
   return (
-    <div className="shell">
+    <div className={fillsWindow ? 'shell shell--fill' : 'shell'}>
       <aside className={drawerOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Sidebar">
         {sidebar}
       </aside>

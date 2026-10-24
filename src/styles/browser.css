@@ -2,17 +2,46 @@
 /* The web page itself is a native view drawn by the desktop app over
    .web-browser__viewport; everything here is the frame around it. */
 
+/* The browser page fills the window below any banner, with no page scroll. */
+.shell--fill {
+  height: 100dvh;
+  min-height: 0;
+}
+
+.shell--fill .shell__main {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .page:has(> .web-browser-page) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   max-width: none;
-  padding: 12px 16px;
+  padding: 8px;
 }
 
 .page.web-browser-page {
   display: flex;
-  height: calc(100vh - var(--topbar-height) - 24px);
-  min-height: 420px;
+  flex: 1;
+  min-height: 0;
   padding: 0;
   max-width: none;
+}
+
+/* The sidebar is always visible on wide screens, so the top bar is not needed here. */
+@media (min-width: 1024px) {
+  .shell--fill .topbar {
+    display: none;
+  }
+}
+
+/* Leave room for the bottom tab bar on phones. */
+@media (max-width: 639px) {
+  .page:has(> .web-browser-page) {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
 }
 
 .web-browser {
