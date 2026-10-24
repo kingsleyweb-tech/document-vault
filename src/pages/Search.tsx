@@ -24,6 +24,7 @@ import {
   type LocalSearchResult,
   type SearchMode,
 } from '../services/desktopCompanion'
+import { searchPlace, setSearchPlace } from '../services/placeMemory'
 import type { DocumentKind, VaultDocument } from '../types/document'
 import { formatFileSize } from '../utils/formatters'
 import { matchesSearch } from '../utils/sorting'
@@ -147,10 +148,14 @@ interface PreviewTarget {
 export function SearchPage({ documents, allDocuments, search, onOpenDocument }: SearchPageProps) {
   const { connection, status, refresh } = useCompanion()
   const [params] = useSearchParams()
-  const [source, setSource] = useState<Source>('local')
-  const [query, setQuery] = useState(() => params.get('q') ?? search)
-  const [debouncedQuery, setDebouncedQuery] = useState(() => (params.get('q') ?? search).trim())
-  const [filters, setFilters] = useState<Filters>(() => ({ ...defaultFilters, library: params.get('library') ?? '' }))
+  // Coming back to Search shows the last search, unless a link asks for another.
+  const [remembered] = useState(searchPlace)
+  const [source, setSource] = useState<Source>(() => (remembered?.source as Source | undefined) ?? 'local')
+  const [query, setQuery] = useState(() => params.get('q') ?? (search || remembered?.query || ''))
+  const [debouncedQuery, setDebouncedQuery] = useState(() => query.trim())
+  const [filters, setFilters] = useState<Filters>(() =>
+    params.has('library') || !remembered ? { ...defaultFilters, library: params.get('library') ?? '' } : { ...defaultFilters, ...(remembered.filters as Partial<Filters>) },
+  )
   const [results, setResults] = useState<LocalResults | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [preview, setPreview] = useState<PreviewTarget | null>(null)
@@ -158,7 +163,12 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
   const [contentResults, setContentResults] = useState<ContentResults | null>(null)
   const [loadingMoreContent, setLoadingMoreContent] = useState(false)
   const moreController = useRef<AbortController | null>(null)
-  const showLocal = useLocalOpener(useCallback((entry: LocalEntry) => setPreview({ entry, page: null }), []))
+  const showLocal = useLocalOpener(
+    useCallback((entry: LocalEntry) => setPreview({ entry, page: null }), []),
+    { to: '/search', label: 'your search' },
+  )
+
+  useEffect(() => setSearchPlace({ query, source, filters: { ...filters } }), [query, source, filters])
 
   const wantsLocal = source !== 'uploaded'
   const ready = connection === 'ready'

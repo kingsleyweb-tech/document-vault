@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CompanionStatus, LocalHit, LocalRoot, LocalSearchParams } from '../services/desktopCompanion'
+import { forgetPlaces } from '../services/placeMemory'
 import type { VaultDocument } from '../types/document'
 
 const companionState: { connection: string; status: CompanionStatus | null } = { connection: 'offline', status: null }
@@ -109,6 +110,7 @@ afterEach(() => {
   reveal.mockReset()
   companionState.connection = 'offline'
   companionState.status = null
+  forgetPlaces()
 })
 
 async function render(documents: VaultDocument[], search: string, url = '/search') {
@@ -285,6 +287,23 @@ describe('Search: local libraries', () => {
     expect(params).toMatchObject({ q: 'negligence', mode: 'all', roots: [1] })
     const options = [...view.querySelectorAll<HTMLOptionElement>('select[aria-label="Library"] option')].map((option) => option.textContent)
     expect(options).toEqual(['All libraries', 'Law'])
+  })
+
+  it('shows the last search again on coming back, unless a link asks for another library', async () => {
+    connect([library(1, 'Law'), library(2, 'Cases')])
+    localSearch.mockResolvedValue({ items: [], total: 0, totalCapped: false, fuzzy: false, tookMs: 1 })
+    const first = await render([], 'estoppel')
+    const fullText = [...first.querySelectorAll<HTMLButtonElement>('[aria-label="What to search"] button')].find((button) => button.textContent === 'Full text')!
+    await act(async () => fullText.click())
+    first.remove()
+
+    const back = await render([], '')
+    expect(back.querySelector<HTMLInputElement>('input[type="search"]')!.value).toBe('estoppel')
+    expect(localSearch.mock.calls.at(-1)![0]).toMatchObject({ q: 'estoppel', mode: 'fulltext' })
+    back.remove()
+
+    await render([], '', '/search?library=2')
+    expect(localSearch.mock.calls.at(-1)![0]).toMatchObject({ q: 'estoppel', mode: 'all', roots: [2] })
   })
 
   it('switches to full-text search and explains scanned PDFs when nothing matches', async () => {

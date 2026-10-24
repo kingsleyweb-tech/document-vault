@@ -33,6 +33,7 @@ import dvLogo from '../../assets/dv.png'
 import type { ThemeMode } from '../../types/document'
 import type { VaultUser } from '../../types/user'
 import { getDriveStorageQuota, type DriveStorageQuota } from '../../services/googleDrive'
+import { librariesLink } from '../../services/placeMemory'
 import { hasWebBrowser } from '../../services/webBrowser'
 import { formatFileSize } from '../../utils/formatters'
 import { Dialog } from '../ui/Dialog'
@@ -421,8 +422,14 @@ export function AppLayout({
 
 function SidebarLink({ item, count }: { item: NavItem; count?: number }) {
   const Icon = item.icon
+  const location = useLocation()
+  // My Libraries leads back to the library last looked at; chosen again from
+  // that library, it leads to the list.
+  const remembered = item.to === '/libraries' ? librariesLink() : item.to
+  const to = remembered === location.pathname ? item.to : remembered
+  const inSection = item.to === '/libraries' && location.pathname.startsWith('/libraries')
   return (
-    <NavLink to={item.to} end={item.to === '/'} className="sidebar__link">
+    <NavLink to={to} end={item.to === '/'} className={({ isActive }) => `sidebar__link${isActive || inSection ? ' active' : ''}`}>
       <Icon aria-hidden="true" />
       <span>{item.label}</span>
       {count ? <span className="sidebar__count">{count > 99 ? '99+' : count}</span> : null}

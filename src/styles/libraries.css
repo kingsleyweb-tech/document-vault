@@ -363,6 +363,12 @@ input[type='radio'] {
   background: var(--accent-softer);
 }
 
+/* The file opened last, so coming back shows where you were. */
+.folder-tree__row.is-last-opened {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .folder-tree__row .kind-icon,
 .folder-tree__row .document-icon {
   flex: none;

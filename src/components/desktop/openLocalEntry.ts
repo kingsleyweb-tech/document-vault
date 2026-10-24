@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { companion, CompanionError, type LocalEntry } from '../../services/desktopCompanion'
+import type { BackTo } from '../../services/placeMemory'
 import { hasWebBrowser, webBrowser, type WebTabSource } from '../../services/webBrowser'
 
 interface OpenHandlers {
@@ -42,18 +43,22 @@ export async function openLocalEntry(entry: LocalEntry, { preview, openWebPage }
   else await companion.reveal(entry.id)
 }
 
-/** openLocalEntry with websites opening on the Web browser page. */
-export function useLocalOpener(preview: (entry: LocalEntry) => void) {
+/**
+ * openLocalEntry with websites opening on the Web browser page, which offers
+ * a way back to `back` (the page the file was opened from).
+ */
+export function useLocalOpener(preview: (entry: LocalEntry) => void, back: BackTo) {
   const navigate = useNavigate()
+  const { to, label } = back
   return useCallback(
     (entry: LocalEntry) =>
       openLocalEntry(entry, {
         preview,
         openWebPage: async (url, source) => {
           await webBrowser.open(url, { newTab: true, source })
-          navigate('/browser')
+          navigate('/browser', { state: { back: { to, label } satisfies BackTo } })
         },
       }),
-    [preview, navigate],
+    [preview, navigate, to, label],
   )
 }

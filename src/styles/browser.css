@@ -25,9 +25,18 @@
 .page.web-browser-page {
   display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 6px;
   min-height: 0;
   padding: 0;
   max-width: none;
+}
+
+/* Back to the library or search the page was opened from. */
+.web-browser-page__back {
+  align-self: flex-start;
+  flex: none;
+  max-width: 100%;
 }
 
 /* The sidebar is always visible on wide screens, so the top bar is not needed here. */

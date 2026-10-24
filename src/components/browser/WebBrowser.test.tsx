@@ -139,6 +139,7 @@ describe('WebBrowser', () => {
     await act(async () =>
       bridge.push({ tabs: [tab({ error: { code: -106, url: 'https://ghalii.org/', title: 'You are offline', detail: 'Check your internet connection, then try again.' } })], activeId: 1, maxTabs: 8 }),
     )
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)))
     expect(container.querySelector('.web-browser__error h2')?.textContent).toBe('You are offline')
     expect(container.textContent).toContain('Try again')
     expect(bridge.hosts().at(-1)?.bounds).toBeNull()

@@ -12,6 +12,7 @@ vi.mock('../../services/desktopCompanion', async (importOriginal) => {
 })
 
 const { FolderTree } = await import('./FolderTree')
+const { forgetPlaces } = await import('../../services/placeMemory')
 const { IndexingActivity } = await import('./IndexingActivity')
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -34,6 +35,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.clearAllMocks()
+  forgetPlaces()
 })
 
 describe('FolderTree', () => {
@@ -55,6 +57,42 @@ describe('FolderTree', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
     expect(tree).toHaveBeenLastCalledWith(1, null, expect.objectContaining({ sort: 'size', offset: 0 }))
+  })
+
+  it('shows the same place on coming back: order, open folders and the file opened last', async () => {
+    const cases = { id: 5, rootId: 1, name: 'Cases', path: 'C:\\Books\\Cases', files: 2 }
+    tree.mockImplementation(async (_id: number, parent: number | null): Promise<TreeLevel> =>
+      parent === null
+        ? { parent: null, folders: [cases] as TreeLevel['folders'], files: [], moreFolders: false, moreFiles: false }
+        : { parent, folders: [], files: [file(1, 'a.pdf'), file(2, 'b.pdf')], moreFolders: false, moreFiles: false },
+    )
+    const scrolled = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrolled
+    const onFile = vi.fn()
+    await render(<FolderTree libraryId={1} version="v1" onFile={onFile} onExclude={vi.fn()} />)
+    const select = container.querySelector('select') as HTMLSelectElement
+    await act(async () => {
+      select.value = 'type'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => (container.querySelector('button[aria-label="Open Cases"]') as HTMLButtonElement).click())
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)))
+    const b = [...container.querySelectorAll<HTMLButtonElement>('.folder-tree__file .folder-tree__name')].find((item) => item.textContent === 'b.pdf')!
+    await act(async () => b.click())
+    expect(onFile).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
+    expect(scrolled).not.toHaveBeenCalled()
+
+    // Leave the page (for the web browser, say) and come back.
+    act(() => root.unmount())
+    container.remove()
+    await render(<FolderTree libraryId={1} version="v1" onFile={onFile} onExclude={vi.fn()} />)
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect((container.querySelector('select') as HTMLSelectElement).value).toBe('type')
+    expect(container.querySelector('button[aria-label="Close Cases"]')).not.toBeNull()
+    const last = container.querySelector('.folder-tree__file.is-last-opened')
+    expect(last?.textContent).toContain('b.pdf')
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    expect(scrolled.mock.contexts[0]).toBe(last)
   })
 })
 

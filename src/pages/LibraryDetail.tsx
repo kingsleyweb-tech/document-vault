@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, EyeOff, Search, X } from 'lucide-react'
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
@@ -15,6 +15,7 @@ import { Dialog } from '../components/ui/Dialog'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
 import { companion, type LocalEntry, type TreeFolder } from '../services/desktopCompanion'
+import { forgetLibraryPlace, libraryPlace, setLibrariesLink, updateLibraryPlace } from '../services/placeMemory'
 
 type Tab = 'folders' | 'references' | 'health' | 'settings'
 
@@ -30,12 +31,23 @@ export function LibraryDetail() {
   const id = Number(libraryId)
   const navigate = useNavigate()
   const { connection, status, refresh } = useCompanion()
-  const [tab, setTab] = useState<Tab>('folders')
+  const [tab, setTabState] = useState<Tab>(() => libraryPlace(id).tab as Tab)
+  const setTab = (value: Tab) => {
+    setTabState(value)
+    updateLibraryPlace(id, { tab: value })
+  }
   const [preview, setPreview] = useState<LocalEntry | null>(null)
   const [excluding, setExcluding] = useState<TreeFolder | null>(null)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
 
   const root = status?.roots.find((item) => item.id === id) ?? null
+  const missing = Boolean(status) && !root
+
+  // "My Libraries" in the sidebar leads back here until the list is chosen again.
+  useEffect(() => {
+    if (missing) forgetLibraryPlace(id)
+    else setLibrariesLink(`/libraries/${id}`)
+  }, [id, missing])
   // Lists reload when the index changes (a scan finishes, settings change).
   const version = root
     ? [root.files, root.folders, root.state, root.status, root.lastScanAt, root.exclusions.length, root.extraction.completed ?? 0, root.ocr?.recognisedPages ?? 0, root.ocr?.pref ?? '', JSON.stringify(root.settings)].join(':')
@@ -48,7 +60,7 @@ export function LibraryDetail() {
   const fail = (error: unknown) => setMessage({ tone: 'error', text: errorText(error) })
 
   // Files, and what shortcuts point to, are shown inside the app when they can be.
-  const show = useLocalOpener(setPreview)
+  const show = useLocalOpener(setPreview, { to: `/libraries/${id}`, label: root?.name ?? 'the library' })
 
   const openEntry = async (entryId: number) => {
     setMessage(null)
@@ -175,6 +187,7 @@ export function LibraryDetail() {
             root={root}
             onChanged={say}
             onRemoved={(text) => {
+              forgetLibraryPlace(root.id)
               void refresh()
               navigate('/libraries', { state: { message: text } })
             }}

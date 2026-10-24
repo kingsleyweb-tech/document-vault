@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { ChevronDown, ChevronRight, EyeOff, Folder } from 'lucide-react'
 import { DocumentIcon } from '../documents/DocumentIcon'
 import { companion, type LocalEntry, type TreeFolder, type TreeSort } from '../../services/desktopCompanion'
+import { libraryPlace, setFolderOpen, updateLibraryPlace } from '../../services/placeMemory'
 import type { DocumentKind } from '../../types/document'
 import { formatFileSize } from '../../utils/formatters'
 import { dateFormat, errorText, kindLabels, numberFormat } from './libraryText'
@@ -27,14 +28,32 @@ interface FolderTreeProps {
 // The library's folders, read from the index one level at a time as they are
 // opened and a page at a time within a level, so even a library with
 // thousands of folders, or a folder with thousands of files, lists quickly.
+// The order, the open folders and the file opened last are remembered, so
+// coming back to the library shows the same place.
 export function FolderTree({ libraryId, version, onFile, onExclude }: FolderTreeProps) {
-  const [sort, setSort] = useState<TreeSort>('name')
+  const [sort, setSort] = useState<TreeSort>(() => libraryPlace(libraryId).sort)
+  const [lastFile, setLastFile] = useState(() => libraryPlace(libraryId).lastFile)
+  // Scrolled to once, when the tree is shown again.
+  const revealRef = useRef(lastFile)
+  const openFile = (entry: LocalEntry) => {
+    setLastFile(entry.id)
+    updateLibraryPlace(libraryId, { lastFile: entry.id })
+    onFile(entry)
+  }
+  const shared = { libraryId, version, sort, onFile: openFile, onExclude, lastFile, revealRef }
   return (
     <div className="folder-tree-view">
       <div className="folder-tree__toolbar">
         <label>
           <span>Sort by</span>
-          <select value={sort} onChange={(event) => setSort(event.target.value as TreeSort)}>
+          <select
+            value={sort}
+            onChange={(event) => {
+              const value = event.target.value as TreeSort
+              setSort(value)
+              updateLibraryPlace(libraryId, { sort: value })
+            }}
+          >
             {sorts.map((item) => (
               <option key={item.value} value={item.value}>
                 {item.label}
@@ -44,7 +63,7 @@ export function FolderTree({ libraryId, version, onFile, onExclude }: FolderTree
         </label>
       </div>
       <div className="folder-tree" role="tree" aria-label="Folders in this library">
-        <FolderLevel libraryId={libraryId} parent={null} version={version} sort={sort} depth={0} onFile={onFile} onExclude={onExclude} />
+        <FolderLevel {...shared} parent={null} depth={0} />
       </div>
     </div>
   )
@@ -54,6 +73,8 @@ interface LevelProps extends FolderTreeProps {
   parent: number | null
   sort: TreeSort
   depth: number
+  lastFile: number | null
+  revealRef: MutableRefObject<number | null>
 }
 
 interface LevelState {
@@ -63,7 +84,8 @@ interface LevelState {
   error: string | null
 }
 
-function FolderLevel({ libraryId, parent, version, sort, depth, onFile, onExclude }: LevelProps) {
+function FolderLevel(props: LevelProps) {
+  const { libraryId, parent, version, sort, depth } = props
   const [level, setLevel] = useState<LevelState | null>(null)
   // Pages shown, per order. When the index changes the same pages are read again, so the list does not shrink.
   const [shown, setShown] = useState({ sort, pages: 1 })
@@ -118,19 +140,10 @@ function FolderLevel({ libraryId, parent, version, sort, depth, onFile, onExclud
   return (
     <ul role="group" className="folder-tree__level">
       {level.folders.map((folder) => (
-        <FolderNode key={folder.id} folder={folder} libraryId={libraryId} version={version} sort={sort} depth={depth} onFile={onFile} onExclude={onExclude} />
+        <FolderNode key={folder.id} {...props} folder={folder} />
       ))}
       {level.files.map((file) => (
-        <li key={file.id} role="treeitem" className="folder-tree__row folder-tree__file" style={{ paddingInlineStart: depth * 20 + 34 }}>
-          <DocumentIcon kind={iconKinds.has(file.kind as DocumentKind) ? (file.kind as DocumentKind) : 'other'} />
-          <button type="button" className="folder-tree__name" onClick={() => onFile(file)} title={file.name}>
-            {file.name}
-          </button>
-          <span className="folder-tree__meta">
-            {kindLabels[file.kind]} · {formatFileSize(file.size)}
-            {sort === 'modified' && file.modifiedAt ? ` · ${dateFormat.format(file.modifiedAt)}` : ''}
-          </span>
-        </li>
+        <FileRow key={file.id} {...props} file={file} />
       ))}
       {level.more ? (
         <li className="folder-tree__more" style={{ paddingInlineStart: depth * 20 + 34 }}>
@@ -155,12 +168,45 @@ function FolderLevel({ libraryId, parent, version, sort, depth, onFile, onExclud
   )
 }
 
+function FileRow({ file, depth, sort, onFile, lastFile, revealRef }: LevelProps & { file: LocalEntry }) {
+  const row = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (revealRef.current !== file.id) return
+    revealRef.current = null
+    row.current?.scrollIntoView?.({ block: 'center' })
+  }, [revealRef, file.id])
+  return (
+    <li
+      ref={row}
+      role="treeitem"
+      aria-current={file.id === lastFile ? 'true' : undefined}
+      className={`folder-tree__row folder-tree__file${file.id === lastFile ? ' is-last-opened' : ''}`}
+      style={{ paddingInlineStart: depth * 20 + 34 }}
+    >
+      <DocumentIcon kind={iconKinds.has(file.kind as DocumentKind) ? (file.kind as DocumentKind) : 'other'} />
+      <button type="button" className="folder-tree__name" onClick={() => onFile(file)} title={file.name}>
+        {file.name}
+      </button>
+      <span className="folder-tree__meta">
+        {kindLabels[file.kind]} · {formatFileSize(file.size)}
+        {sort === 'modified' && file.modifiedAt ? ` · ${dateFormat.format(file.modifiedAt)}` : ''}
+      </span>
+    </li>
+  )
+}
+
 interface NodeProps extends Omit<LevelProps, 'parent'> {
   folder: TreeFolder
 }
 
-function FolderNode({ folder, libraryId, version, sort, depth, onFile, onExclude }: NodeProps) {
-  const [open, setOpen] = useState(false)
+function FolderNode(props: NodeProps) {
+  const { folder, libraryId, depth, onExclude } = props
+  const [open, setOpenState] = useState(() => libraryPlace(libraryId).open.includes(folder.id))
+  const setOpen = (change: (value: boolean) => boolean) => {
+    const next = change(open)
+    setOpenState(next)
+    setFolderOpen(libraryId, folder.id, next)
+  }
   return (
     <li role="treeitem" aria-expanded={open}>
       <div className="folder-tree__row" style={{ paddingInlineStart: depth * 20 + 8 }}>
@@ -176,7 +222,7 @@ function FolderNode({ folder, libraryId, version, sort, depth, onFile, onExclude
           <EyeOff aria-hidden="true" />
         </button>
       </div>
-      {open ? <FolderLevel libraryId={libraryId} parent={folder.id} version={version} sort={sort} depth={depth + 1} onFile={onFile} onExclude={onExclude} /> : null}
+      {open ? <FolderLevel {...props} parent={folder.id} depth={depth + 1} /> : null}
     </li>
   )
 }

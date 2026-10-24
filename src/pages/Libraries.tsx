@@ -9,6 +9,7 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
 import { companion, desktopBridge, type CompanionStatus, type LocalRoot } from '../services/desktopCompanion'
+import { setLibrariesLink } from '../services/placeMemory'
 import { formatFileSize } from '../utils/formatters'
 
 /** How many books have identical copies, for the Duplicates button; null until known. */
@@ -37,6 +38,9 @@ export function Libraries() {
     return text ? { tone: 'info', text } : null
   })
   const navigate = useNavigate()
+
+  // Choosing the list makes "My Libraries" in the sidebar lead here again.
+  useEffect(() => setLibrariesLink('/libraries'), [])
 
   const run = async (task: () => Promise<string | void>) => {
     setMessage(null)
