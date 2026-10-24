@@ -85,11 +85,11 @@ export const kindLabels: Record<LocalKind, string> = {
 /** The file types a library can be limited to, with those whose text is read first. */
 export const libraryFileTypes: Array<{ kind: LocalKind; label: string; text: boolean }> = [
   { kind: 'pdf', label: 'PDF', text: true },
-  { kind: 'word', label: 'Word documents (text read from .docx)', text: true },
+  { kind: 'word', label: 'Word documents (text read from .docx, .doc and .odt)', text: true },
   { kind: 'ebook', label: 'eBooks (text read from .epub)', text: true },
   { kind: 'html', label: 'Web pages (.htm, .html)', text: true },
   { kind: 'text', label: 'Text and RTF', text: true },
-  { kind: 'presentation', label: 'Presentations (text read from .pptx)', text: true },
+  { kind: 'presentation', label: 'Presentations (text read from .pptx and .odp)', text: true },
   { kind: 'spreadsheet', label: 'Spreadsheets (names only)', text: false },
   { kind: 'image', label: 'Images (text recognised from .jpg and .png scans when OCR is on)', text: false },
   { kind: 'shortcut', label: 'Shortcuts', text: false },

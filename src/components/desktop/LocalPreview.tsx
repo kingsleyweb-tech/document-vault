@@ -8,6 +8,9 @@ import { Highlighted } from '../library/Highlighted'
 import { OCR_NOTE, whereLabel } from '../library/libraryText'
 import { decodeHtml, renderDocx, renderSpreadsheet, sanitizeHtml, type SpreadsheetSheet } from '../../services/documentViewer'
 import { PdfVirtualizedViewer } from '../viewer/PdfViewer'
+import type { PdfSource } from '../../services/pdfPages'
+import type { TiffDocument } from '../../services/fileFormats'
+import { TiffPages } from './TiffPages'
 import { linkFileName, safeDecode, wireHtmlLinks } from '../../utils/htmlLinks'
 import { openLocalEntry } from './openLocalEntry'
 
@@ -16,24 +19,41 @@ const PresentationViewer = lazy(() =>
 )
 const EpubViewer = lazy(() => import('../viewer/EpubViewer').then((module) => ({ default: module.EpubViewer })))
 const WebBrowser = lazy(() => import('../browser/WebBrowser').then((module) => ({ default: module.WebBrowser })))
+// Converters for less common types, loaded only when one is opened.
+const fileFormats = () => import('../../services/fileFormats')
 
 // Text previews show the start of very large files only.
 const TEXT_PREVIEW_BYTES = 1024 * 1024
+// Longer PDFs are read a piece at a time instead of all at once (the companion's whole-file limit).
+const WHOLE_FILE_BYTES = 60 * 1024 * 1024
 
 type Loaded =
-  | { kind: 'pdf' | 'presentation' | 'epub'; blob: Blob }
+  | { kind: 'pdf'; source: PdfSource }
+  | { kind: 'presentation' | 'epub'; blob: Blob }
   | { kind: 'image' | 'audio' | 'video'; url: string }
+  | { kind: 'tiff'; tiff: TiffDocument }
   | { kind: 'text'; text: string; truncated: boolean }
   | { kind: 'word' | 'html'; html: string }
   | { kind: 'spreadsheet'; sheets: SpreadsheetSheet[] }
 
+const WORD = new Set(['docx', 'docm', 'dotx', 'dotm'])
+const SHOWN_AS_TEXT = new Set(['doc', 'dot', 'rtf'])
+const OPEN_DOCUMENT = new Set(['odt', 'odp'])
+const SPREADSHEETS = new Set(['xlsx', 'xlsm', 'xlsb', 'xls', 'ods'])
+const SLIDES = new Set(['pptx', 'pptm', 'ppsx', 'ppsm', 'potx'])
+
 function previewKind(entry: LocalEntry) {
   const extension = entry.extension
   if (extension === 'pdf') return 'pdf'
-  if (extension === 'docx') return 'word'
-  if (extension === 'xlsx' || extension === 'xls') return 'spreadsheet'
-  if (extension === 'pptx') return 'presentation'
+  if (WORD.has(extension)) return 'word'
+  if (SHOWN_AS_TEXT.has(extension)) return 'word-text'
+  if (OPEN_DOCUMENT.has(extension)) return 'open-document'
+  if (SPREADSHEETS.has(extension)) return 'spreadsheet'
+  if (SLIDES.has(extension)) return 'presentation'
   if (extension === 'epub') return 'epub'
+  if (extension === 'mht' || extension === 'mhtml') return 'mht'
+  if (extension === 'tif' || extension === 'tiff') return 'tiff'
+  if (extension === 'heic' || extension === 'heif') return 'heic'
   if (entry.kind === 'html') return 'html'
   if (entry.kind === 'image' || entry.kind === 'audio' || entry.kind === 'video') return entry.kind
   return 'text'
@@ -77,6 +97,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
   const [matches, setMatches] = useState<{ id: number; items: TextExcerpt[] } | null>(null)
   const [matchIndex, setMatchIndex] = useState(-1)
   const [goToPage, setGoToPage] = useState(() => (initialPage ? { page: initialPage, key: 0 } : null))
+  const [unplayable, setUnplayable] = useState<number | null>(null)
 
   // Passages are read from the local index, never from the file again.
   const words = query.trim()
@@ -159,11 +180,37 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
   useEffect(() => {
     const controller = new AbortController()
     let objectUrl: string | null = null
+    // Audio, video and long PDFs are read a piece at a time; companions before 1.3.1 send the whole file.
+    const streamed = async () => {
+      try {
+        return (await companion.stream(entry.id, controller.signal)).url
+      } catch (error) {
+        if (error instanceof CompanionError && error.status === 404) return null
+        throw error
+      }
+    }
     const load = async (): Promise<Loaded> => {
-      const blob = await companion.content(entry.id, controller.signal)
       const kind = previewKind(entry)
+      if (kind === 'audio' || kind === 'video') {
+        const url = await streamed()
+        if (url) return { kind, url }
+      }
+      if (kind === 'pdf' && entry.size > WHOLE_FILE_BYTES) {
+        const url = await streamed()
+        if (url) return { kind, source: { url } }
+      }
+      if (kind === 'word-text') {
+        const { sections, truncated } = await companion.viewText(entry.id, controller.signal)
+        return { kind: 'word', html: (await fileFormats()).textDocumentHtml(entry.name, sections, truncated) }
+      }
+      if (kind === 'heic') {
+        objectUrl = URL.createObjectURL(await companion.picture(entry.id, controller.signal))
+        return { kind: 'image', url: objectUrl }
+      }
+      const blob = await companion.content(entry.id, controller.signal)
       switch (kind) {
         case 'pdf':
+          return { kind, source: blob }
         case 'presentation':
         case 'epub':
           return { kind, blob }
@@ -172,10 +219,16 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
         case 'video':
           objectUrl = URL.createObjectURL(blob)
           return { kind, url: objectUrl }
+        case 'tiff':
+          return { kind, tiff: await (await fileFormats()).openTiff(blob) }
         case 'word':
           return { kind, html: await renderDocx(blob) }
+        case 'open-document':
+          return { kind: 'word', html: await (await fileFormats()).renderOpenDocument(blob, entry.name) }
         case 'html':
           return { kind, html: sanitizeHtml(await decodeHtml(blob)) }
+        case 'mht':
+          return { kind: 'html', html: await (await fileFormats()).renderMht(blob) }
         case 'spreadsheet':
           return { kind, sheets: await renderSpreadsheet(blob) }
         default: {
@@ -312,7 +365,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
               <span>Loading preview...</span>
             </div>
           ) : current.kind === 'pdf' ? (
-            <PdfVirtualizedViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} goToPage={goToPage} />
+            <PdfVirtualizedViewer blob={current.source} documentName={entry.name} documentId={previewId} zoom={1} goToPage={goToPage} />
           ) : current.kind === 'presentation' ? (
             <Suspense fallback={<div className="local-preview__loading">Loading slides...</div>}>
               <PresentationViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} />
@@ -321,12 +374,27 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
             <Suspense fallback={<div className="local-preview__loading">Opening book...</div>}>
               <EpubViewer blob={current.blob} documentId={previewId} zoom={1} onWebLink={followWebLink} />
             </Suspense>
+          ) : unplayable === entry.id ? (
+            <div className="notice local-preview__unplayable" role="alert">
+              <p>
+                {current.kind === 'image' ? 'This picture' : current.kind === 'audio' ? 'This recording' : 'This video'} is in a format Document
+                Vault cannot show here.
+              </p>
+              {entry.canOpen ? (
+                <button type="button" className="secondary-button button--small" onClick={() => onOpen(entry)}>
+                  <ExternalLink aria-hidden="true" />
+                  <span>Open with its usual app</span>
+                </button>
+              ) : null}
+            </div>
           ) : current.kind === 'image' ? (
-            <img className="image-preview" src={current.url} alt={entry.name} />
+            <img className="image-preview" src={current.url} alt={entry.name} onError={() => setUnplayable(entry.id)} />
+          ) : current.kind === 'tiff' ? (
+            <TiffPages tiff={current.tiff} name={entry.name} />
           ) : current.kind === 'audio' ? (
-            <audio className="local-preview__media" src={current.url} controls />
+            <audio className="local-preview__media" src={current.url} controls onError={() => setUnplayable(entry.id)} />
           ) : current.kind === 'video' ? (
-            <video className="local-preview__media" src={current.url} controls />
+            <video className="local-preview__media" src={current.url} controls onError={() => setUnplayable(entry.id)} />
           ) : current.kind === 'word' || current.kind === 'html' ? (
             <iframe
               className="word-frame"

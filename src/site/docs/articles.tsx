@@ -492,6 +492,30 @@ export const articles: DocArticle[] = [
         ),
       },
       {
+        id: 'opens-in-app',
+        title: 'Which files open inside the app',
+        keywords: 'open view preview doc rtf odt mht tiff heic video audio large pdf browser',
+        body: (
+          <>
+            <p>Files from your libraries open in Document Vault’s own viewer, not in another browser or program:</p>
+            <ul>
+              <li>PDF of any size. Long PDFs show their first pages at once while the rest loads.</li>
+              <li>Word (.docx, .docm, .dotx), older Word (.doc) and RTF, OpenDocument text and presentations (.odt, .odp).</li>
+              <li>Excel (.xlsx, .xlsm, .xlsb, .xls), OpenDocument spreadsheets (.ods) and PowerPoint (.pptx, .pptm, .ppsx).</li>
+              <li>EPUB books, web pages (.htm, .html) and saved web pages (.mht, .mhtml).</li>
+              <li>Pictures, including multi-page TIFF scans, iPhone photos (.heic) and SVG drawings.</li>
+              <li>Audio and video of any size (.mp3, .m4a, .wav, .flac, .mp4, .mov, .webm and others), with seeking.</li>
+              <li>Text, CSV, JSON, XML and source code, shown as text.</li>
+            </ul>
+            <p>
+              Older Word and RTF documents are shown as their text; open them in Word to see pictures and page layout. Older
+              PowerPoint (.ppt), Apple Pages, Numbers and Keynote, DjVu and Kindle (.mobi) files still open with their usual
+              program, and programs and scripts are never run.
+            </p>
+          </>
+        ),
+      },
+      {
         id: 'install-windows',
         title: 'Install on Windows',
         keywords: 'windows installer exe smartscreen',
@@ -592,7 +616,8 @@ export const articles: DocArticle[] = [
               <li>Names are indexed first, so titles can be searched within seconds; the text is read in the background.</li>
             </ol>
             <p>
-              Text is read from PDF, Word (.docx), EPUB, PowerPoint (.pptx), web pages (.htm, .html), text and RTF files, with
+              Text is read from PDF, Word (.docx and .doc), OpenDocument (.odt, .odp), EPUB, PowerPoint (.pptx), web pages (.htm,
+              .html), text and RTF files, with
               page numbers for PDFs. Other files are searchable by name. Every file that is skipped is listed with the reason on
               the library’s Health tab.
             </p>

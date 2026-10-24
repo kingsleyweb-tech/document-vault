@@ -9,6 +9,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import JSZip from 'jszip'
 import { startCompanion } from '../src/main.js'
 
 const ORIGIN = 'http://localhost:5173'
@@ -38,6 +39,8 @@ const FILES = {
   'Documents/node_modules/pkg/index.js': 'skipped',
   'Documents/Locked/secret plans.docx': 'x',
   'Desktop/document.pdf': 'pdf',
+  'Documents/media/hearing.mp4': '0123456789abcdefghij',
+  'Documents/notes/old letter.rtf': String.raw`{\rtf1\ansi Dear Sir,\par The hearing is adjourned.\par}`,
 }
 
 // Windows shortcuts made the way Explorer makes them, through the Shell's COM object.
@@ -362,6 +365,63 @@ describe('opening local files', () => {
     assert.equal(await response.text(), 'hello from a text file')
     const [exe] = (await find('setup.exe')).items
     assert.equal((await request('GET', `/v1/entries/${exe.id}/content`)).status, 415)
+  })
+
+  it('streams audio and video a piece at a time through a link that needs no token', async () => {
+    const [video] = (await find('hearing.mp4')).items
+    assert.equal(video.canPreview, true)
+    const link = await json('POST', `/v1/entries/${video.id}/stream`)
+    assert.equal(link.status, 200)
+    assert.match(link.body.url, /^\/v1\/stream\/[A-Za-z0-9_-]{43}$/)
+    // A video element sends neither the token nor an origin.
+    const whole = await fetch(base + link.body.url)
+    assert.equal(whole.status, 200)
+    assert.equal(whole.headers.get('accept-ranges'), 'bytes')
+    assert.equal(await whole.text(), '0123456789abcdefghij')
+    const piece = await fetch(base + link.body.url, { headers: { Range: 'bytes=10-14' } })
+    assert.equal(piece.status, 206)
+    assert.equal(piece.headers.get('content-range'), 'bytes 10-14/20')
+    assert.equal(await piece.text(), 'abcde')
+    const tail = await fetch(base + link.body.url, { headers: { Range: 'bytes=-3' } })
+    assert.equal(await tail.text(), 'hij')
+    assert.equal((await fetch(base + link.body.url, { headers: { Range: 'bytes=30-' } })).status, 416)
+    // Unknown links, other file types and other websites are refused.
+    assert.equal((await fetch(`${base}/v1/stream/${'x'.repeat(43)}`)).status, 404)
+    const [text] = (await find('readme.txt')).items
+    assert.equal((await request('POST', `/v1/entries/${text.id}/stream`)).status, 415)
+    assert.equal((await fetch(base + link.body.url, { headers: { Origin: 'https://evil.example' } })).status, 403)
+  })
+
+  it('a stream link stops working when its browser is unpaired', async () => {
+    const code = companion.newPairingCode()
+    const extra = (await json('POST', '/v1/pair', { body: { code }, auth: false })).body.token
+    const asExtra = { headers: { Authorization: `Bearer ${extra}` } }
+    const [video] = (await find('hearing.mp4')).items
+    const link = await (await request('POST', `/v1/entries/${video.id}/stream`, asExtra)).json()
+    assert.equal((await fetch(base + link.url)).status, 200)
+    assert.equal((await request('POST', '/v1/unpair', { ...asExtra, body: {} })).status, 200)
+    assert.equal((await fetch(base + link.url)).status, 404)
+  })
+
+  it('shows older Word and RTF documents as their text', async () => {
+    const [letter] = (await find('old letter.rtf')).items
+    assert.equal(letter.canPreview, true)
+    const shown = await json('GET', `/v1/entries/${letter.id}/text`)
+    assert.equal(shown.status, 200)
+    const text = shown.body.sections.map((section) => section.text).join('\n')
+    assert.match(text, /Dear Sir,/)
+    assert.match(text, /The hearing is adjourned\./)
+    const [pdf] = (await find('Training Schedule')).items
+    assert.equal((await request('GET', `/v1/entries/${pdf.id}/text`)).status, 415)
+  })
+
+  it('reads the text of OpenDocument files for search', async () => {
+    const zip = new JSZip()
+    zip.file('mimetype', 'application/vnd.oasis.opendocument.text')
+    zip.file('content.xml', '<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">Board minutes</text:h><text:p>The quorum was<text:s/>present &amp; recorded.</text:p></office:text></office:body></office:document-content>')
+    zip.file('meta.xml', '<office:document-meta><office:meta><dc:title>Minutes of the board</dc:title></office:meta></office:document-meta>')
+    fs.writeFileSync(path.join(documents, 'notes', 'minutes.odt'), await zip.generateAsync({ type: 'nodebuffer' }))
+    await waitFor(async () => (await find('quorum', '&mode=all')).items.some((item) => item.name === 'minutes.odt'))
   })
 })
 

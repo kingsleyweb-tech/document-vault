@@ -7,7 +7,7 @@ import { EXTRACTABLE } from './extract/formats.js'
 import { DUPLICATE_KINDS, dismissDuplicate, duplicateSummary, listDuplicates } from './duplicates.js'
 import { refreshMeta } from './extractor.js'
 import { friendlyError } from './indexer.js'
-import { canLaunch, canOpenFolder, KINDS, previewType } from './kinds.js'
+import { canLaunch, canOpenFolder, isShownAsText, isStreamed, KINDS, previewType } from './kinds.js'
 import { isInside, pathKey, rootProblem } from './paths.js'
 import { matchesIn, metaOf, searchRanked } from './ranked.js'
 import { parseSearch } from './search.js'
@@ -36,11 +36,14 @@ import { isShortcut, readShortcut } from './shortcuts.js'
 //   Removing a library, excluding a folder or clearing an index never changes
 //   or deletes the files themselves.
 
-export const VERSION = '1.3.0'
+export const VERSION = '1.3.1'
 const MAX_BODY = 16 * 1024
 const PAIRING_TTL_MS = 10 * 60 * 1000
 const MAX_PAIRING_FAILURES = 5
 const MAX_PREVIEW_BYTES = 60 * 1024 * 1024
+// A streaming link stays valid while it is used, and for this long after.
+const STREAM_IDLE_MS = 30 * 60 * 1000
+const MAX_STREAMS = 100
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const META_FIELDS = ['title', 'author', 'subject', 'keywords', 'publisher']
 // Recognised text with a lower average confidence is listed in Health.
@@ -88,6 +91,10 @@ function paging(params, defaultLimit = 50) {
 export function createCompanionServer({ store, indexer, extractor, ocr, hasher, access, config, saveConfig, launcher, dataDir, port, log = () => {} }) {
   let pairing = null
   let pairingFailures = 0
+  // Streaming links: an unguessable ticket stands in for the token, because a
+  // video or audio element cannot send one. Each names one file and the paired
+  // browser that asked for it, and stops working when that pairing is revoked.
+  const streams = new Map()
   const db = store.db
   const hostAllowed = (host) => {
     const actual = server.address()?.port ?? port
@@ -255,7 +262,7 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
     hidden: Boolean(row.hidden),
     availability,
     canOpen: row.is_dir ? canOpenFolder(row.name) : canLaunch(row.name) || isShortcut(row.name),
-    canPreview: !row.is_dir && previewType(row.name) !== null && row.size <= MAX_PREVIEW_BYTES,
+    canPreview: !row.is_dir && previewType(row.name) !== null && (row.size <= MAX_PREVIEW_BYTES || isStreamed(row.name)),
   })
 
   /** Another place an identical copy of a search result is kept. */
@@ -976,6 +983,101 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
       })
       return undefined
     }],
+
+    // A link that reads the file a piece at a time, for long PDFs, audio and video.
+    ['POST', /^\/v1\/entries\/(\d+)\/stream$/, true, async (_request, match, token) => {
+      const { row } = await resolveEntry(Number(match[1]))
+      if (!isStreamed(row.name)) throw new HttpError(415, 'This file type cannot be streamed.')
+      const now = Date.now()
+      for (const [ticket, stream] of streams) if (stream.expires < now) streams.delete(ticket)
+      if (streams.size >= MAX_STREAMS) streams.delete(streams.keys().next().value)
+      const ticket = randomBytes(32).toString('base64url')
+      streams.set(ticket, { entryId: row.id, tokenHash: token.hash, expires: now + STREAM_IDLE_MS })
+      extractor.prioritize(row.id)
+      return { url: `/v1/stream/${ticket}`, size: row.size, type: previewType(row.name) }
+    }],
+
+    ['GET', /^\/v1\/stream\/([A-Za-z0-9_-]{43})$/, false, async (request, match, _token, response) => {
+      const stream = streams.get(match[1])
+      if (!stream || stream.expires < Date.now() || !config.tokens.some((entry) => entry.hash === stream.tokenHash)) {
+        streams.delete(match[1])
+        throw new HttpError(404, 'This link has expired. Open the file again.')
+      }
+      stream.expires = Date.now() + STREAM_IDLE_MS
+      // Access is checked again on every read: a library removed meanwhile stops the stream.
+      const { row, real } = await resolveEntry(stream.entryId)
+      const info = await fs.promises.stat(real)
+      const range = byteRange(request.headers.range, info.size)
+      if (range === 'invalid') {
+        response.writeHead(416, { 'Content-Range': `bytes */${info.size}`, 'Cache-Control': 'no-store' })
+        response.end()
+        return undefined
+      }
+      const { start, end } = range ?? { start: 0, end: info.size - 1 }
+      indexer.noteRead(row.path, real)
+      response.writeHead(range ? 206 : 200, {
+        'Content-Type': previewType(row.name),
+        'Content-Length': info.size === 0 ? 0 : end - start + 1,
+        ...(range ? { 'Content-Range': `bytes ${start}-${end}/${info.size}` } : {}),
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+        'Content-Disposition': 'attachment',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      if (info.size === 0) return void response.end()
+      await new Promise((resolve, reject) => {
+        const file = fs.createReadStream(real, { start, end }).on('error', reject).on('end', resolve)
+        // A player that seeks closes the connection; stop reading then.
+        response.on('close', () => {
+          file.destroy()
+          resolve()
+        })
+        file.pipe(response)
+      })
+      return undefined
+    }],
+
+    // A HEIC photo as JPEG, converted by the extraction worker, for showing it.
+    ['GET', /^\/v1\/entries\/(\d+)\/picture$/, true, async (_request, match, _token, response) => {
+      const { row, real } = await resolveEntry(Number(match[1]))
+      const extension = path.extname(row.name).slice(1).toLowerCase()
+      if (extension !== 'heic' && extension !== 'heif') throw new HttpError(415, 'This picture is shown as it is.')
+      const info = await fs.promises.stat(real)
+      if (info.size > MAX_PREVIEW_BYTES) throw new HttpError(413, 'This file is too large to preview. Open it on your computer instead.')
+      indexer.noteRead(row.path, real)
+      let picture
+      try {
+        picture = await extractor.convertPicture(extension, await fs.promises.readFile(real))
+      } catch {
+        throw new HttpError(422, 'This photo could not be read. Open it on your computer instead.')
+      }
+      const bytes = Buffer.from(picture.bytes.buffer, picture.bytes.byteOffset, picture.bytes.byteLength)
+      response.writeHead(200, {
+        'Content-Type': 'image/jpeg',
+        'Content-Length': bytes.length,
+        'Cache-Control': 'no-store',
+        'Content-Disposition': 'attachment',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      response.end(bytes)
+      return undefined
+    }],
+
+    // The text of an older Word or RTF document, read by the extraction worker, for showing it.
+    ['GET', /^\/v1\/entries\/(\d+)\/text$/, true, async (_request, match) => {
+      const { row, real } = await resolveEntry(Number(match[1]))
+      if (!isShownAsText(row.name)) throw new HttpError(415, 'This file type is not shown as text.')
+      const info = await fs.promises.stat(real)
+      if (info.size > MAX_PREVIEW_BYTES) throw new HttpError(413, 'This file is too large to preview. Open it on your computer instead.')
+      indexer.noteRead(row.path, real)
+      const bytes = await fs.promises.readFile(real)
+      try {
+        const result = await extractor.readForView(path.extname(row.name).slice(1).toLowerCase(), bytes)
+        return { sections: result.sections.map(({ page, label, text }) => ({ page, label, text })), truncated: result.truncated }
+      } catch {
+        throw new HttpError(422, 'This document could not be read. Open it on your computer instead.')
+      }
+    }],
   ]
 
   /** Library settings from a request body, in the store's column names. */
@@ -1046,7 +1148,8 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
     return {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range',
+      'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, Content-Length',
       'Access-Control-Allow-Private-Network': 'true',
       'Access-Control-Max-Age': '600',
       Vary: 'Origin',
@@ -1094,6 +1197,25 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
   })
 
   return { server, newPairingCode }
+}
+
+/** The byte range a Range header asks for: null for the whole file, 'invalid' when it cannot be served. */
+export function byteRange(header, size) {
+  if (!header) return null
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!match || (match[1] === '' && match[2] === '')) return 'invalid'
+  let start
+  let end
+  if (match[1] === '') {
+    // The last N bytes.
+    start = Math.max(0, size - Number(match[2]))
+    end = size - 1
+  } else {
+    start = Number(match[1])
+    end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1)
+  }
+  if (start > end || start >= size) return 'invalid'
+  return { start, end }
 }
 
 const SKIP_REASONS = {

@@ -55,13 +55,20 @@ for (const file of fs.readdirSync(core)) {
   if (/^tesseract-core.*\.(js|wasm)$/.test(file) && !/-lstm\.(js|wasm)$/.test(file)) fs.rmSync(path.join(core, file))
 }
 fs.rmSync(path.join(modules, '@tesseract.js-data', 'eng', '4.0.0'), { recursive: true, force: true })
+// HEIC photos are decoded with the self-contained WebAssembly bundle (libheif-wasm/libheif-bundle.js);
+// the asm.js build, the separate .wasm build and the ES module copy are not used.
+const libheif = path.join(modules, 'libheif-js')
+fs.rmSync(path.join(libheif, 'libheif', 'libheif.js'), { force: true })
+for (const file of ['libheif-bundle.mjs', 'libheif.js', 'libheif.wasm']) fs.rmSync(path.join(libheif, 'libheif-wasm', file), { force: true })
 for (const required of [
   path.join(core, 'tesseract-core-lstm.wasm'),
   path.join(core, 'tesseract-core-simd-lstm.wasm'),
   path.join(core, 'tesseract-core-relaxedsimd-lstm.wasm'),
   path.join(modules, '@tesseract.js-data', 'eng', '4.0.0_best_int', 'eng.traineddata.gz'),
+  path.join(libheif, 'libheif-wasm', 'libheif-bundle.js'),
+  path.join(modules, 'word-extractor', 'package.json'),
 ]) {
-  if (!fs.existsSync(required)) throw new Error(`Text recognition file missing after install: ${required}`)
+  if (!fs.existsSync(required)) throw new Error(`Companion file missing after install: ${required}`)
 }
 
 console.log(`Copied the web build to ${web} and the companion to ${companion}.`)

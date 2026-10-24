@@ -43,7 +43,11 @@ A pairing code works once and expires after 10 minutes. Restart the companion to
   run. **Show in folder** works for every file.
 - It listens only on `127.0.0.1` (this computer) on port 47615. It answers only the
   Document Vault website and paired browsers, never other websites.
-- Nothing is uploaded. Previews are streamed straight from your disk to your browser.
+- Nothing is uploaded. Previews are streamed straight from your disk to your browser. PDFs, audio and
+  video of any size are read a piece at a time, through a link that works only for the paired browser
+  that asked for it and stops working when that pairing is removed.
+- Older Word (.doc) and RTF documents are shown as their text, and HEIC photos are converted to JPEG,
+  inside the same limited worker that reads text for search.
 
 ## How a library is indexed
 

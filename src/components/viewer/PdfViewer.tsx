@@ -2,7 +2,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, PanelLeft, RefreshCw, Search, X
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import { getPageImage, savePageImage } from '../../services/offlineStore'
-import { drawPage, encodePicture, openPdf, pictureWidthFor, readPageSizes, releaseCanvas, renderPagePicture, yieldToBrowser } from '../../services/pdfPages'
+import { drawPage, encodePicture, openPdf, pictureWidthFor, readPageSizes, releaseCanvas, renderPagePicture, yieldToBrowser, type PdfSource } from '../../services/pdfPages'
 import { defaultPageDisplayWidth, notePageImageStored, PREPARED_PAGES } from '../../services/previewQueue'
 import { isMemoryConstrained } from '../../utils/device'
 import { anchoredOffset, computePageTops, PAGE_GAP, pageIndexAt } from './pdfLayout'
@@ -61,8 +61,8 @@ export function PdfVirtualizedViewer({
   zoom,
   goToPage,
 }: {
-  /** The PDF, or null while it is still downloading (stored pages show meanwhile). */
-  blob: Blob | null
+  /** The PDF, or null while it is still downloading (stored pages show meanwhile). A link reads it a piece at a time. */
+  blob: PdfSource | null
   documentName: string
   documentId: string
   /** Drive file id; when given, pages are read from and kept on this device. */

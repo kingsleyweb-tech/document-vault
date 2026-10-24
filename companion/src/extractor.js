@@ -163,6 +163,16 @@ export class Extractor extends EventEmitter {
     this.emit('change')
   }
 
+  /** Reads a document's text for showing it now, in a worker of its own, without keeping anything. */
+  readForView(extension, bytes) {
+    return this.pool.run(Symbol('view'), extension, bytes, { maxPages: this.options.maxPages }, this.options.timeoutMs)
+  }
+
+  /** Converts a picture the web app cannot draw (a HEIC photo) to JPEG, in a worker. */
+  convertPicture(extension, bytes) {
+    return this.pool.run(Symbol('picture'), extension, bytes, { task: 'picture' }, this.options.timeoutMs)
+  }
+
   /** Reads this document next (it was opened or searched for). */
   prioritize(entryId) {
     this.sql.prioritize.run(entryId)

@@ -5,14 +5,24 @@ import { isMemoryConstrained } from '../utils/device'
 // page sizes and drawing pages as pictures. pdf.js parses in its worker; only
 // drawing a page uses the main thread, one page at a time.
 
-export async function openPdf(blob: Blob): Promise<{ pdf: PDFDocumentProxy; task: PDFDocumentLoadingTask }> {
+/** A PDF read from this address as it arrives, for files too long to load before showing. */
+export interface PdfLink {
+  url: string
+}
+
+export type PdfSource = Blob | PdfLink
+
+export async function openPdf(source: PdfSource): Promise<{ pdf: PDFDocumentProxy; task: PDFDocumentLoadingTask }> {
   const pdfjs = await import('pdfjs-dist')
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
   // Scripts inside a PDF are never run: pdf.js only draws the pages, and XFA forms stay off.
   // Fonts, decoders and character maps come from this site (see vite.config.ts).
   const assets = typeof window === 'undefined' ? null : `${window.location.origin}/pdfjs/`
   const task = pdfjs.getDocument({
-    data: await blob.arrayBuffer(),
+    ...(source instanceof Blob
+      ? { data: await source.arrayBuffer() }
+      : // The pages looked at are read first, so they show at once; the rest arrives in the background.
+        { url: source.url, rangeChunkSize: 1024 * 1024 }),
     enableXfa: false,
     ...(assets && {
       wasmUrl: `${assets}wasm/`,

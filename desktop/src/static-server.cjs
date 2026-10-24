@@ -44,7 +44,7 @@ function contentSecurityPolicy({ companionPort = null } = {}) {
     `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.supabase.co wss://*.supabase.co${companion} blob:`,
     "frame-src 'self' blob: https://*.firebaseapp.com https://drive.google.com https://docs.google.com https://accounts.google.com",
     "worker-src 'self' blob:",
-    "media-src 'self' blob:",
+    `media-src 'self' blob:${companion}`,
     "object-src 'none'",
     "base-uri 'self'",
     "frame-ancestors 'none'",

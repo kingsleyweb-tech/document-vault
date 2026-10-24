@@ -25,7 +25,7 @@ export const MIN_PAGE_LETTERS = 20
 
 // Pictures have no text to read; they are listed so text recognition (OCR) can pick them up.
 export const OCR_IMAGES = new Set(['jpg', 'jpeg', 'png'])
-export const EXTRACTABLE = new Set(['pdf', 'docx', 'epub', 'pptx', 'html', 'htm', 'xhtml', 'txt', 'md', 'markdown', 'rtf', ...OCR_IMAGES])
+export const EXTRACTABLE = new Set(['pdf', 'docx', 'doc', 'dot', 'odt', 'odp', 'epub', 'pptx', 'html', 'htm', 'xhtml', 'txt', 'md', 'markdown', 'rtf', ...OCR_IMAGES])
 /** Formats whose pages can be recognised when they have no text layer. */
 export const OCR_FORMATS = new Set(['pdf', ...OCR_IMAGES])
 
@@ -35,6 +35,13 @@ export async function extractDocument(extension, bytes, { maxPages = 5000 } = {}
       return extractPdf(bytes, maxPages)
     case 'docx':
       return extractDocx(bytes)
+    case 'doc':
+    case 'dot':
+      return extractDoc(bytes)
+    case 'odt':
+      return extractOpenDocument(bytes, false, maxPages)
+    case 'odp':
+      return extractOpenDocument(bytes, true, maxPages)
     case 'epub':
       return extractEpub(bytes, maxPages)
     case 'pptx':
@@ -191,6 +198,41 @@ async function extractDocx(bytes) {
   const result = plain(value)
   result.meta = coreMeta(await readPart(zip, 'docProps/core.xml'))
   return result
+}
+
+// Word 97–2003 documents: the text of the body, then footnotes and endnotes.
+async function extractDoc(bytes) {
+  const WordExtractor = require('word-extractor')
+  const document = await new WordExtractor().extract(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
+  return plain([document.getBody(), document.getFootnotes(), document.getEndnotes()].filter((part) => part.trim()).join('\n\n'))
+}
+
+/** Plain text of OpenDocument XML: one line per paragraph or heading. */
+export function openDocumentText(xml) {
+  const text = xml
+    .replace(/<text:tab\b[^>]*\/>/g, '\t')
+    .replace(/<text:line-break\b[^>]*\/>/g, '\n')
+    .replace(/<text:s\b[^>]*\/>/g, ' ')
+    .replace(/<\/text:(?:p|h)>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+  return decodeEntities(text).replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// OpenDocument text (.odt) and presentations (.odp), whose slides become pages.
+async function extractOpenDocument(bytes, slides, maxSlides) {
+  const zip = await openZip(bytes)
+  const content = (await readPart(zip, 'content.xml')) ?? ''
+  const meta = coreMeta(await readPart(zip, 'meta.xml'))
+  if (!slides) return { ...plain(openDocumentText(content)), meta }
+  const pages = content.split(/<draw:page\b/).slice(1)
+  const result = []
+  let textPages = 0
+  for (const [index, page] of pages.slice(0, maxSlides).entries()) {
+    const text = openDocumentText('<draw:page' + page)
+    if (letters(text) > 0) textPages += 1
+    result.push({ page: index + 1, label: null, text })
+  }
+  return { sections: result, meta, links: [], pages: pages.length, textPages, truncated: pages.length > maxSlides }
 }
 
 async function extractEpub(bytes, maxSections) {

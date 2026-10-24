@@ -612,4 +612,14 @@ export const companion = {
   shortcutTarget: (id: number) => call<{ url: string | null; entry: LocalEntry | null }>('GET', `/v1/entries/${id}/target`),
   reveal: (id: number) => call<{ ok: true }>('POST', `/v1/entries/${id}/reveal`, { body: {} }),
   content: (id: number, signal?: AbortSignal) => call<Blob>('GET', `/v1/entries/${id}/content`, { signal, raw: true }),
+  /** An address that reads a PDF, audio or video file a piece at a time, for players that cannot send the token. From companion 1.3.1. */
+  stream: async (id: number, signal?: AbortSignal) => {
+    const link = await call<{ url: string; size: number; type: string }>('POST', `/v1/entries/${id}/stream`, { signal })
+    return { ...link, url: companionUrl() + link.url }
+  },
+  /** A HEIC or HEIF photo as JPEG, for showing it. From companion 1.3.1. */
+  picture: (id: number, signal?: AbortSignal) => call<Blob>('GET', `/v1/entries/${id}/picture`, { signal, raw: true }),
+  /** The text of an older Word or RTF document, for showing it. From companion 1.3.1. */
+  viewText: (id: number, signal?: AbortSignal) =>
+    call<{ sections: { page: number | null; label: string | null; text: string }[]; truncated: boolean }>('GET', `/v1/entries/${id}/text`, { signal }),
 }
