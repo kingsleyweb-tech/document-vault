@@ -34,3 +34,8 @@ companion/.test-sandbox
 
 # Installed copy of the desktop app (not part of the source)
 /Document Vault/
+
+# AI assistant settings and skills stay on this computer only
+.claude/
+.agents/
+skills-lock.json
