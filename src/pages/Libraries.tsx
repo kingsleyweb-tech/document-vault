@@ -4,11 +4,12 @@ import { BookOpen, Copy, FolderPlus, Library, Pause, Play, RefreshCw, Search, Sh
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
 import { AddLibraryDialog } from '../components/library/AddLibraryDialog'
 import { OcrOffer } from '../components/library/OcrOffer'
-import { dateFormat, errorText, libraryState, numberFormat, ocrProgress, textProgress } from '../components/library/libraryText'
+import { dateFormat, elapsedText, errorText, libraryState, numberFormat, ocrProgress, textProgress } from '../components/library/libraryText'
 import { EmptyState } from '../components/ui/EmptyState'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
 import { companion, desktopBridge, type CompanionStatus, type LocalRoot } from '../services/desktopCompanion'
+import { formatFileSize } from '../utils/formatters'
 
 /** How many books have identical copies, for the Duplicates button; null until known. */
 function useDuplicateCount(enabled: boolean) {
@@ -147,6 +148,25 @@ export function Libraries() {
               Library access and privacy
             </Link>
             <span>Companion {version ?? ''} on this computer</span>
+            {status.storage ? (
+              <span>
+                Index: {formatFileSize(status.storage.indexBytes)}{' '}
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={status.index.state !== 'idle'}
+                  title="Gives back space left by removed files and text. Available when nothing is being indexed."
+                  onClick={() =>
+                    void run(async () => {
+                      const result = await companion.compactIndex()
+                      return `The index was compacted from ${formatFileSize(result.before)} to ${formatFileSize(result.after)}.`
+                    })
+                  }
+                >
+                  Compact
+                </button>
+              </span>
+            ) : null}
             {!desktopBridge() ? (
               <button type="button" className="text-button" onClick={() => void companion.unpair().finally(() => void refresh())}>
                 <Unplug aria-hidden="true" />
@@ -183,13 +203,20 @@ function IndexActivity({ status }: { status: CompanionStatus }) {
           <span className="app-spinner app-spinner--small" aria-hidden="true" />
           <span>
             Indexing <strong>{status.roots.find((root) => root.id === index.current?.rootId)?.name ?? index.current.root}</strong>:{' '}
-            {numberFormat.format(index.current.scanned)} items so far
+            {index.current.files !== undefined
+              ? `${numberFormat.format(index.current.files)} files in ${numberFormat.format(index.current.folders ?? 0)} folders found so far, ${elapsedText(index.current.elapsedMs ?? 0)}`
+              : `${numberFormat.format(index.current.scanned)} items so far`}
           </span>
         </>
       ) : index.state === 'paused' ? (
         <>
           <Pause aria-hidden="true" />
           <span>Indexing is paused. Search still works with what is already indexed.</span>
+        </>
+      ) : text?.state === 'waiting' ? (
+        <>
+          <span className="app-spinner app-spinner--small" aria-hidden="true" />
+          <span>Text reading starts when all files have been found.</span>
         </>
       ) : reading ? (
         <>

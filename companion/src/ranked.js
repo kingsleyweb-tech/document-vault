@@ -88,13 +88,13 @@ export function searchRanked(db, query) {
 
   if (wantDocuments) {
     // 0: exact title.
-    for (const row of run(`select e.id from meta_fts m join entries e on e.id = m.rowid
+    for (const row of run(`select e.id from meta_fts m cross join entries e on e.id = m.rowid
         where meta_fts match ? and lower(m.title) = ?${and} limit ${LIMIT_PER_TIER}`, `title : ${ftsPhrase(parsed.phrase)}`, parsed.phrase, ...values)) {
       consider(row.id, TIER.title)
     }
     // 1: exact file name, with or without its extension.
     if (parsed.phrase.length >= 3) {
-      for (const row of run(`select e.id, e.name from entries_fts join entries e on e.id = entries_fts.rowid
+      for (const row of run(`select e.id, e.name from entries_fts cross join entries e on e.id = entries_fts.rowid
           where entries_fts match ? and e.is_dir = 0${and} limit ${LIMIT_PER_TIER}`, `name : ${ftsPhrase(parsed.phrase)}`, ...values)) {
         const base = row.name.toLowerCase().replace(/\.[^.]+$/, '')
         const normalized = base.match(WORD)?.join(' ') ?? ''
@@ -103,7 +103,7 @@ export function searchRanked(db, query) {
     }
     // 4: metadata.
     const metaExpression = ftsExpression({ ...parsed, excluded: [] })
-    for (const row of run(`select e.id, bm25(meta_fts) as score from meta_fts m join entries e on e.id = m.rowid
+    for (const row of run(`select e.id, bm25(meta_fts) as score from meta_fts m cross join entries e on e.id = m.rowid
         where meta_fts match ?${and} order by score limit ${LIMIT_PER_TIER}`, metaExpression, ...values)) {
       consider(row.id, TIER.metadata, row.score)
     }
@@ -112,7 +112,7 @@ export function searchRanked(db, query) {
     const short = parsed.words.filter((word) => word.length < 3)
     if (long.length > 0) {
       const shortSql = short.map(() => " and lower(e.name) like ? escape '\\'").join('')
-      const rows = run(`select e.id, e.name from entries_fts join entries e on e.id = entries_fts.rowid
+      const rows = run(`select e.id, e.name from entries_fts cross join entries e on e.id = entries_fts.rowid
           where entries_fts match ?${shortSql}${and} order by bm25(entries_fts) limit ${LIMIT_PER_TIER}`,
         long.map(ftsPhrase).join(' AND '), ...short.map((word) => `%${escapeLike(word)}%`), ...values)
       for (const row of rows) {
@@ -130,7 +130,7 @@ export function searchRanked(db, query) {
       // With min(), SQLite takes page_id from the best-scoring row: the passage to show.
       const rows = run(`with x as materialized (
           select p.entry_id, p.id as page_id, bm25(doc_pages_fts) as score from doc_pages_fts
-          join doc_pages p on p.id = doc_pages_fts.rowid join entries e on e.id = p.entry_id
+          cross join doc_pages p on p.id = doc_pages_fts.rowid cross join entries e on e.id = p.entry_id
           where doc_pages_fts match ?${and})
         select x.entry_id as id, x.page_id, min(x.score) as score, count(*) as pages from x
         group by x.entry_id order by score limit ${LIMIT_PER_TIER}`, expression, ...values)

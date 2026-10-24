@@ -110,7 +110,9 @@ export function search(db, query) {
   const textValues = []
   let from = 'entries e'
   if (long.length > 0) {
-    from = 'entries_fts join entries e on e.id = entries_fts.rowid'
+    // The text index leads (a cross join keeps that order): otherwise SQLite may
+    // walk every file of a type and look each one up in the text index.
+    from = 'entries_fts cross join entries e on e.id = entries_fts.rowid'
     textClauses.push('entries_fts match ?')
     textValues.push(long.map(ftsPhrase).join(' AND '))
   }
@@ -160,7 +162,7 @@ export function fuzzySearch(db, query, words, clauses, values) {
   const match = 'name : (' + [...grams].map(ftsPhrase).join(' OR ') + ')'
   const where = ['entries_fts match ?', ...clauses].join(' and ')
   const candidates = db
-    .prepare(`select e.* from entries_fts join entries e on e.id = entries_fts.rowid where ${where} order by bm25(entries_fts) limit ${FUZZY_CANDIDATES}`)
+    .prepare(`select e.* from entries_fts cross join entries e on e.id = entries_fts.rowid where ${where} order by bm25(entries_fts) limit ${FUZZY_CANDIDATES}`)
     .all(match, ...values)
   const scored = []
   for (const row of candidates) {

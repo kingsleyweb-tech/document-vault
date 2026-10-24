@@ -6,7 +6,7 @@ import { LocalPreview } from '../components/desktop/LocalPreview'
 import { useLocalOpener } from '../components/desktop/openLocalEntry'
 import { DocumentIcon } from '../components/documents/DocumentIcon'
 import { Highlighted } from '../components/library/Highlighted'
-import { errorText, kindLabels, matchLabels, OCR_NOTE, whereLabel } from '../components/library/libraryText'
+import { errorText, kindLabels, matchLabels, numberFormat, OCR_NOTE, whereLabel } from '../components/library/libraryText'
 import { EmptyState } from '../components/ui/EmptyState'
 import { PageHeader } from '../components/ui/PageHeader'
 import { useCompanion } from '../hooks/useCompanion'
@@ -15,6 +15,7 @@ import { searchDocumentContent, snippetParts, type ContentMatch } from '../servi
 import {
   companion,
   CompanionError,
+  type CompanionStatus,
   type FileCopy,
   type LocalEntry,
   type LocalHit,
@@ -163,6 +164,7 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
   const ready = connection === 'ready'
   const searchKey = JSON.stringify([debouncedQuery, filters])
   const textRead = status?.text ? (status.text.counts.completed ?? 0) : 0
+  const coverage = searchCoverage(status, filters.mode)
   const indexVersion = status ? `${status.index.totals.files}:${status.index.totals.folders}:${status.index.state}:${textRead}` : ''
 
   useEffect(() => {
@@ -320,6 +322,7 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
           {local.error}
         </p>
       ) : null}
+      {coverage ? <p className="notice search-coverage">{coverage}</p> : null}
       {local && !local.error && local.items.length === 0 && !searching ? (
         <EmptyState
           icon={<FolderSearch aria-hidden="true" />}
@@ -617,6 +620,8 @@ function LocalResultRow({ entry, libraryName, onOpen, onReveal, onRevealCopy, on
           ) : null}
           {entry.match ? <span className="chip chip--accent">{matchLabels[entry.match]}</span> : null}
           {excerpt?.source === 'ocr' ? <span className="chip">Recognised text (OCR)</span> : null}
+          {entry.textCoverage === 'waiting' ? <span className="chip" title="Only the name is searched until the text has been read.">Text not read yet</span> : null}
+          {entry.textCoverage === 'failed' ? <span className="chip" title="Only the name is searched.">Text could not be read</span> : null}
           {unavailable ? <span className="chip chip--danger">{availabilityLabels[entry.availability as keyof typeof availabilityLabels]}</span> : null}
         </span>
         {excerpt ? (
@@ -742,4 +747,21 @@ function UploadedResultRow({ record, location, snippet, foundInText = false, onO
       </div>
     </li>
   )
+}
+
+/**
+ * What a search covers while libraries are still being indexed or read, so a
+ * result list is never taken for a full-text search of every document.
+ */
+function searchCoverage(status: CompanionStatus | null, mode: SearchMode): string | null {
+  if (!status || mode === 'names') return null
+  const indexing = status.index.state === 'indexing' && status.index.current !== null
+  const counts = status.text?.counts ?? {}
+  const waiting = (counts.pending ?? 0) + (counts.processing ?? 0)
+  if (!indexing && waiting === 0) return null
+  const read = numberFormat.format(counts.completed ?? 0)
+  if (indexing) {
+    return `Files are still being found. Names are searched as they are found; text is searched in the ${read} documents read so far, and the rest are read once all files have been found.`
+  }
+  return `Text is searched in the ${read} documents read so far. ${numberFormat.format(waiting)} more ${waiting === 1 ? 'is' : 'are'} waiting to be read and ${waiting === 1 ? 'is' : 'are'} found by name only until then.`
 }

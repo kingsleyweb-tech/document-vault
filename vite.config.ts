@@ -58,4 +58,6 @@ function ocrAssetsPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), ocrAssetsPlugin()],
+  // The companion's tests and benchmark generate libraries of tens of thousands of files there.
+  server: { watch: { ignored: ['**/.test-sandbox/**'] } },
 })

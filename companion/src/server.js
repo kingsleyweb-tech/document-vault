@@ -36,7 +36,7 @@ import { isShortcut, readShortcut } from './shortcuts.js'
 //   Removing a library, excluding a folder or clearing an index never changes
 //   or deletes the files themselves.
 
-export const VERSION = '1.1.0'
+export const VERSION = '1.3.0'
 const MAX_BODY = 16 * 1024
 const PAIRING_TTL_MS = 10 * 60 * 1000
 const MAX_PAIRING_FAILURES = 5
@@ -69,6 +69,15 @@ const PROBLEM_MESSAGES = {
 /** Paging values from a query string, kept within limits. */
 // A stored content hash still describes the file (it has not changed since).
 const CURRENT_HASH = 'h.size = e.size and h.mtime = e.mtime and e.size > 0'
+
+// How a folder's contents can be ordered: the order for its subfolders (1) and for its files (0).
+const BY_NAME = 'e.name collate nocase, e.id'
+const TREE_ORDER = {
+  name: { 1: BY_NAME, 0: BY_NAME },
+  type: { 1: BY_NAME, 0: `e.kind, e.ext, ${BY_NAME}` },
+  modified: { 1: `e.mtime desc, ${BY_NAME}`, 0: `e.mtime desc, ${BY_NAME}` },
+  size: { 1: BY_NAME, 0: `e.size desc, ${BY_NAME}` },
+}
 
 function paging(params, defaultLimit = 50) {
   const limit = Math.min(Math.max(Math.round(Number(params.get('limit')) || defaultLimit), 1), 200)
@@ -145,7 +154,7 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
       scannedPages += Number(row.pages ?? 0)
       recognisedPages += Number(row.done ?? 0)
     }
-    const current = ocr.status().current
+    const current = ocr.currentJob()
     return {
       pref: root.ocr_pref,
       scannedDocs,
@@ -195,6 +204,23 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
   }
 
   const rootView = (id) => store.listRoots().find((root) => root.id === id)
+
+  /**
+   * Whether a result's text is searchable: 'read' (its text is searched),
+   * 'waiting' (not read yet, so only its name is searched for now), 'failed',
+   * 'names-only' (a type whose text is not read, or reading is off) or null for folders.
+   */
+  function textCoverage(row) {
+    if (row.is_dir) return null
+    const doc = docOf.get(row.id)
+    if (doc) {
+      if (doc.state === 'completed') return 'read'
+      if (doc.state === 'failed') return 'failed'
+      if (doc.state === 'skipped') return 'names-only'
+      return 'waiting'
+    }
+    return EXTRACTABLE.has(row.ext) && store.getRoot(row.root_id)?.extract_text ? 'waiting' : 'names-only'
+  }
 
   function describeText(entryId) {
     const doc = docOf.get(entryId)
@@ -253,6 +279,19 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
       if (root && !fs.existsSync(root.path)) return 'offline'
       return 'missing'
     }
+  }
+
+  /** Space the index takes on this computer (the database and its write-ahead log). */
+  function storage() {
+    const file = path.join(dataDir, 'index.sqlite')
+    const size = (suffix) => {
+      try {
+        return fs.statSync(file + suffix).size
+      } catch {
+        return 0
+      }
+    }
+    return { indexBytes: size('') + size('-wal') }
   }
 
   /** An indexed entry that may be read now, or an error saying why not. */
@@ -364,15 +403,23 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
     }
     const scope = scopeSql('e', [root.id])
     const { limit, offset } = paging(params, 200)
-    const folders = db.prepare(`select e.* from entries e where e.parent_key = ? and e.is_dir = 1 and ${scope.sql}
-        order by e.name collate nocase limit ? offset ?`).all(pathKey(parent), ...scope.values, limit, offset)
-    const inside = db.prepare(`select count(*) as n from entries e where e.path_key >= ? and e.path_key < ? and e.is_dir = 0 and ${scope.sql}`)
-    const files = db.prepare(`select e.* from entries e where e.parent_key = ? and e.is_dir = 0 and ${scope.sql}
-        order by e.name collate nocase limit ? offset ?`).all(pathKey(parent), ...scope.values, limit, offset)
+    const sort = TREE_ORDER[params.get('sort')] ? params.get('sort') : 'name'
+    // One more than asked for, to tell whether there are more.
+    const list = (isDir) => db.prepare(`select e.* from entries e where e.parent_key = ? and e.is_dir = ${isDir} and ${scope.sql}
+        order by ${TREE_ORDER[sort][isDir]} limit ? offset ?`).all(pathKey(parent), ...scope.values, limit + 1, offset)
+    const folders = list(1)
+    const files = list(0)
+    // Read from the index alone (migration 5), not from every row below the folder.
+    const inside = db.prepare(`select count(*) as n from entries e indexed by entries_key_dir
+        where e.path_key >= ? and e.path_key < ? and e.is_dir = 0 and ${scope.sql}`)
     return {
       parent: parentId,
-      folders: folders.map((row) => ({ ...describeEntry(row), files: Number(inside.get(...store.belowRange(row.path_key), ...scope.values).n) })),
-      files: files.map((row) => describeEntry(row)),
+      sort,
+      offset,
+      folders: folders.slice(0, limit).map((row) => ({ ...describeEntry(row), files: Number(inside.get(...store.belowRange(row.path_key), ...scope.values).n) })),
+      files: files.slice(0, limit).map((row) => describeEntry(row)),
+      moreFolders: folders.length > limit,
+      moreFiles: files.length > limit,
     }
   }
 
@@ -516,7 +563,24 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
       ocr: ocr.status(),
       roots: store.listRoots().map(describeRoot),
       recovered: store.recovered,
+      storage: storage(),
     })],
+
+    // Gives back space left by removed entries and text. Only while nothing is being indexed or read:
+    // it rewrites the index file, and nothing else can use the index meanwhile.
+    ['POST', /^\/v1\/storage\/compact$/, true, () => {
+      if (indexer.running || indexer.flushing || extractor.active.size > 0 || ocr.current || hasher.current) {
+        throw new HttpError(409, 'The index is in use. Try again when indexing and text reading have finished.')
+      }
+      const before = storage().indexBytes
+      const started = Date.now()
+      db.exec('pragma wal_checkpoint(truncate)')
+      db.exec('vacuum')
+      db.exec('pragma optimize')
+      db.exec('pragma wal_checkpoint(truncate)')
+      store.event('index-compacted', null, JSON.stringify({ before, after: storage().indexBytes }))
+      return { before, after: storage().indexBytes, ms: Date.now() - started }
+    }],
 
     // What Document Vault may read, for the Library Access page.
     ['GET', /^\/v1\/access$/, true, () => ({
@@ -774,6 +838,7 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
         const hit = item.row ? item : { row: item }
         return {
           ...describeEntry(hit.row, await availabilityOf(hit.row)),
+          textCoverage: textCoverage(hit.row),
           match: hit.match ?? null,
           excerpt: hit.excerpt ?? null,
           matchingSections: hit.matchingSections ?? 0,

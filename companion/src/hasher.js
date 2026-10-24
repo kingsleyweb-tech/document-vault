@@ -41,6 +41,8 @@ export class Hasher extends EventEmitter {
     this.current = null
     // Files read since the start; tests use it to confirm unique sizes are never opened.
     this.reads = 0
+    // Told about each file before it is opened (see Indexer.noteRead).
+    this.onRead = () => {}
     const db = store.db
     const scope = scopeSql('e')
     const twinScope = scopeSql('o')
@@ -170,6 +172,7 @@ export class Hasher extends EventEmitter {
     const job = { rootId: root.id, cancelled: false }
     this.current = job
     const hash = createHash('sha256')
+    this.onRead(entry.path, checked.real)
     const handle = await fs.promises.open(checked.real, 'r')
     let info
     try {

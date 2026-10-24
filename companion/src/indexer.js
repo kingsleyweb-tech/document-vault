@@ -2,17 +2,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { extensionOf, kindOf } from './kinds.js'
-import { isProtected, isSkippedName, pathKey } from './paths.js'
+import { childKey, isProtectedKey, isSkippedName, pathKey } from './paths.js'
 
 // Walks the libraries in the background and keeps the index current.
 //
 // - Only libraries the user added are walked, and only while they are active
 //   (not paused or revoked). Every path is checked with the access rules
 //   (access.js) before it is recorded: excluded folders are never opened.
-// - Scans run one library at a time, in batches of BATCH_SIZE rows, yielding
-//   to the event loop between batches so searches stay fast while indexing.
-// - Every scan stamps the rows it sees with a new generation; rows of that
-//   library with an older generation afterwards no longer exist and are removed.
+// - Scans run one library at a time. Each folder's listing is compared with
+//   the index and only the differences are written, in small transactions
+//   (BATCH_SIZE rows or FLUSH_MS, whichever comes first) with the event loop
+//   free in between, so the folder tree and searches answer while a library
+//   is being indexed and a rescan of an unchanged library writes nothing.
 // - A scan stops as soon as the library's access changes (its epoch moves),
 //   for example when a folder is excluded or the library is revoked.
 // - Between scans, change notifications (fs.watch, recursive) update single
@@ -22,11 +23,20 @@ import { isProtected, isSkippedName, pathKey } from './paths.js'
 //   (for example on a disconnected drive) keeps its entries and is reported as
 //   unavailable.
 
-const BATCH_SIZE = 400
+const BATCH_SIZE = 150
+const FLUSH_MS = 120
 const STAT_CONCURRENCY = 24
 const WATCH_DEBOUNCE_MS = 400
 const MAX_ERRORS = 50
 const RECONCILE_MS = 6 * 60 * 60 * 1000
+// Windows reports reading a file (its last-access time changing) as a change.
+// Files the app itself reads are ignored for this long after they were opened.
+const OWN_READ_MS = 10_000
+// After lost notifications, wait this long for more before catching up. While the
+// app is reading files itself, it catches up at most once per gap.
+const OVERFLOW_SETTLE_MS = 1000
+const OVERFLOW_QUIET_MS = 3000
+const OVERFLOW_GAP_MS = 30_000
 
 export class Indexer extends EventEmitter {
   constructor(store, { dataDir, access, reconcileMs = RECONCILE_MS }) {
@@ -46,14 +56,58 @@ export class Indexer extends EventEmitter {
     this.reconcileTimer = null
     this.errors = []
     this.progress = null
+    this.flushing = false
     this.closed = false
+    this.ownReads = new Map()
+    this.lastOwnRead = 0
+    this.overflows = new Map()
+    this.overflowScans = new Map()
+    this.overflowGapMs = OVERFLOW_GAP_MS
+  }
+
+  /** Called before the app opens a file to read it, so the notification that follows is not taken for a change. */
+  noteRead(...targets) {
+    const now = Date.now()
+    this.lastOwnRead = now
+    if (this.ownReads.size > 5000) for (const [key, until] of this.ownReads) if (until <= now) this.ownReads.delete(key)
+    for (const target of targets) if (target) this.ownReads.set(pathKey(target), now + OWN_READ_MS)
+  }
+
+  /**
+   * Notifications were lost, so the library is scanned again. Reading files
+   * (text, duplicates) can by itself produce more notifications than fit, and
+   * each scan would then lead to the next; so while that reading goes on, a
+   * library is caught up at most once per gap. Changes reported in the
+   * meantime are still applied as they come.
+   */
+  overflowed(rootId) {
+    if (this.overflows.has(rootId)) return
+    const run = () => {
+      if (this.closed) return
+      const reading = Date.now() - this.lastOwnRead < OVERFLOW_QUIET_MS
+      const since = Date.now() - (this.overflowScans.get(rootId) ?? 0)
+      if (reading && since < this.overflowGapMs) {
+        this.overflows.set(rootId, later(run, this.overflowGapMs - since))
+        return
+      }
+      this.overflows.delete(rootId)
+      this.overflowScans.set(rootId, Date.now())
+      this.enqueue(rootId)
+    }
+    this.overflows.set(rootId, later(run, OVERFLOW_SETTLE_MS))
+  }
+
+  /** True while a library is being walked: deeper work (reading text, hashing) waits so discovery finishes first. */
+  isDiscovering() {
+    return Boolean(this.running) && !this.paused
   }
 
   status() {
     const counts = this.store.counts()
     return {
-      state: this.paused ? 'paused' : this.running ? 'indexing' : this.pending.size > 0 ? 'updating' : 'idle',
-      current: this.progress,
+      state: this.paused ? 'paused' : this.running ? 'indexing' : this.pending.size > 0 || this.flushing ? 'updating' : 'idle',
+      // `scanned` (entries found so far) is kept for older versions of the app.
+      current: this.progress ? { ...this.progress, scanned: this.progress.folders + this.progress.files, elapsedMs: Date.now() - this.progress.startedAt } : null,
       queued: this.queue.map((job) => job.rootId),
       watching: [...this.watchers.keys()],
       totals: { files: counts.total - counts.folders, folders: counts.folders },
@@ -84,8 +138,10 @@ export class Indexer extends EventEmitter {
     const root = this.store.getRoot(rootId)
     if (!root || root.state !== 'active') return
     const key = folder ? pathKey(folder) : null
+    // Merged with a scan still waiting to start. A scan already under way may have
+    // passed the folders that changed, so the library is scanned again after it.
     const covered = (job) => job.rootId === rootId && (job.key === null || job.key === key)
-    if ((this.running && !this.running.folder && this.running.rootId === rootId && key === null) || this.queue.some(covered)) return
+    if (this.queue.some(covered)) return
     this.queue.push({ rootId, folder, key })
     void this.drain()
   }
@@ -128,6 +184,7 @@ export class Indexer extends EventEmitter {
     clearInterval(this.reconcileTimer)
     for (const id of [...this.watchers.keys()]) this.unwatch(id)
     clearTimeout(this.flushTimer)
+    for (const timer of this.overflows.values()) clearTimeout(timer)
     if (this.running) this.cancelled.add(this.running.rootId)
     this.resume()
     await this.running?.promise
@@ -178,8 +235,9 @@ export class Indexer extends EventEmitter {
     if (start === root.path) this.store.setRootStatus(rootId, 'indexing')
     this.watch(root)
     const generation = Date.now()
-    this.progress = { rootId, root: root.path, scanned: 0, folder: start, startedAt: started }
-    const outcome = await this.walk(root, start, generation)
+    // Counts, not a percentage: how many entries a library holds is not known until it has been walked.
+    this.progress = { rootId, root: root.path, phase: 'discovering', full: start === root.path, folders: 0, files: 0, written: 0, errors: 0, waiting: 0, folder: start, startedAt: started }
+    const outcome = await this.walk(root, start, generation, this.progress)
     if (!outcome) {
       const current = this.store.getRoot(rootId)
       if (current && current.status === 'indexing') this.store.setRootStatus(rootId, 'pending')
@@ -187,13 +245,12 @@ export class Indexer extends EventEmitter {
       if (current && current.state === 'active' && current.epoch !== root.epoch && !this.closed) this.enqueue(rootId)
       return
     }
-    const removed = this.store.removeUnseen(rootId, generation, start === root.path ? null : pathKey(start))
     if (start === root.path) {
       this.store.finishRootScan(rootId, 'ready', null, Date.now() - started)
       this.store.setTypeSkipped(rootId, outcome.typeSkipped)
     }
     this.store.setSynced(rootId)
-    this.emit('scanned', { rootId, removed, ms: Date.now() - started })
+    this.emit('scanned', { rootId, changed: outcome.changed, removed: outcome.removed, ms: Date.now() - started })
   }
 
   /** Depth of a folder below the library's top folder (the top folder is 0). */
@@ -211,51 +268,94 @@ export class Indexer extends EventEmitter {
    * Indexes `start` (a folder inside the library) and everything below it that
    * the library's settings and exclusions allow. Returns null when the scan
    * was cancelled or the library's access changed.
+   *
+   * Each folder's listing is compared with what the index holds for it, and
+   * only differences are written: new and changed entries, and entries that
+   * are gone (with everything below them). A rescan of an unchanged library
+   * therefore reads the disk but writes nothing.
    */
-  async walk(root, start, generation) {
+  async walk(root, start, generation, progress = null) {
     const types = root.file_types ? new Set(JSON.parse(root.file_types)) : null
     const exclusions = this.store.listExclusions(root.id)
-    const excluded = (target) => exclusions.some((exclusion) => target === exclusion.path || pathKey(target) === exclusion.path_key || pathKey(target).startsWith(exclusion.key_lo))
-    if (excluded(start)) return { typeSkipped: 0 }
+    const excluded = (key) => exclusions.some((exclusion) => key === exclusion.path_key || key.startsWith(exclusion.key_lo))
+    const startKey = pathKey(start)
+    if (excluded(startKey)) return { typeSkipped: 0, changed: 0, removed: 0 }
     this.store.clearSkipsBelow(root.id, start)
     let typeSkipped = 0
+    let changed = 0
+    let removed = 0
 
-    const startEntry = await this.describe(root, start, generation)
-    let batch = startEntry ? [startEntry] : []
-    const stack = [{ folder: start, depth: this.depthOf(root, start) }]
+    let rows = []
+    let removals = []
+    let renamed = new Set()
+    let flushedAt = Date.now()
     const flush = async () => {
-      this.store.writeEntries(batch)
-      if (this.progress) this.progress.scanned += batch.length
-      if (batch.length > 0) this.emit('indexed', root.id)
-      batch = []
+      if (rows.length > 0 || removals.length > 0) {
+        this.store.applyEntries(rows, removals, renamed)
+        changed += rows.length
+        if (progress) progress.written += rows.length
+        this.emit('indexed', root.id)
+        rows = []
+        removals = []
+        renamed = new Set()
+      }
+      flushedAt = Date.now()
       this.emit('change')
       // Let searches and API calls run between batches.
       await new Promise((resolve) => setImmediate(resolve))
     }
+    // Records `row` if it is new or differs from what the index holds (`known`).
+    const record = (row, known) => {
+      if (progress) {
+        if (row.is_dir) progress.folders += 1
+        else progress.files += 1
+      }
+      if (known && sameEntry(row, known)) return
+      if (known && known.path !== row.path) renamed.add(row.path_key)
+      // A folder replaced by a file of the same name: what was inside it is gone.
+      if (known && known.is_dir && !row.is_dir) removals.push({ key: row.path_key, below: true })
+      rows.push(row)
+    }
+    const remove = (key, onlyBelow = false) => {
+      removals.push({ key, below: onlyBelow })
+      if (!onlyBelow) removed += 1
+    }
+
+    const startEntry = await this.describe(root, start, startKey, pathKey(path.dirname(start)), generation)
+    if (startEntry) record(startEntry, this.store.entryByPath(start))
+    const stack = [{ folder: start, key: startKey, depth: this.depthOf(root, start) }]
 
     while (stack.length > 0) {
-      const { folder, depth } = stack.pop()
+      const { folder, key: folderKey, depth } = stack.pop()
       if (this.cancelled.has(root.id) || this.closed) return null
       if (this.store.getRoot(root.id)?.epoch !== root.epoch) return null
       await this.gate()
-      if (this.progress) this.progress.folder = folder
+      if (progress) {
+        progress.folder = folder
+        progress.waiting = stack.length
+      }
       let names
       try {
         names = await fs.promises.readdir(folder, { withFileTypes: true })
       } catch (error) {
         this.recordError(folder, error)
-        const pending = batch.find((row) => row.path === folder)
+        if (progress) progress.errors += 1
+        const pending = rows.find((row) => row.path_key === folderKey)
         if (pending) pending.accessible = 0
         else {
           const entry = this.store.entryByPath(folder)
           if (entry) this.store.setAccessible(entry.id, false)
         }
+        // Its contents can no longer be listed, so what was indexed inside it is dropped.
+        remove(folderKey, true)
         continue
       }
+      const known = new Map(this.store.childrenOf(folderKey).map((row) => [row.path_key, row]))
       const children = []
       for (const dirent of names) {
+        const key = childKey(folderKey, dirent.name)
+        if (excluded(key)) continue
         const target = path.join(folder, dirent.name)
-        if (excluded(target)) continue
         if (dirent.isSymbolicLink()) {
           // Followed nowhere: a link could lead outside the library.
           this.store.recordSkip(root.id, target, 'link')
@@ -269,28 +369,37 @@ export class Indexer extends EventEmitter {
           typeSkipped += 1
           continue
         }
-        children.push(dirent)
+        children.push({ dirent, target, key })
       }
       for (let index = 0; index < children.length; index += STAT_CONCURRENCY) {
         const slice = children.slice(index, index + STAT_CONCURRENCY)
-        const rows = await Promise.all(slice.map((dirent) => this.describe(root, path.join(folder, dirent.name), generation, dirent)))
-        for (const row of rows) {
+        const described = await Promise.all(slice.map(({ dirent, target, key }) => this.describe(root, target, key, folderKey, generation, dirent)))
+        for (const row of described) {
           if (!row) continue
-          batch.push(row)
+          const before = known.get(row.path_key)
+          known.delete(row.path_key)
+          record(row, before)
           if (!row.is_dir) continue
-          if (this.descends(root, depth + 1)) stack.push({ folder: row.path, depth: depth + 1 })
-          else if (root.recursive) this.store.recordSkip(root.id, row.path, 'too-deep')
+          if (this.descends(root, depth + 1)) stack.push({ folder: row.path, key: row.path_key, depth: depth + 1 })
+          else {
+            if (root.recursive) this.store.recordSkip(root.id, row.path, 'too-deep')
+            // Not walked into (too deep, or the library does not include subfolders): nothing inside it stays indexed.
+            if (before?.is_dir) remove(row.path_key, true)
+          }
         }
-        if (batch.length >= BATCH_SIZE) await flush()
+        if (rows.length >= BATCH_SIZE || (rows.length + removals.length > 0 && Date.now() - flushedAt >= FLUSH_MS)) await flush()
       }
+      // Indexed before but no longer listed (deleted, renamed, excluded, now a link or a skipped type).
+      for (const gone of known.keys()) remove(gone)
+      if (removals.length >= BATCH_SIZE) await flush()
     }
     await flush()
-    return { typeSkipped }
+    return { typeSkipped, changed, removed }
   }
 
   /** Builds an index row for one path, or null for paths that must not be indexed. */
-  async describe(root, target, generation, dirent) {
-    if (isProtected(target, this.dataDir)) {
+  async describe(root, target, key, parentKey, generation, dirent) {
+    if (isProtectedKey(key, this.dataDir)) {
       if (target !== root.path) this.store.recordSkip(root.id, target, 'protected')
       return null
     }
@@ -309,8 +418,8 @@ export class Indexer extends EventEmitter {
     return {
       root_id: root.id,
       path: target,
-      path_key: pathKey(target),
-      parent_key: pathKey(path.dirname(target)),
+      path_key: key,
+      parent_key: parentKey,
       name,
       ext: isDir ? '' : extensionOf(name),
       kind: kindOf(name, isDir),
@@ -334,11 +443,13 @@ export class Indexer extends EventEmitter {
       watcher = fs.watch(root.path, { recursive: true, persistent: false }, (_event, filename) => {
         if (!filename) {
           // The notification buffer overflowed: changes were lost, so catch up with a scan.
-          this.enqueue(root.id)
+          this.overflowed(root.id)
           return
         }
         const target = path.join(root.path, filename.toString())
-        this.pending.set(pathKey(target), { rootId: root.id, target })
+        const key = pathKey(target)
+        if ((this.ownReads.get(key) ?? 0) > Date.now()) return
+        this.pending.set(key, { rootId: root.id, target })
         clearTimeout(this.flushTimer)
         this.flushTimer = setTimeout(() => void this.flushChanges(), WATCH_DEBOUNCE_MS)
       })
@@ -363,6 +474,22 @@ export class Indexer extends EventEmitter {
 
   /** Applies queued change notifications. Exposed for tests. */
   async flushChanges() {
+    if (this.flushing) {
+      // Applied after the current round; status stays 'updating' meanwhile.
+      clearTimeout(this.flushTimer)
+      this.flushTimer = setTimeout(() => void this.flushChanges(), WATCH_DEBOUNCE_MS)
+      return
+    }
+    this.flushing = true
+    try {
+      await this.applyChanges()
+    } finally {
+      this.flushing = false
+      this.emit('change')
+    }
+  }
+
+  async applyChanges() {
     const changes = [...this.pending.values()]
     this.pending.clear()
     const touched = new Set()
@@ -386,13 +513,15 @@ export class Indexer extends EventEmitter {
         this.store.recordSkip(root.id, target, 'link')
       } else if (info.isDirectory()) {
         // A new or renamed folder may already contain files; index all of it.
-        const generation = Date.now()
-        if (await this.walk(root, target, generation)) this.store.removeUnseen(root.id, generation, pathKey(target))
+        await this.walk(root, target, Date.now())
       } else {
         const types = root.file_types ? new Set(JSON.parse(root.file_types)) : null
         if (types && !types.has(kindOf(path.basename(target), false))) continue
-        const row = await this.describe(root, target, Date.now())
-        if (row) this.store.writeEntries([row])
+        const row = await this.describe(root, target, pathKey(target), pathKey(path.dirname(target)), Date.now())
+        // Reading a file can be reported as a change (its last-access time); write only real changes.
+        const known = row && this.store.entryByPath(target)
+        if (!row || (known && sameEntry(row, known))) continue
+        this.store.writeEntries([row])
       }
       touched.add(root.id)
     }
@@ -400,8 +529,21 @@ export class Indexer extends EventEmitter {
       this.store.setSynced(rootId)
       this.emit('indexed', rootId)
     }
-    this.emit('change')
   }
+}
+
+// Columns a scan compares to decide whether an indexed row needs writing.
+/** An unref'd timeout: waiting for it never keeps the process running. */
+function later(callback, ms) {
+  const timer = setTimeout(callback, ms)
+  timer.unref?.()
+  return timer
+}
+
+const COMPARED = ['root_id', 'path', 'name', 'ext', 'kind', 'is_dir', 'size', 'mtime', 'readonly', 'hidden', 'accessible']
+
+function sameEntry(row, known) {
+  return COMPARED.every((column) => row[column] === known[column])
 }
 
 function relativeParts(rootPath, target) {

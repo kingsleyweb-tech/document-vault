@@ -56,6 +56,8 @@ export class OcrRunner extends EventEmitter {
     this.idleTimer = null
     this.retryTimer = null
     this.nextId = 1
+    // Told about each file before it is opened (see Indexer.noteRead).
+    this.onRead = () => {}
     const db = store.db
     this.sql = {
       queueRoot: db.prepare(`update docs set ocr_state = 'pending', ocr_error = null
@@ -63,6 +65,7 @@ export class OcrRunner extends EventEmitter {
       // Scans read since the last look, in libraries whose owner said yes.
       queueNew: db.prepare(`update docs set ocr_state = 'pending' where ocr_state = 'none' and state = 'completed' and needs_ocr > 0
         and root_id in (select id from roots where state = 'active' and ocr_pref = 'on')`),
+      optedIn: db.prepare(`select 1 from roots where state = 'active' and ocr_pref = 'on' limit 1`),
       doc: db.prepare('select state, sha256 from docs where entry_id = ?'),
       cancelRoot: db.prepare(`update docs set ocr_state = 'cancelled' where root_id = ? and ocr_state in ('pending', 'processing')`),
       interrupted: db.prepare(`update docs set ocr_state = 'pending' where ocr_state = 'processing'`),
@@ -80,8 +83,8 @@ export class OcrRunner extends EventEmitter {
         where entry_id = ?`),
       prioritize: db.prepare(`update docs set priority = 20,
         ocr_state = case when ocr_state in ('cancelled', 'failed') and needs_ocr > 0 then 'pending' else ocr_state end where entry_id = ?`),
-      counts: db.prepare(`select d.ocr_state as state, count(*) as n, sum(d.ocr_pages) as pages, sum(d.ocr_done) as done
-        from docs d join roots r on r.id = d.root_id where r.state <> 'revoked' and d.needs_ocr > 0 group by d.ocr_state`),
+      counts: db.prepare(`select ocr_state as state, count(*) as n, sum(ocr_pages) as pages, sum(ocr_done) as done
+        from docs where root_id in (select id from roots where state <> 'revoked') and needs_ocr > 0 group by ocr_state`),
     }
     // Text reading comes first: try again whenever it changes.
     extractor.on('change', () => this.schedule())
@@ -139,8 +142,14 @@ export class OcrRunner extends EventEmitter {
       counts,
       pages,
       done,
-      current: this.current ? { entryId: this.current.entryId, rootId: this.current.rootId, name: this.current.name, page: this.current.page, done: this.current.done, total: this.current.total } : null,
+      current: this.currentJob(),
     }
+  }
+
+  /** The document being recognised, if any. */
+  currentJob() {
+    const job = this.current
+    return job ? { entryId: job.entryId, rootId: job.rootId, name: job.name, page: job.page, done: job.done, total: job.total } : null
   }
 
   async close() {
@@ -167,6 +176,8 @@ export class OcrRunner extends EventEmitter {
   }
 
   hasWork() {
+    // Looking for new scans goes through every document; only when a library said yes.
+    if (!this.sql.optedIn.get()) return false
     this.sql.queueNew.run()
     return Boolean(this.sql.next.get())
   }
@@ -179,14 +190,15 @@ export class OcrRunner extends EventEmitter {
 
   drain() {
     if (this.closed || this.paused || this.current) return
+    if (!this.extractorIdle()) {
+      // Text reading is under way; look again shortly.
+      clearTimeout(this.retryTimer)
+      this.retryTimer = setTimeout(() => this.drain(), this.options.retryMs)
+      return
+    }
     const doc = this.hasWork() ? this.sql.next.get() : null
     if (!doc) {
       this.idleSoon()
-      return
-    }
-    if (!this.extractorIdle()) {
-      // Text reading is under way; look again shortly.
-      this.retryTimer = setTimeout(() => this.drain(), this.options.retryMs)
       return
     }
     clearTimeout(this.idleTimer)
@@ -246,6 +258,7 @@ export class OcrRunner extends EventEmitter {
 
     // Open once, then confirm the opened file is the one that was checked and read.
     let bytes
+    this.onRead(entry.path, checked.real)
     const handle = await fs.promises.open(checked.real, 'r').catch((error) => error)
     if (handle instanceof Error) return stop('pending', friendlyError(handle))
     try {

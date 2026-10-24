@@ -3,6 +3,14 @@ import { CompanionError, type IndexStatus, type LinkStatus, type LocalKind, type
 export const numberFormat = new Intl.NumberFormat()
 export const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
+/** "1:05" or "12 s": how long the current walk has taken. */
+export function elapsedText(ms: number) {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+}
+
 export type Tone = '' | 'success' | 'danger' | 'accent'
 
 /** One plain-language state for a library, from its access state and its scan status. */

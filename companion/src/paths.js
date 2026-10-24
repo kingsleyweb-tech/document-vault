@@ -10,6 +10,12 @@ export function pathKey(value) {
   return caseInsensitive ? resolved.toLowerCase() : resolved
 }
 
+/** The key of an entry listed in a folder, from the folder's key; the same as pathKey(path.join(folder, name)). */
+export function childKey(folderKey, name) {
+  const key = caseInsensitive ? name.toLowerCase() : name
+  return folderKey.endsWith(path.sep) ? folderKey + key : folderKey + path.sep + key
+}
+
 // Keys strictly below a folder: from "folder<sep>" up to, not including, the
 // same prefix ending in the character after the separator ("]" after "\", "0" after "/").
 export function belowRange(key) {
@@ -18,6 +24,7 @@ export function belowRange(key) {
   return [start, end]
 }
 
+/** Whether `child` is `parent` or inside it. */
 export function isInside(child, parent) {
   const childKey = pathKey(child)
   const parentKey = pathKey(parent)
@@ -72,8 +79,29 @@ export function isSkippedName(name) {
   return SKIPPED_NAMES.has(name.toLowerCase())
 }
 
+// The keys of the protected locations, worked out once per data folder: the
+// check runs for every file a scan finds.
+const protectedKeys = new Map()
+
+function keysFor(dataDir) {
+  let keys = protectedKeys.get(dataDir)
+  if (!keys) {
+    keys = protectedLocations(dataDir).map((location) => {
+      const key = pathKey(location)
+      return { key, prefix: key.endsWith(path.sep) ? key : key + path.sep }
+    })
+    protectedKeys.set(dataDir, keys)
+  }
+  return keys
+}
+
 export function isProtected(target, dataDir) {
-  return protectedLocations(dataDir).some((location) => isInside(target, location))
+  return isProtectedKey(pathKey(target), dataDir)
+}
+
+/** isProtected for a path already turned into its key. */
+export function isProtectedKey(key, dataDir) {
+  return keysFor(dataDir).some((location) => key === location.key || key.startsWith(location.prefix))
 }
 
 /** Problems with a folder the user wants indexed, or null when it is acceptable. */

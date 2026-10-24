@@ -182,6 +182,22 @@ const MIGRATIONS = [
     primary key (kind, key)
   );
   `,
+
+  // 5: faster counts. Scans now write only what changed, so the scan
+  // generation index is no longer used. Counting a library's files and
+  // folders, and the files below a folder (with the access checks), reads
+  // only these indexes instead of every row.
+  `
+  drop index if exists entries_root_gen;
+  create index if not exists entries_root_dir on entries (root_id, is_dir);
+  create index if not exists entries_key_dir on entries (path_key, is_dir, root_id);
+  `,
+
+  // 6: the status the app polls reads only documents with scanned pages for
+  // the text recognition counts, rather than every document.
+  `
+  create index if not exists docs_scans on docs (root_id, ocr_state, ocr_done, ocr_pages, needs_ocr) where needs_ocr > 0;
+  `,
 ]
 
 export const SCHEMA_VERSION = 1 + MIGRATIONS.length

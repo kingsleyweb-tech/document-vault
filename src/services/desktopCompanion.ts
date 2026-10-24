@@ -108,9 +108,31 @@ export interface LocalRoot {
   ai: 'off'
 }
 
+/** The library being walked. Counts only: how many entries a library holds is not known until it has been walked. */
+export interface IndexProgress {
+  rootId: number
+  root: string
+  /** Entries found so far. */
+  scanned: number
+  folder: string
+  startedAt: number
+  /** Present from companion 1.3. */
+  phase?: 'discovering'
+  /** The whole library is walked (not one changed folder). */
+  full?: boolean
+  folders?: number
+  files?: number
+  /** New or changed entries written to the index. */
+  written?: number
+  /** Folders found but not yet listed. */
+  waiting?: number
+  errors?: number
+  elapsedMs?: number
+}
+
 export interface IndexStatus {
   state: 'idle' | 'indexing' | 'paused' | 'updating'
-  current: { rootId: number; root: string; scanned: number; folder: string; startedAt: number } | null
+  current: IndexProgress | null
   queued: number[]
   watching: number[]
   totals: { files: number; folders: number }
@@ -118,7 +140,8 @@ export interface IndexStatus {
 }
 
 export interface TextStatus {
-  state: 'idle' | 'reading' | 'paused'
+  /** 'waiting': held until the library being indexed has been walked (companion 1.3). */
+  state: 'idle' | 'reading' | 'paused' | 'waiting'
   counts: Partial<Record<TextState, number>>
   current: Array<{ entryId: number; name: string }>
 }
@@ -142,6 +165,8 @@ export interface CompanionStatus {
   roots: LocalRoot[]
   /** The index was damaged and rebuilt at the last start. */
   recovered?: boolean
+  /** Space the index takes on this computer. Present from companion 1.3. */
+  storage?: { indexBytes: number }
 }
 
 export type SearchMode = 'names' | 'documents' | 'fulltext' | 'all'
@@ -165,7 +190,15 @@ export interface TextExcerpt {
 export type MetaField = 'title' | 'author' | 'subject' | 'keywords' | 'publisher'
 export type DocumentMeta = Partial<Record<MetaField, { value: string; source: 'user' | 'original' | 'extracted' }>>
 
+/**
+ * Whether a result's text is searched: 'read', 'waiting' (not read yet, so only
+ * its name is searched for now), 'failed', or 'names-only' (its type is not read).
+ */
+export type TextCoverage = 'read' | 'waiting' | 'failed' | 'names-only'
+
 export interface LocalHit extends LocalEntry {
+  /** Null for folders. Present from companion 1.3. */
+  textCoverage?: TextCoverage | null
   match?: MatchType | null
   excerpt?: TextExcerpt | null
   matchingSections?: number
@@ -249,6 +282,18 @@ export interface PageLink {
   targetId: number | null
   targetName: string | null
   targetKind: LocalKind | null
+}
+
+export type TreeSort = 'name' | 'type' | 'modified' | 'size'
+
+/** One level of a library's folder tree, a page at a time. */
+export interface TreeLevel {
+  parent: number | null
+  folders: TreeFolder[]
+  files: LocalEntry[]
+  /** More subfolders or files follow this page. Present from companion 1.3. */
+  moreFolders?: boolean
+  moreFiles?: boolean
 }
 
 export interface TreeFolder extends LocalEntry {
@@ -501,8 +546,14 @@ export const companion = {
   excludeFolder: (id: number, folder: { entryId: number } | { path: string }) =>
     call<{ root: LocalRoot }>('POST', `/v1/roots/${id}/exclusions`, { body: folder }),
   removeExclusion: (id: number, exclusionId: number) => call<{ root: LocalRoot }>('DELETE', `/v1/roots/${id}/exclusions/${exclusionId}`),
-  tree: (id: number, parent: number | null, signal?: AbortSignal) =>
-    call<{ parent: number | null; folders: TreeFolder[]; files: LocalEntry[] }>('GET', `/v1/roots/${id}/tree${parent ? `?parent=${parent}` : ''}`, { signal }),
+  tree: (id: number, parent: number | null, options: { sort?: TreeSort; offset?: number; signal?: AbortSignal } = {}) => {
+    const params = new URLSearchParams()
+    if (parent) params.set('parent', String(parent))
+    if (options.sort && options.sort !== 'name') params.set('sort', options.sort)
+    if (options.offset) params.set('offset', String(options.offset))
+    const query = params.toString()
+    return call<TreeLevel>('GET', `/v1/roots/${id}/tree${query ? `?${query}` : ''}`, { signal: options.signal })
+  },
   health: (id: number, signal?: AbortSignal) => call<{ library: LocalRoot; summary: HealthSummary }>('GET', `/v1/roots/${id}/health`, { signal }),
   healthSection: <T extends HealthItem | DuplicateGroup = HealthItem>(id: number, section: HealthSection, signal?: AbortSignal) =>
     call<{ section: HealthSection; items: T[] }>('GET', `/v1/roots/${id}/health?section=${section}&limit=200`, { signal }),
@@ -520,6 +571,8 @@ export const companion = {
     call<{ ok: true }>('POST', '/v1/duplicates/dismiss', { body: { kind, key, dismissed } }),
   rescan: (rootId?: number) => call<{ queued: number[] }>('POST', '/v1/index/rescan', { body: rootId ? { rootId } : {} }),
   pause: () => call<IndexStatus>('POST', '/v1/index/pause', { body: {} }),
+  /** Gives back space left by removed entries. Refused (409) while indexing or reading. */
+  compactIndex: () => call<{ before: number; after: number; ms: number }>('POST', '/v1/storage/compact', { body: {} }),
   resume: () => call<IndexStatus>('POST', '/v1/index/resume', { body: {} }),
 
   search(params: LocalSearchParams, signal?: AbortSignal) {

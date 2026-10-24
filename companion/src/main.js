@@ -70,14 +70,21 @@ export async function startCompanion({
   const access = createAccess(store, { dataDir })
   const indexer = new Indexer(store, { dataDir, access, reconcileMs })
   const extractor = new Extractor(store, access, extraction)
-  // Newly indexed or changed documents are queued for reading.
+  // Newly indexed or changed documents are queued for reading, once discovery has finished:
+  // finding files comes first, and reading, recognising and comparing them wait.
+  extractor.setHold(() => indexer.isDiscovering())
+  indexer.on('change', () => extractor.release())
   indexer.on('indexed', (rootId) => extractor.queueRoot(rootId))
-  indexer.on('scanned', ({ rootId }) => extractor.queueRoot(rootId))
+  indexer.on('scanned', ({ rootId, changed, removed }) => {
+    if (changed + removed > 0) extractor.queueRoot(rootId)
+  })
   // Scanned pages are recognised after text reading, in libraries whose owner agreed.
   const ocr = new OcrRunner(store, access, extractor, recognition)
   // Files with the same size as another are compared, to list duplicate books.
   const hasher = new Hasher(store, access, extractor, hashing)
   indexer.on('scanned', () => hasher.schedule())
+  // On Windows, reading a file is reported as a change; the indexer ignores files the app itself reads.
+  extractor.onRead = ocr.onRead = hasher.onRead = (...targets) => indexer.noteRead(...targets)
   const { server, newPairingCode } = createCompanionServer({
     store,
     indexer,

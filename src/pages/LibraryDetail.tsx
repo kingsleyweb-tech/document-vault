@@ -5,6 +5,7 @@ import { CompanionSetup } from '../components/desktop/CompanionSetup'
 import { useLocalOpener } from '../components/desktop/openLocalEntry'
 import { LocalPreview } from '../components/desktop/LocalPreview'
 import { FolderTree } from '../components/library/FolderTree'
+import { IndexingActivity } from '../components/library/IndexingActivity'
 import { LibraryHealth } from '../components/library/LibraryHealth'
 import { LibraryReferences } from '../components/library/LibraryReferences'
 import { LibrarySettings } from '../components/library/LibrarySettings'
@@ -123,6 +124,7 @@ export function LibraryDetail() {
         ) : null}
         <span>AI search: off</span>
       </div>
+      {status ? <IndexingActivity root={root} status={status} onChanged={() => void refresh()} /> : null}
       <OcrOffer root={root} onDecided={(changed) => say(changed.ocr?.pref === 'on' ? 'Recognising scanned pages in the background.' : 'Scanned pages stay searchable by name only. You can change this in Settings & access.')} />
       {state.detail && state.tone === 'danger' ? (
         <p className="notice notice--error" role="status">

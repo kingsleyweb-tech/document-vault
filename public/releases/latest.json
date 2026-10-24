@@ -4,9 +4,10 @@
   "version": "1.2.0",
   "releasedAt": "2026-10-24T09:04:08.000Z",
   "notes": [
-    "A web browser inside Document Vault: open websites in tabs beside your books, save pages as references with notes and folders, and check saved links for broken ones. Websites are kept apart from your library and documents.",
-    "Web links in a book can open beside it, so you keep your place while you read the source.",
-    "Library folders show every file in them again, and shortcuts open what they point to inside the app, including EPUB books."
+    "Much faster libraries: files appear and can be searched by name as soon as they are found, large libraries are listed several times faster, and checking a library again writes only what changed.",
+    "While a library is being indexed you can see how many folders and files have been found, what is still to read, and pause or resume it.",
+    "Folders can be sorted by name, type, date or size and long folders load a page at a time. Search says which results were found by name only because their text has not been read yet.",
+    "Fixes: renamed folders are no longer missed when a library changes while it is being checked, and documents that cannot be read are no longer read again and again."
   ],
   "notesUrl": null,
   "builds": [

@@ -51,6 +51,9 @@ export class Extractor extends EventEmitter {
     this.closed = false
     this.queueTimer = null
     this.pendingRoots = new Set()
+    this.hold = () => false
+    // Told about each file before it is opened (see Indexer.noteRead).
+    this.onRead = () => {}
     const db = store.db
     const extensions = [...EXTRACTABLE].map((extension) => `'${extension}'`).join(', ')
     this.sql = {
@@ -68,6 +71,8 @@ export class Extractor extends EventEmitter {
         where d.state = 'pending' and r.state = 'active' and r.extract_text = 1 and r.status not in ('unavailable', 'denied')
         order by d.priority desc, d.entry_id limit ?`),
       setState: db.prepare('update docs set state = ?, error = ?, attempts = attempts + ? where entry_id = ?'),
+      // Also records the file's size and date, so it is tried again only when the file changes.
+      giveUp: db.prepare('update docs set state = ?, error = ?, attempts = attempts + ?, size = ?, mtime = ? where entry_id = ?'),
       cancelRoot: db.prepare(`update docs set state = 'cancelled' where root_id = ? and state in ('pending', 'processing')`),
       get: db.prepare('select * from docs where entry_id = ?'),
       prioritize: db.prepare(`update docs set priority = 20, state = case when state in ('failed', 'cancelled', 'skipped') then 'pending' else state end,
@@ -104,7 +109,8 @@ export class Extractor extends EventEmitter {
       fileHash: db.prepare(`insert into file_hashes (entry_id, root_id, size, mtime, sha256, at) values (?, ?, ?, ?, ?, ?)
         on conflict (entry_id) do update set root_id = excluded.root_id, size = excluded.size, mtime = excluded.mtime,
           sha256 = excluded.sha256, at = excluded.at`),
-      counts: db.prepare(`select d.state, count(*) as n from docs d join roots r on r.id = d.root_id where r.state <> 'revoked' group by d.state`),
+      // Per library from the (root_id, state) index, rather than joining every document to its library.
+      counts: db.prepare(`select state, count(*) as n from docs where root_id in (select id from roots where state <> 'revoked') group by state`),
     }
   }
 
@@ -113,11 +119,28 @@ export class Extractor extends EventEmitter {
     for (const root of this.store.listRootRows()) if (root.state === 'active') this.queueRoot(root.id)
   }
 
+  /**
+   * Holds reading while `hold()` is true (a library is being discovered):
+   * finding files comes first. Call release() when it may have become false.
+   */
+  setHold(hold) {
+    this.hold = hold
+  }
+
+  release() {
+    if (this.hold()) return
+    if (this.pendingRoots.size > 0 && !this.queueTimer) this.queueRoot([...this.pendingRoots][0])
+    void this.drain()
+  }
+
   /** Queues new and changed documents of a library. Called after the indexer writes entries. */
   queueRoot(rootId) {
     this.pendingRoots.add(rootId)
     clearTimeout(this.queueTimer)
     this.queueTimer = setTimeout(() => {
+      this.queueTimer = null
+      // Looking for new documents goes through the whole library; do it once discovery has finished.
+      if (this.hold()) return
       for (const id of this.pendingRoots) {
         this.sql.queueNew.run(id)
         this.sql.queueChanged.run(id)
@@ -160,7 +183,8 @@ export class Extractor extends EventEmitter {
   status() {
     const counts = Object.fromEntries(this.sql.counts.all().map((row) => [row.state, Number(row.n)]))
     return {
-      state: this.paused ? 'paused' : this.active.size > 0 ? 'reading' : 'idle',
+      // 'waiting': held until the library being discovered has been walked.
+      state: this.paused ? 'paused' : this.active.size > 0 ? 'reading' : this.hold() && (counts.pending ?? 0) + this.pendingRoots.size > 0 ? 'waiting' : 'idle',
       counts,
       current: [...this.active.values()].map((job) => ({ entryId: job.entryId, name: job.name })),
     }
@@ -175,6 +199,7 @@ export class Extractor extends EventEmitter {
 
   /** True when nothing is being read or waiting to be read. */
   isIdle() {
+    if (this.hold()) return false
     return this.active.size === 0 && this.pendingRoots.size === 0 && this.sql.next.all(1).length === 0
   }
 
@@ -190,7 +215,7 @@ export class Extractor extends EventEmitter {
   }
 
   async drain() {
-    if (this.paused || this.closed) return
+    if (this.paused || this.closed || this.hold()) return
     while (this.active.size < this.options.concurrency) {
       const [doc] = this.sql.next.all(1)
       if (!doc) return
@@ -221,7 +246,7 @@ export class Extractor extends EventEmitter {
     try {
       const link = await fs.promises.lstat(entry.path)
       if (link.isSymbolicLink()) return stop('skipped', 'link')
-      if (link.size > this.options.maxBytes) return stop('skipped', 'too-large')
+      if (link.size > this.options.maxBytes) return this.sql.giveUp.run('skipped', 'too-large', 0, link.size, Math.round(link.mtimeMs), entry.id)
       checked = await this.access.checkReal(root, entry.path, 'index')
     } catch (error) {
       return this.unreadable(entry, root, error)
@@ -231,6 +256,7 @@ export class Extractor extends EventEmitter {
     // Open once, then confirm the opened file is the one checked (not swapped meanwhile).
     let bytes
     let info
+    this.onRead(entry.path, checked.real)
     const handle = await fs.promises.open(checked.real, 'r').catch((error) => error)
     if (handle instanceof Error) return this.unreadable(entry, root, handle)
     try {
@@ -238,7 +264,7 @@ export class Extractor extends EventEmitter {
       const now = await fs.promises.stat(checked.real)
       const again = await this.access.checkReal(root, entry.path, 'index')
       if (again.problem || now.ino !== info.ino || now.dev !== info.dev) return stop('cancelled')
-      if (info.size > this.options.maxBytes) return stop('skipped', 'too-large')
+      if (info.size > this.options.maxBytes) return this.sql.giveUp.run('skipped', 'too-large', 0, info.size, Math.round(info.mtimeMs), entry.id)
       bytes = await handle.readFile()
     } finally {
       await handle.close()
@@ -290,7 +316,8 @@ export class Extractor extends EventEmitter {
       if (error.code === 'CANCELLED') return stop('cancelled')
       const attempts = doc.attempts + 1
       const retry = error.code === 'CRASHED' && attempts < this.options.maxAttempts
-      return stop(retry ? 'pending' : 'failed', describeFailure(error), 1)
+      if (retry) return stop('pending', describeFailure(error), 1)
+      return this.sql.giveUp.run('failed', describeFailure(error), 1, info.size, mtime, entry.id)
     }
 
     // Access may have changed while the worker was reading: check again before keeping anything.

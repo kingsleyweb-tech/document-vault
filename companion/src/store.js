@@ -42,7 +42,6 @@ create table if not exists entries (
   scan_gen integer not null default 0
 );
 
-create index if not exists entries_root_gen on entries (root_id, scan_gen);
 create index if not exists entries_parent on entries (parent_key);
 create index if not exists entries_kind on entries (kind);
 create index if not exists entries_mtime on entries (mtime);
@@ -132,10 +131,12 @@ export function openStore(file) {
     deleteStaleRoot: db.prepare('delete from entries where root_id = ? and scan_gen < ?'),
     deleteKey: db.prepare('delete from entries where path_key = ?'),
     deleteBelow: db.prepare('delete from entries where path_key >= ? and path_key < ?'),
+    // What a scan compares with the folder listing: one folder's indexed children.
+    children: db.prepare('select id, root_id, path, path_key, name, ext, kind, is_dir, size, mtime, readonly, hidden, accessible from entries where parent_key = ?'),
     getEntry: db.prepare('select * from entries where id = ?'),
     entryByKey: db.prepare('select * from entries where path_key = ?'),
     setAccessible: db.prepare('update entries set accessible = ? where id = ?'),
-    counts: db.prepare(`select count(*) as total, sum(e.is_dir) as folders from entries e join roots r on r.id = e.root_id where r.state <> 'revoked'`),
+    counts: db.prepare(`select count(*) as total, sum(e.is_dir) as folders from entries e where e.root_id in (select id from roots where state <> 'revoked')`),
     bumpEpoch: db.prepare('update roots set epoch = epoch + 1 where id = ?'),
     setState: db.prepare('update roots set state = ?, revoked_at = ? where id = ?'),
     setSynced: db.prepare('update roots set last_sync_at = ? where id = ?'),
@@ -250,19 +251,31 @@ export function openStore(file) {
 
     /** Writes a batch of scanned entries in one transaction. */
     writeEntries(rows) {
-      if (rows.length === 0) return
-      db.exec('begin')
-      try {
+      this.applyEntries(rows, [])
+    },
+
+    /**
+     * Applies what a scan found in one transaction: `removals` first (a path
+     * and everything below it, or with `below` only what is below it), then
+     * new and changed `rows`. `renamed` holds the keys of rows whose name
+     * changed only in letter case; when it is omitted every row is checked.
+     */
+    applyEntries(rows, removals, renamed = null) {
+      if (rows.length === 0 && removals.length === 0) return
+      transaction(() => {
+        for (const { key, below: onlyBelow } of removals) {
+          if (!onlyBelow) statements.deleteKey.run(key)
+          statements.deleteBelow.run(...below(key))
+        }
         for (const row of rows) {
           statements.upsert.run(row)
-          statements.renameCase.run(row.name, row.path, row.ext, row.path_key, row.path)
+          if (!renamed || renamed.has(row.path_key)) statements.renameCase.run(row.name, row.path, row.ext, row.path_key, row.path)
         }
-        db.exec('commit')
-      } catch (error) {
-        db.exec('rollback')
-        throw error
-      }
+      })
     },
+
+    /** The indexed children of a folder, by the folder's key. */
+    childrenOf: (folderKey) => statements.children.all(folderKey),
 
     /** Removes entries of a root (or one folder of it) that the latest scan did not see. */
     removeUnseen(rootId, generation, folderKey = null) {

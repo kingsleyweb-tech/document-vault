@@ -303,6 +303,35 @@ input[type='radio'] {
 }
 
 /* Folder tree */
+.folder-tree-view {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-tree__toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.folder-tree__toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.folder-tree__toolbar select {
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
 .folder-tree {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -409,6 +438,83 @@ input[type='radio'] {
   padding-block: 10px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.folder-tree__more {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+}
+
+/* Indexing activity */
+.index-activity {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-softer);
+}
+
+.index-activity__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.index-activity__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.index-activity__title svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-strong);
+}
+
+.index-activity__counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.index-activity__counts div {
+  display: grid;
+  gap: 2px;
+}
+
+.index-activity__counts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.index-activity__counts dd {
+  margin: 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.index-activity__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.index-activity__folder {
+  overflow: hidden;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Health */
