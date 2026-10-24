@@ -7,6 +7,10 @@ const { contentSecurityPolicy, createStaticServer } = require('./static-server.c
 const { createBrowserSignIn } = require('./browser-sign-in.cjs')
 const { companionOrigins } = require('./origins.cjs')
 const { findUpdate } = require('./updates.cjs')
+const { createWebBrowser } = require('./web-browser.cjs')
+const { createWebLibrary } = require('./web-library.cjs')
+const { checkLinks } = require('./web-linkcheck.cjs')
+const { isAllowedRequest, parseWebUrl } = require('./web-urls.cjs')
 
 const SITE = 'https://documents-vault.vercel.app'
 const RELEASES_URL = `${SITE}/releases/latest.json`
@@ -28,6 +32,10 @@ let mainWindow = null
 let appOrigin = null
 let companion = null
 let staticServer = null
+// The in-app web browser (web-browser.cjs) and its saved references.
+let webBrowser = null
+let webLibrary = null
+let linkCheckSession = null
 
 // Google sign-in happens in the user's browser; see browser-sign-in.cjs.
 const browserSignIn = createBrowserSignIn({
@@ -83,6 +91,19 @@ async function start() {
     console.error('Desktop Files is unavailable:', error)
     return null
   })
+
+  webLibrary = createWebLibrary(path.join(app.getPath('userData'), 'web-library.json'))
+  webBrowser = createWebBrowser({
+    getWindow: () => mainWindow,
+    getAppZoom: () => mainWindow?.webContents.getZoomFactor() ?? 1,
+    library: webLibrary,
+    notify: (kind, payload) => mainWindow?.webContents.send(`dv:web:${kind}`, payload),
+    openExternal: openWebExternally,
+    userAgent: app.userAgentFallback,
+  })
+  linkCheckSession = session.fromPartition('document-vault-link-check')
+  linkCheckSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !isAllowedRequest(details.url) }))
+  linkCheckSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
 
   registerIpc()
   Menu.setApplicationMenu(buildMenu())
@@ -160,6 +181,12 @@ function openExternally(url) {
   }
 }
 
+/** "Open in default browser" from the in-app browser: web pages only, never this computer. */
+function openWebExternally(url) {
+  const parsed = parseWebUrl(url)
+  if (parsed) void shell.openExternal(parsed.href)
+}
+
 function lockDownSessions() {
   const allowed = new Set(['fullscreen', 'clipboard-sanitized-write'])
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -194,9 +221,15 @@ function createWindow() {
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
+    webBrowser?.destroy()
     mainWindow = null
   })
   guardContents(mainWindow.webContents)
+  // A reloaded app page no longer has a browser area; hide the web page until it reports one.
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) webBrowser?.setHost(null, null, { force: true })
+  })
+  mainWindow.webContents.on('zoom-changed', () => setImmediate(() => webBrowser?.relayout()))
   void mainWindow.loadURL(`${appOrigin}/app`)
 }
 
@@ -232,7 +265,8 @@ function guardContents(contents) {
 
 app.on('web-contents-created', (_event, contents) => {
   // Sign-in pop-ups may move between Google and Firebase pages, nowhere else.
-  if (contents.getType() !== 'window') return
+  // Pages of the in-app browser have their own rules (web-browser.cjs).
+  if (contents.getType() !== 'window' || webBrowser?.owns(contents)) return
   contents.on('will-navigate', (event, url) => {
     if (isAppUrl(url) || isPopupUrl(url)) return
     event.preventDefault()
@@ -279,6 +313,96 @@ function registerIpc() {
     if (!fromApp(event)) return
     return checkForUpdates({ quiet: false })
   })
+  // The in-app browser. Only the app's page may drive it; websites have no bridge at all.
+  ipcMain.handle('dv:web', async (event, request) => {
+    if (!fromApp(event) || !webBrowser) throw new Error('Not allowed')
+    try {
+      return { ok: true, value: await webAction(request ?? {}) }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  })
+}
+
+const text = (value, max = 8192) => (typeof value === 'string' ? value.slice(0, max) : '')
+const id = (value) => (Number.isSafeInteger(value) ? value : -1)
+
+async function webAction(request) {
+  switch (request.action) {
+    case 'state':
+      return webBrowser.state()
+    case 'open':
+      return webBrowser.open({
+        url: text(request.url),
+        newTab: Boolean(request.newTab),
+        source: request.source && typeof request.source === 'object' ? { name: text(request.source.name, 300), entryId: Number.isSafeInteger(request.source.entryId) ? request.source.entryId : null } : null,
+      })
+    case 'navigate':
+      return webBrowser.navigate(id(request.tabId), text(request.input))
+    case 'command':
+      return webBrowser.command(id(request.tabId), text(request.name, 20))
+    case 'new-tab':
+      return webBrowser.newTab({})
+    case 'activate':
+      return webBrowser.activate(id(request.tabId))
+    case 'close-tab':
+      return webBrowser.closeTab(id(request.tabId))
+    case 'host': {
+      const bounds = request.bounds
+      const valid = bounds && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(bounds[key]))
+      return webBrowser.setHost(text(request.hostId, 64), valid ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } : null)
+    }
+    case 'open-external':
+      return openWebExternally(text(request.url))
+    case 'copy': {
+      const url = parseWebUrl(text(request.url))
+      if (url) clipboard.writeText(url.href)
+      return Boolean(url)
+    }
+    case 'email': {
+      const url = parseWebUrl(text(request.url))
+      if (!url) return false
+      const subject = text(request.title, 300) || url.hostname
+      await shell.openExternal(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(url.href)}`)
+      return true
+    }
+    case 'library':
+      return webLibrary.snapshot()
+    case 'save-bookmark':
+      return webLibrary.saveBookmark({ url: text(request.url), title: text(request.title, 300), note: text(request.note, 4000), folder: text(request.folder, 80), source: request.source ?? null })
+    case 'update-bookmark':
+      return webLibrary.updateBookmark(text(request.bookmarkId, 64), {
+        ...(request.url !== undefined ? { url: text(request.url) } : {}),
+        ...(request.title !== undefined ? { title: text(request.title, 300) } : {}),
+        ...(request.note !== undefined ? { note: text(request.note, 4000) } : {}),
+        ...(request.folder !== undefined ? { folder: text(request.folder, 80) } : {}),
+      })
+    case 'remove-bookmark':
+      return webLibrary.removeBookmark(text(request.bookmarkId, 64))
+    case 'add-folder':
+      return webLibrary.addFolder(text(request.name, 80))
+    case 'rename-folder':
+      return webLibrary.renameFolder(text(request.from, 80), text(request.to, 80))
+    case 'remove-folder':
+      return webLibrary.removeFolder(text(request.name, 80))
+    case 'remove-visit':
+      return webLibrary.removeVisit(text(request.visitId, 64))
+    case 'clear-history':
+      return webLibrary.clearHistory()
+    case 'clear-browsing-data':
+      return webBrowser.clearBrowsingData()
+    case 'check-links': {
+      const ids = Array.isArray(request.bookmarkIds) ? request.bookmarkIds.map((value) => text(value, 64)) : null
+      const items = webLibrary.bookmarkUrls(ids)
+      await checkLinks((url, init) => linkCheckSession.fetch(url, init), items, (bookmarkId, result) => {
+        webLibrary.setCheck(bookmarkId, result)
+        mainWindow?.webContents.send('dv:web:check', { bookmarkId, result })
+      })
+      return { checked: items.length }
+    }
+    default:
+      throw new Error('Unknown action')
+  }
 }
 
 async function checkForUpdates({ quiet }) {
@@ -368,6 +492,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   browserSignIn.cancel()
+  webLibrary?.flush()
   void companion?.close()
   void staticServer?.close()
 })

@@ -4,9 +4,9 @@
   "version": "1.1.0",
   "releasedAt": "2026-10-24T00:10:31.654Z",
   "notes": [
-    "Libraries: choose folders on your computer, such as your law books, and search the text inside them with page numbers. Nothing is uploaded.",
-    "Scanned books can be searched by their words: Document Vault asks once per library and recognises the scanned pages on your computer (OCR).",
-    "Links between web pages and books in a library are checked, and each library has a Health page showing what could not be read and why."
+    "A web browser inside Document Vault: open websites in tabs beside your books, save pages as references with notes and folders, and check saved links for broken ones. Websites are kept apart from your library and documents.",
+    "Web links in a book can open beside it, so you keep your place while you read the source.",
+    "Library folders show every file in them again, and shortcuts open what they point to inside the app, including EPUB books."
   ],
   "notesUrl": null,
   "builds": [

@@ -555,6 +555,8 @@ export const companion = {
     call<{ meta: DocumentMeta | null }>('PATCH', `/v1/entries/${id}/metadata`, { body: changes }),
   readText: (id: number) => call<{ text: DocumentText | null }>('POST', `/v1/entries/${id}/extract`, { body: {} }),
   open: (id: number) => call<{ ok: true }>('POST', `/v1/entries/${id}/open`, { body: {} }),
+  /** Where a shortcut points: a web address, or the indexed file or folder (null if not indexed). */
+  shortcutTarget: (id: number) => call<{ url: string | null; entry: LocalEntry | null }>('GET', `/v1/entries/${id}/target`),
   reveal: (id: number) => call<{ ok: true }>('POST', `/v1/entries/${id}/reveal`, { body: {} }),
   content: (id: number, signal?: AbortSignal) => call<Blob>('GET', `/v1/entries/${id}/content`, { signal, raw: true }),
 }

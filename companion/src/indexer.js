@@ -201,10 +201,10 @@ export class Indexer extends EventEmitter {
     return path.relative(root.path, target).split(path.sep).filter(Boolean).length
   }
 
-  /** Whether a folder at this depth is walked into, given the library's settings. */
+  /** Whether a folder at this depth is walked into, given the library's settings. A max_depth of 0 means no limit. */
   descends(root, depth) {
     if (!root.recursive) return depth === 0
-    return depth < root.max_depth
+    return !root.max_depth || depth < root.max_depth
   }
 
   /**

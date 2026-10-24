@@ -17,10 +17,10 @@ export function linkFileName(href: string) {
 
 /**
  * Makes links in a previewed page work without letting the page navigate its
- * frame: #anchors scroll within the page, web links open in a new window, and
- * links to other files open that file from the vault.
+ * frame: #anchors scroll within the page, web links go to `followWebLink` (or
+ * open in a new window), and links to other files open that file from the vault.
  */
-export function wireHtmlLinks(frame: HTMLIFrameElement | null, followFileLink: (href: string) => void) {
+export function wireHtmlLinks(frame: HTMLIFrameElement | null, followFileLink: (href: string) => void, followWebLink?: (href: string) => void) {
   const frameDocument = frame?.contentDocument
   if (!frameDocument) return
 
@@ -34,6 +34,10 @@ export function wireHtmlLinks(frame: HTMLIFrameElement | null, followFileLink: (
       const target = id ? (frameDocument.getElementById(id) ?? frameDocument.getElementsByName(id)[0]) : null
       if (target) target.scrollIntoView({ block: 'start' })
       else if (!id) frameDocument.scrollingElement?.scrollTo({ top: 0 })
+      return
+    }
+    if (/^https?:/i.test(href) && followWebLink) {
+      followWebLink(href)
       return
     }
     if (/^(https?:|mailto:)/i.test(href)) {

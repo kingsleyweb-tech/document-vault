@@ -179,7 +179,8 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
       watching: indexer.watchers.has(root.id),
       settings: {
         recursive: Boolean(root.recursive),
-        maxDepth: root.max_depth,
+        // 0 is stored for "no limit".
+        maxDepth: root.max_depth || null,
         fileTypes: root.file_types ? JSON.parse(root.file_types) : null,
         extractText: Boolean(root.extract_text),
         ocr: root.ocr_pref === 'on',
@@ -285,13 +286,22 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
   // refused, the shortcut's command-line arguments are dropped, and a file or
   // folder must itself lie inside a library (a shortcut cannot widen access).
   async function openShortcut(row) {
-    const target = await readShortcut(row.path).catch(() => null)
-    if (!target) throw new HttpError(422, 'Document Vault could not tell where this shortcut points. Use "Show in folder" instead.')
+    const target = await shortcutTarget(row)
     if (target.url) {
       await launcher.openLink(target.url)
       log(`Opened the link in shortcut #${row.id}`)
       return { ok: true }
     }
+    await launcher.open(target.real)
+    log(`Opened the ${target.isDirectory ? 'folder' : 'file'} shortcut #${row.id} points to`)
+    return { ok: true }
+  }
+
+  /** Where a shortcut points, as { url } or { path, real, isDirectory }, after every check opening it would make. */
+  async function shortcutTarget(row) {
+    const target = await readShortcut(row.path).catch(() => null)
+    if (!target) throw new HttpError(422, 'Document Vault could not tell where this shortcut points. Use "Show in folder" instead.')
+    if (target.url) return { url: target.url }
     // Network locations are never contacted: opening one can send the Windows sign-in to that computer.
     if (/^(\\\\|\/\/)/.test(target.path)) throw new HttpError(403, 'This shortcut points to a network location. Document Vault only opens items inside your libraries.')
     const library = access.libraryFor(target.path)
@@ -310,9 +320,7 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
     if (info.isDirectory() ? !canOpenFolder(target.path) || !canOpenFolder(checked.real) : !canLaunch(target.path) || !canLaunch(checked.real)) {
       throw new HttpError(403, 'This shortcut starts a program. Programs are not run from Document Vault; use "Show in folder" instead.')
     }
-    await launcher.open(checked.real)
-    log(`Opened the ${info.isDirectory() ? 'folder' : 'file'} shortcut #${row.id} points to`)
-    return { ok: true }
+    return { path: target.path, real: checked.real, isDirectory: info.isDirectory() }
   }
 
   function libraryOr404(match) {
@@ -782,6 +790,18 @@ export function createCompanionServer({ store, indexer, extractor, ocr, hasher, 
     ['GET', /^\/v1\/entries\/(\d+)$/, true, async (_request, match) => {
       const { row } = readable(Number(match[1]))
       return { ...describeEntry(row, await availabilityOf(row)), text: describeText(row.id), meta: metaOf(db, row.id) }
+    }],
+
+    // Where a shortcut points, so the app can show the item itself instead of
+    // handing it to another program: { url } for a web link, or { entry } for an
+    // indexed file or folder (null when it is allowed but not indexed yet).
+    ['GET', /^\/v1\/entries\/(\d+)\/target$/, true, async (_request, match) => {
+      const { row } = await resolveEntry(Number(match[1]))
+      if (row.is_dir || !isShortcut(row.name)) throw new HttpError(400, 'This item is not a shortcut.')
+      const target = await shortcutTarget(row)
+      if (target.url) return { url: target.url, entry: null }
+      const indexed = store.entryByPath(target.path) ?? store.entryByPath(target.real)
+      return { url: null, entry: indexed ? describeEntry(indexed) : null }
     }],
 
     // Every passage of a document matching the words, in reading order, with page numbers.

@@ -1,23 +1,27 @@
 import { createPortal } from 'react-dom'
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp, ExternalLink, FolderOpen, X } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, Columns2, ExternalLink, FolderOpen, Globe, Maximize2, X } from 'lucide-react'
 import { companion, CompanionError, type LocalEntry, type TextExcerpt } from '../../services/desktopCompanion'
+import { displayUrl, hasWebBrowser, webBrowser } from '../../services/webBrowser'
 import { Highlighted } from '../library/Highlighted'
 import { OCR_NOTE, whereLabel } from '../library/libraryText'
 import { decodeHtml, renderDocx, renderSpreadsheet, sanitizeHtml, type SpreadsheetSheet } from '../../services/documentViewer'
 import { PdfVirtualizedViewer } from '../viewer/PdfViewer'
 import { linkFileName, safeDecode, wireHtmlLinks } from '../../utils/htmlLinks'
+import { openLocalEntry } from './openLocalEntry'
 
 const PresentationViewer = lazy(() =>
   import('../viewer/PresentationViewer').then((module) => ({ default: module.PresentationViewer })),
 )
+const EpubViewer = lazy(() => import('../viewer/EpubViewer').then((module) => ({ default: module.EpubViewer })))
+const WebBrowser = lazy(() => import('../browser/WebBrowser').then((module) => ({ default: module.WebBrowser })))
 
 // Text previews show the start of very large files only.
 const TEXT_PREVIEW_BYTES = 1024 * 1024
 
 type Loaded =
-  | { kind: 'pdf' | 'presentation'; blob: Blob }
+  | { kind: 'pdf' | 'presentation' | 'epub'; blob: Blob }
   | { kind: 'image' | 'audio' | 'video'; url: string }
   | { kind: 'text'; text: string; truncated: boolean }
   | { kind: 'word' | 'html'; html: string }
@@ -29,6 +33,7 @@ function previewKind(entry: LocalEntry) {
   if (extension === 'docx') return 'word'
   if (extension === 'xlsx' || extension === 'xls') return 'spreadsheet'
   if (extension === 'pptx') return 'presentation'
+  if (extension === 'epub') return 'epub'
   if (entry.kind === 'html') return 'html'
   if (entry.kind === 'image' || entry.kind === 'audio' || entry.kind === 'video') return entry.kind
   return 'text'
@@ -106,8 +111,32 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
     return () => window.clearTimeout(timer)
   }, [linkNotice])
 
+  // The in-app browser beside the book (desktop app only). The book stays
+  // mounted while it is open, so its reading position is kept.
+  const [web, setWeb] = useState<'closed' | 'split' | 'full'>('closed')
+  const [webOffer, setWebOffer] = useState<string | null>(null)
+  const browserAvailable = hasWebBrowser()
+
+  const openBeside = async (url: string) => {
+    setWebOffer(null)
+    try {
+      await webBrowser.open(url, { newTab: web === 'closed', source: { name: entry.name, entryId: entry.id } })
+      setWeb((current) => (current === 'closed' ? 'split' : current))
+    } catch (error) {
+      setLinkNotice(error instanceof Error ? error.message : 'That link could not be opened.')
+    }
+  }
+
+  // A web link in the document is offered, not opened straight away: it leads
+  // to the internet, and the page is not a checked legal authority.
+  const followWebLink = (href: string) => {
+    if (browserAvailable) setWebOffer(href)
+    else window.open(href, '_blank', 'noopener,noreferrer')
+  }
+
   // A link to another file is looked up in the index: pages and documents open
-  // in this preview, shortcuts and other files open as they would from a result.
+  // in this preview, shortcuts show what they point to, and other files open as
+  // they would from a result.
   const followFileLink = async (href: string) => {
     const name = linkFileName(href)
     const target = resolveLocalPath(entry.folder, href)
@@ -117,10 +146,8 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
       const match = result.items.find((item) => same(item.path))
       if (!match) {
         setLinkNotice(`“${name}” is not in a folder Document Vault searches, so it cannot be opened from here.`)
-      } else if (match.canPreview) {
-        onNavigate(match)
-      } else if (match.canOpen) {
-        await companion.open(match.id)
+      } else if (match.canPreview || match.canOpen) {
+        await openLocalEntry(match, { preview: onNavigate, openWebPage: (url) => openBeside(url) })
       } else {
         setLinkNotice(`“${name}” is a program, and programs are not run from Document Vault.`)
       }
@@ -138,6 +165,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
       switch (kind) {
         case 'pdf':
         case 'presentation':
+        case 'epub':
           return { kind, blob }
         case 'image':
         case 'audio':
@@ -176,7 +204,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -241,7 +269,39 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
           </div>
         ) : null}
 
-        <div className="local-preview__body">
+        {webOffer ? (
+          <div className="web-offer" role="region" aria-label="Open a web link">
+            <Globe aria-hidden="true" />
+            <div className="web-offer__text">
+              <strong>Open this online source?</strong>
+              <span className="break-anywhere">{displayUrl(webOffer)}</span>
+              <span className="web-offer__note">A page from the internet, not checked by Document Vault as a legal authority.</span>
+            </div>
+            <div className="web-offer__actions">
+              <button type="button" className="primary-button button--small" onClick={() => void openBeside(webOffer)}>
+                <Columns2 aria-hidden="true" />
+                <span>Open beside the book</span>
+              </button>
+              <button
+                type="button"
+                className="secondary-button button--small"
+                onClick={() => {
+                  void webBrowser.openExternal(webOffer)
+                  setWebOffer(null)
+                }}
+              >
+                <ExternalLink aria-hidden="true" />
+                <span>Default browser</span>
+              </button>
+              <button type="button" className="icon-button" onClick={() => setWebOffer(null)} aria-label="Cancel">
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className={`local-preview__workspace is-web-${web}`}>
+        <div className="local-preview__body" aria-hidden={web === 'full' ? true : undefined}>
           {error ? (
             <p className="notice notice--error" role="alert">
               {error}
@@ -257,6 +317,10 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
             <Suspense fallback={<div className="local-preview__loading">Loading slides...</div>}>
               <PresentationViewer blob={current.blob} documentName={entry.name} documentId={previewId} zoom={1} />
             </Suspense>
+          ) : current.kind === 'epub' ? (
+            <Suspense fallback={<div className="local-preview__loading">Opening book...</div>}>
+              <EpubViewer blob={current.blob} documentId={previewId} zoom={1} onWebLink={followWebLink} />
+            </Suspense>
           ) : current.kind === 'image' ? (
             <img className="image-preview" src={current.url} alt={entry.name} />
           ) : current.kind === 'audio' ? (
@@ -269,7 +333,7 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
               title={entry.name}
               sandbox="allow-same-origin"
               srcDoc={current.html}
-              onLoad={(event) => wireHtmlLinks(event.currentTarget, (href) => void followFileLink(href))}
+              onLoad={(event) => wireHtmlLinks(event.currentTarget, (href) => void followFileLink(href), followWebLink)}
             />
           ) : current.kind === 'spreadsheet' ? (
             <div className="spreadsheet-viewer">
@@ -297,6 +361,32 @@ export function LocalPreview({ entry, onClose, onOpen, onReveal, onNavigate, que
               <pre>{current.text}</pre>
             </div>
           ) : null}
+        </div>
+        {web !== 'closed' ? (
+          <div className="local-preview__web">
+            <Suspense fallback={<div className="local-preview__loading">Starting the browser...</div>}>
+              <WebBrowser
+                variant="docked"
+                actions={
+                  <>
+                    {web === 'full' ? (
+                      <button type="button" className="icon-button" onClick={() => setWeb('split')} aria-label="Show the book beside the web page" title="Book and web page side by side">
+                        <BookOpen aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <button type="button" className="icon-button" onClick={() => setWeb('full')} aria-label="Web page only" title="Web page only (the book stays where you left it)">
+                        <Maximize2 aria-hidden="true" />
+                      </button>
+                    )}
+                    <button type="button" className="icon-button" onClick={() => setWeb('closed')} aria-label="Close the web page and return to the book" title="Back to the book">
+                      <X aria-hidden="true" />
+                    </button>
+                  </>
+                }
+              />
+            </Suspense>
+          </div>
+        ) : null}
         </div>
         {linkNotice ? (
           <div className="notice viewer-link-notice" role="status">

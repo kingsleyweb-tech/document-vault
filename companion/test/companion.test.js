@@ -276,6 +276,17 @@ describe('opening local files', () => {
     }
   })
 
+  it('tells the app which website an internet shortcut points to, without opening it', async () => {
+    const [hit] = (await find('Example site.url')).items
+    calls.length = 0
+    const target = await json('GET', `/v1/entries/${hit.id}/target`)
+    assert.equal(target.status, 200)
+    assert.deepEqual(target.body, { url: 'https://example.com/page?a=1', entry: null })
+    assert.deepEqual(calls, [])
+    const [file] = (await find('Training Schedule.pdf')).items
+    assert.equal((await json('GET', `/v1/entries/${file.id}/target`)).status, 400)
+  })
+
   it('refuses shortcuts to anything but a web page', async () => {
     for (const name of ['Script site.url', 'Old link.lnk']) {
       const [hit] = (await find(name)).items
@@ -299,6 +310,17 @@ describe('opening local files', () => {
       })
     }
 
+    it('names the indexed file a shortcut points to, so the app can show it itself', async () => {
+      const [hit] = (await find('Schedule.lnk')).items
+      calls.length = 0
+      const target = await json('GET', `/v1/entries/${hit.id}/target`)
+      assert.equal(target.status, 200)
+      assert.equal(target.body.url, null)
+      assert.equal(target.body.entry.name, 'Training Schedule.pdf')
+      assert.equal(target.body.entry.canPreview, true)
+      assert.deepEqual(calls, [])
+    })
+
     it('never opens what a shortcut points to outside the libraries', async () => {
       // Letter.lnk is inside a library, but its target (Outside/) is not: a shortcut cannot widen access.
       const [hit] = (await find('Letter.lnk')).items
@@ -306,6 +328,7 @@ describe('opening local files', () => {
       const opened = await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })
       assert.equal(opened.status, 403)
       assert.match(opened.body.error, /outside your libraries/)
+      assert.equal((await json('GET', `/v1/entries/${hit.id}/target`)).status, 403)
       assert.deepEqual(calls, [])
     })
 
@@ -315,6 +338,7 @@ describe('opening local files', () => {
       const opened = await json('POST', `/v1/entries/${hit.id}/open`, { body: {} })
       assert.equal(opened.status, 403)
       assert.match(opened.body.error, /program/)
+      assert.equal((await json('GET', `/v1/entries/${hit.id}/target`)).status, 403)
       assert.deepEqual(calls, [])
     })
   })

@@ -6,6 +6,8 @@ interface EpubViewerProps {
   blob: Blob
   documentId: string
   zoom: number
+  /** Called for links to web pages; without it they are not followed. */
+  onWebLink?: (href: string) => void
 }
 
 const positionKey = (documentId: string) => `documentVault.epubPosition.${documentId}`
@@ -20,7 +22,7 @@ function readPosition(documentId: string) {
 
 // Shows an EPUB book one chapter at a time, with a contents list, and
 // remembers the chapter each book was left at.
-export function EpubViewer({ blob, documentId, zoom }: EpubViewerProps) {
+export function EpubViewer({ blob, documentId, zoom, onWebLink }: EpubViewerProps) {
   const [book, setBook] = useState<{ blob: Blob; value: EpubBook } | { blob: Blob; error: string } | null>(null)
   const [chapter, setChapter] = useState(() => readPosition(documentId))
   const [content, setContent] = useState<{ index: number; html: string } | null>(null)
@@ -87,7 +89,8 @@ export function EpubViewer({ blob, documentId, zoom }: EpubViewerProps) {
     setShowToc(false)
   }
 
-  // Links between chapters open inside the reader; outside links are not followed.
+  // Links between chapters open inside the reader. Web links go to onWebLink
+  // (or a new window); other outside links are not followed.
   const wireFrame = () => {
     const frameDocument = frameRef.current?.contentDocument
     if (!frameDocument) return
@@ -101,8 +104,14 @@ export function EpubViewer({ blob, documentId, zoom }: EpubViewerProps) {
       const anchor = (event.target as Element | null)?.closest?.('a[href]')
       if (!anchor) return
       const href = anchor.getAttribute('href') ?? ''
-      if (/^[a-z]+:/i.test(href)) return
       event.preventDefault()
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+        if (/^https?:/i.test(href)) {
+          if (onWebLink) onWebLink(href)
+          else window.open(href, '_blank', 'noopener,noreferrer')
+        }
+        return
+      }
       if (href.startsWith('#')) {
         frameDocument.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView()
         return

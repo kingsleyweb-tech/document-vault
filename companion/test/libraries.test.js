@@ -481,6 +481,18 @@ describe('library settings, pausing, clearing and removing', () => {
     assert.deepEqual(await names('Nested note'), ['Nested note.txt'])
   })
 
+  it('no depth limit (as the add-library form sends it) indexes every folder', async () => {
+    await json('PATCH', `/v1/roots/${otherId}`, { body: { maxDepth: 1 } })
+    await settle()
+    assert.deepEqual(await names('Nested note'), [])
+    const changed = await json('PATCH', `/v1/roots/${otherId}`, { body: { maxDepth: null } })
+    assert.equal(changed.body.root.settings.maxDepth, null)
+    await settle()
+    assert.deepEqual(await names('Nested note'), ['Nested note.txt'])
+    const top = (await json('GET', `/v1/roots/${otherId}/tree`)).body
+    assert.equal(top.folders.find((folder) => folder.name === 'Deep').files, 1)
+  })
+
   it('a file type filter indexes only the chosen types', async () => {
     await json('PATCH', `/v1/roots/${otherId}`, { body: { fileTypes: ['pdf'] } })
     await settle()

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { BookOpen, Copy, ExternalLink, Eye, FileSearch, FolderOpen, FolderSearch, Library, Search as SearchIcon, X } from 'lucide-react'
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
 import { LocalPreview } from '../components/desktop/LocalPreview'
+import { useLocalOpener } from '../components/desktop/openLocalEntry'
 import { DocumentIcon } from '../components/documents/DocumentIcon'
 import { Highlighted } from '../components/library/Highlighted'
 import { errorText, kindLabels, matchLabels, OCR_NOTE, whereLabel } from '../components/library/libraryText'
@@ -15,6 +16,7 @@ import {
   companion,
   CompanionError,
   type FileCopy,
+  type LocalEntry,
   type LocalHit,
   type LocalKind,
   type LocalSearchParams,
@@ -155,6 +157,7 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
   const [contentResults, setContentResults] = useState<ContentResults | null>(null)
   const [loadingMoreContent, setLoadingMoreContent] = useState(false)
   const moreController = useRef<AbortController | null>(null)
+  const showLocal = useLocalOpener(useCallback((entry: LocalEntry) => setPreview({ entry, page: null }), []))
 
   const wantsLocal = source !== 'uploaded'
   const ready = connection === 'ready'
@@ -252,6 +255,11 @@ export function SearchPage({ documents, allDocuments, search, onOpenDocument }: 
   const act = async (entry: LocalHit, action: 'open' | 'reveal') => {
     setToast(null)
     try {
+      if (action === 'open' && entry.kind === 'shortcut') {
+        // What a shortcut points to is shown in the app when it can be.
+        await showLocal(entry)
+        return
+      }
       await (action === 'open' ? companion.open(entry.id) : companion.reveal(entry.id))
       setToast({ tone: 'info', text: action === 'open' ? `Opening ${entry.name} on this computer.` : `Showing ${entry.name} in its folder.` })
     } catch (error) {

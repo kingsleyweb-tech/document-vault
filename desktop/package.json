@@ -1,7 +1,7 @@
 {
   "name": "document-vault-desktop",
   "productName": "Document Vault",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Document Vault for Windows, macOS and Linux.",
   "author": "Document Vault",
@@ -15,6 +15,7 @@
     "build:web": "node scripts/prepare.cjs",
     "start": "node scripts/prepare.cjs --if-missing && electron .",
     "test": "node --test \"test/**/*.test.cjs\"",
+    "test:electron": "electron test/web-browser.electron.cjs",
     "dist:win": "node scripts/prepare.cjs && electron-builder --win --x64 --publish never",
     "dist:mac": "node scripts/prepare.cjs --mac && electron-builder --mac --arm64 --x64 --publish never",
     "dist:linux": "node scripts/prepare.cjs && electron-builder --linux --x64 --publish never"

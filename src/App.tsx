@@ -19,6 +19,7 @@ import { LibraryAccess } from './pages/LibraryAccess'
 import { Duplicates } from './pages/Duplicates'
 import { LibraryDetail } from './pages/LibraryDetail'
 import { SearchPage } from './pages/Search'
+import { WebBrowserPage } from './pages/WebBrowserPage'
 import { FolderTreePicker } from './components/documents/FolderTreePicker'
 import { TagEditor } from './components/documents/TagEditor'
 import { VersionHistoryDialog } from './components/documents/VersionHistoryDialog'
@@ -672,6 +673,7 @@ function AuthenticatedVaultInner() {
           <Route path="libraries/duplicates" element={<Duplicates />} />
           <Route path="libraries/:libraryId" element={<LibraryDetail />} />
           <Route path="access" element={<LibraryAccess />} />
+          <Route path="browser" element={<WebBrowserPage />} />
           <Route
             path="search"
             element={<SearchPage documents={activeDocuments} allDocuments={documents} search={search} onOpenDocument={openDocument} />}

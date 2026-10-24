@@ -22,4 +22,18 @@ contextBridge.exposeInMainWorld('documentVaultDesktop', {
       hint: typeof options?.hint === 'string' ? options.hint : '',
     }),
   cancelGoogleSignIn: () => ipcRenderer.invoke('dv:cancel-google-sign-in'),
+  // The in-app web browser. Requests are plain objects; the main process checks every field.
+  web: {
+    request: (request) => ipcRenderer.invoke('dv:web', request),
+    onState: (listener) => subscribe('dv:web:state', listener),
+    onNotice: (listener) => subscribe('dv:web:notice', listener),
+    onCheck: (listener) => subscribe('dv:web:check', listener),
+  },
 })
+
+/** Passes only the message to the page, never the IPC event, and returns a way to stop listening. */
+function subscribe(channel, listener) {
+  const handler = (_event, payload) => listener(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}

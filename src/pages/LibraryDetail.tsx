@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, EyeOff, Search, X } from 'lucide-react'
 import { CompanionSetup } from '../components/desktop/CompanionSetup'
+import { useLocalOpener } from '../components/desktop/openLocalEntry'
 import { LocalPreview } from '../components/desktop/LocalPreview'
 import { FolderTree } from '../components/library/FolderTree'
 import { LibraryHealth } from '../components/library/LibraryHealth'
@@ -45,22 +46,21 @@ export function LibraryDetail() {
   }
   const fail = (error: unknown) => setMessage({ tone: 'error', text: errorText(error) })
 
+  // Files, and what shortcuts point to, are shown inside the app when they can be.
+  const show = useLocalOpener(setPreview)
+
   const openEntry = async (entryId: number) => {
     setMessage(null)
     try {
-      const entry = await companion.entry(entryId)
-      if (entry.canPreview) setPreview(entry)
-      else if (entry.canOpen) await companion.open(entry.id)
-      else await companion.reveal(entry.id)
+      await show(await companion.entry(entryId))
     } catch (error) {
       fail(error)
     }
   }
 
   const showFile = (entry: LocalEntry) => {
-    if (entry.canPreview) setPreview(entry)
-    else if (entry.canOpen) void companion.open(entry.id).catch(fail)
-    else void companion.reveal(entry.id).catch(fail)
+    setMessage(null)
+    show(entry).catch(fail)
   }
 
   if (connection !== 'ready') {

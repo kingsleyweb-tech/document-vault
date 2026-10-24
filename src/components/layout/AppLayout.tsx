@@ -5,6 +5,7 @@ import {
   CloudUpload,
   Files,
   FolderOpen,
+  Globe,
   HardDrive,
   History,
   Home,
@@ -32,6 +33,7 @@ import dvLogo from '../../assets/dv.png'
 import type { ThemeMode } from '../../types/document'
 import type { VaultUser } from '../../types/user'
 import { getDriveStorageQuota, type DriveStorageQuota } from '../../services/googleDrive'
+import { hasWebBrowser } from '../../services/webBrowser'
 import { formatFileSize } from '../../utils/formatters'
 import { Dialog } from '../ui/Dialog'
 
@@ -67,6 +69,8 @@ const libraryNav: NavItem[] = [
   { to: '/categories', label: 'Categories', icon: Tags },
   { to: '/libraries', label: 'My Libraries', icon: Library },
   { to: '/search', label: 'Search', icon: Search },
+  // The in-app web browser exists only in the desktop app.
+  ...(hasWebBrowser() ? [{ to: '/browser', label: 'Web browser', icon: Globe }] : []),
 ]
 
 const tabbarNav: NavItem[] = [
